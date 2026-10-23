@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+@theme {
+	--font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+	--color-bg: #0d0f12;
+	--color-panel: #111418;
+	--color-surface: #15181d;
+	--color-elevated: #1b1f25;
+	--color-hover: #222831;
+	--color-line: #252a32;
+	--color-line-strong: #343b45;
+	--color-fg: #e7e9ec;
+	--color-muted: #9aa2ad;
+	--color-faint: #6c7580;
+	--color-accent: #3ecf8e;
+	--color-accent-dim: #2aa876;
+	--color-danger: #f07272;
+	--color-warn: #e8b04b;
+	--color-info: #6cb8ff;
+}
+
+@layer base {
+	html,
+	body {
+		height: 100%;
+	}
+
+	body {
+		margin: 0;
+		overflow: hidden;
+		background: var(--color-bg);
+		color: var(--color-fg);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		-webkit-font-smoothing: antialiased;
+		text-rendering: optimizeLegibility;
+	}
+
+	* {
+		box-sizing: border-box;
+	}
+
+	::selection {
+		background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+	}
+
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--color-line-strong) transparent;
+	}
+
+	input,
+	select,
+	textarea,
+	button {
+		font: inherit;
+		color: inherit;
+	}
+
+	input::placeholder {
+		color: var(--color-faint);
+	}
+}

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { error } from '@sveltejs/kit';
+import { parse, stringify } from 'devalue';
+import { transport } from '../src/hooks.js';
 import { message } from '../src/lib/utils.js';
 import { displayValue, fromTSV, toTSV } from '../src/lib/format.js';
 import { connectSchema, deleteSchema, rowsSchema, saveSchema } from '../src/lib/validation.js';
@@ -28,6 +30,24 @@ describe('lossless display and clipboard', () => {
 test('remote command errors show the message, not a serialized HTTP error', () => {
 	try { error(409, 'Row changed'); } catch (value) { expect(message(value)).toBe('Row changed'); }
 	expect(message({ message: 'Connection expired' })).toBe('Connection expired');
+});
+
+test('remote transport round-trips prototype-like column names without prototype mutation', () => {
+	const values = Object.fromEntries([['__proto__', 'literal'], ['constructor', '9007199254740993'], ['empty', '']]);
+	const identity = { pk: Object.fromEntries([['__proto__', 'key']]), version: '1', relation: '42' };
+	const encoders = Object.fromEntries(Object.entries(transport).map(([name, codec]) => [name, codec.encode]));
+	const decoders = Object.fromEntries(Object.entries(transport).map(([name, codec]) => [name, codec.decode]));
+	const data = { rows: [{ values, identity }], updates: [{ identity, changes: values }], inserts: [values], filter: values };
+	const result = parse(stringify(data, encoders), decoders);
+	expect(result).toEqual(data);
+	expect(Object.hasOwn(result.rows[0].values, '__proto__')).toBe(true);
+	expect(Object.getPrototypeOf(result.rows[0].values)).toBe(Object.prototype);
+	const hostile = transport.ColumnRecord.decode([['__proto__', { polluted: true }]]);
+	expect(Object.hasOwn(hostile, '__proto__')).toBe(true);
+	expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+	for (const value of [null, {}, [['key']], [[{}, 'value']]]) {
+		expect(() => transport.ColumnRecord.decode(value)).toThrow('Invalid column record');
+	}
 });
 
 describe('remote validation', () => {

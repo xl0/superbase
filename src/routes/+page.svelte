@@ -1,12 +1,41 @@
 <script lang="ts">
-	import { connectionStatus } from '#lib/db.remote.js';
+	import { connect, connectionStatus } from '#lib/db.remote.js';
+	import type { ConnectionStatus } from '#lib/types.js';
+	import { rememberedConnection, restorationAllowed } from '#lib/remembered-connection.js';
 	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import ConnectScreen from '#lib/components/ConnectScreen.svelte';
 	import EditorApp from '#lib/components/EditorApp.svelte';
+	import LoadingShell from '#lib/components/LoadingShell.svelte';
 
 	const status = connectionStatus();
 	const error = $derived(status.error ? message(status.error) : '');
+	let initialized = $state(false);
+	let restoreError = $state('');
+	let started = false;
+
+	$effect(() => {
+		if (!status.ready || started) return;
+		started = true;
+		void restore(status.current);
+	});
+
+	async function restore(current: ConnectionStatus) {
+		try {
+			// Bootstrap only: never replace a mounted workspace or another active browser connection.
+			if (restorationAllowed() && (!current.connection || current.connection.source === 'env')) {
+				const saved = rememberedConnection();
+				if (saved?.autoConnect) {
+					await connect({ url: saved.url, expected: current.connection?.id ?? null });
+					await status.refresh();
+				}
+			}
+		} catch (value) {
+			restoreError = `Could not restore the saved connection: ${message(value)}`;
+		} finally {
+			initialized = true;
+		}
+	}
 </script>
 
 {#if status.error}
@@ -17,10 +46,10 @@
 			<Button size="sm" onclick={() => void status.refresh()}>Retry</Button>
 		</div>
 	</main>
-{:else if !status.ready}
-	<div role="status" class="grid h-dvh place-items-center bg-background text-xs text-muted-foreground">Loading connection…</div>
-{:else if !status.current.connection}
-	<ConnectScreen status={status.current} />
+{:else if !status.ready || !initialized}
+	<LoadingShell />
+{:else if restoreError || !status.current.connection}
+	<ConnectScreen status={status.current} {restoreError} />
 {:else}
 	{#key status.current.connection.id}
 		<EditorApp status={status.current} />

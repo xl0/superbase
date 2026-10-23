@@ -15,7 +15,7 @@
 
 <aside class="flex h-full w-60 shrink-0 flex-col border-r border-border bg-card">
 	<header class="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
-		<Database class="size-4 text-primary" />
+		<Database class="size-4 text-muted-foreground" />
 		<span class="text-sm font-semibold tracking-tight">superbase</span>
 	</header>
 	<div class="space-y-2 border-b border-border p-3">
@@ -50,7 +50,7 @@
 			<Button variant="ghost" size="sm" disabled={editor.busy} aria-current={active ? 'page' : undefined}
 				onclick={() => void editor.selectTable(table.schema, table.name)}
 				class={['mb-0.5 w-full justify-start gap-2 px-2 text-xs font-normal', active ? 'bg-muted text-foreground' : 'text-muted-foreground']}>
-				<Table2 class={['size-3.5', active && 'text-primary']} />
+				<Table2 class={['size-3.5', active && 'text-foreground']} />
 				<span class="truncate">{table.name}</span>
 			</Button>
 		{:else}

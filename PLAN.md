@@ -15,7 +15,7 @@ solutions; add infrastructure only when a concrete feature needs it.
 Finish and verify the active item before starting the next. Queue new feature requests here
 rather than interrupting work already underway.
 
-- [x] Browser connections, lossless transactional editing, cross-page pending changes,
+- [x] Browser connections, lossless transactional editing, cross-page row selections,
   retained rows during sorting, rich/resizable cell editors, and composite foreign-key
   selection/navigation. Regression tests and isolated browser checks cover the foundation.
 
@@ -34,12 +34,42 @@ pausing, race guards, failure recovery and actual database updates are verified.
 [x] README covers running, connecting, editing and limits for users. Development setup,
 test commands and architecture live in CODE.md.
 
-### [ ] Validate cell values before Apply stages them
+[x] Cell completion, reference selection and rectangular paste save immediately and atomically.
+PostgreSQL errors retain editor input; concurrent changes still conflict. Insert row uses a
+resizable, unblurred form with explicit NULL/defaults, rich fields and one Save action.
+Failures retain the form; Create more resets it. Browser and state regressions are verified,
+including arbitrary column names through transport and identity capture.
 
-Use PostgreSQL's actual type rules, nullability and foreign-key checks for all cell types.
-Reject invalid values inline without closing the editor or losing its buffer. Cover every
-apply path, including outside-click dismissal. Do not use trial writes and rollback for
-validation. Save remains authoritative for full constraints and concurrent changes.
+[x] Studio-like charcoal surfaces, inset dark inputs, neutral buttons/selections and muted
+syntax colors replace broad green styling. Connect and small status accents retain green.
+
+[x] Live updates start enabled; visibility pausing and local-work protection remain intact.
+
+[x] Neutral skeletons cover connection/catalog, empty table and reference loading. Sorting
+retains rows with a quiet progress bar; live polling never flashes placeholders. Busy/status
+semantics, reduced motion and layouts are browser-verified.
+
+[x] Remember one successful connection in browser storage, with explicit consent and a
+credential warning. Restore only on page load; Disconnect pauses it and Forget erases the URL.
+Browser checks cover edit protection, failed restoration, cross-tab races and storage denial.
+Nonpersistent connections and grid resizing still work when browser storage is blocked.
+
+[x] JSON opening uses a caret instead of selecting the document. Browser checks cover
+first input, Escape, Enter/F2, expansion selections and typing-to-edit.
+
+[x] Complete unfiltered first pages show exact counts; other totals explain their estimates.
+Open cell is removed. Escape and blank grid clicks deselect cells/ranges without changing
+checked rows. Pagination, loading and mouse/keyboard flows are verified.
+
+[x] Outside-grid clicks clear cell selection without a dedicated button. Clicked controls
+keep focus, checked rows remain selected, and open editors retain their buffers.
+
+[x] Native cell fields open with a caret, not selected text. Text, numeric, timestamp, boolean
+and UUID input preserve existing values; expand/collapse retains deliberate selections.
+
+[x] CodeMirror is chosen by column type: literal, wrapping text or formatted JSON/JSONB.
+Scalars stay native. Browser and unit checks cover mixed line endings, long text, semantic
+undo, expansion, insert labels/Create more and JSON precision; content never selects the mode.
 
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.

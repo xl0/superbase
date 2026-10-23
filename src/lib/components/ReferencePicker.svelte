@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Table from '#lib/components/ui/table/index.js';
-	import { LoaderCircle, Search, ChevronLeft, ChevronRight } from '@lucide/svelte';
+	import { Search, ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { tableRows } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
@@ -8,6 +8,7 @@
 	import type { Column, Row, Values } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
 	let { foreignKey, current, disabled = false, onselect }: {
 		foreignKey: NonNullable<Column['foreignKey']>;
@@ -49,7 +50,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" aria-busy={loading}>
-	<p class="text-xs text-muted-foreground">Choose a record to fill <span class="font-mono">{foreignKey.columns.join(', ')}</span>. Changes stay local until you save the table.</p>
+	<p class="text-xs text-muted-foreground">Choose a record to fill <span class="font-mono">{foreignKey.columns.join(', ')}</span>.</p>
 	<div class="relative">
 		<Search class="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
 		<Input data-reference-search aria-label="Search referenced records" placeholder="Search referenced records…" value={search}
@@ -58,7 +59,7 @@
 	{#if error}
 		<div role="alert" class="flex items-center gap-2 text-xs text-destructive"><span class="min-w-0 break-words">{error}</span><Button variant="outline" size="xs" onclick={() => retry++}>Retry</Button></div>
 	{/if}
-	{#if disabled}<p class="text-xs text-muted-foreground">This reference is read-only.</p>{/if}
+	{#if disabled}<p class="text-xs text-muted-foreground">Reference selection is unavailable while saving or for read-only fields.</p>{/if}
 	<div class="min-h-0 flex-1 overflow-auto rounded-md border" data-reference-results>
 		{#if table}
 			<Table.Root containerClass="overflow-visible" class="w-full text-left text-xs">
@@ -70,7 +71,7 @@
 				<Table.Body>
 					{#each rows as row (row.key)}
 						{@const selected = foreignKey.referencedColumns.every((name, i) => row.values[name] != null && row.values[name] === current[foreignKey.columns[i]])}
-						<Table.Row class={selected ? 'border-0 bg-primary/10 hover:bg-primary/10 transition-none' : 'border-0 hover:bg-muted/50 transition-none'}>
+						<Table.Row class={selected ? 'border-0 bg-muted hover:bg-muted transition-none' : 'border-0 hover:bg-muted/50 transition-none'}>
 							<Table.Cell class="border-b p-2">
 								<Button variant={selected ? 'secondary' : 'outline'} size="xs" disabled={disabled || loading || foreignKey.referencedColumns.some((name) => row.values[name] == null)}
 									onclick={() => onselect(row)} aria-label={`Select referenced record ${foreignKey.referencedColumns.map((name) => row.values[name]).join(', ')}`}>
@@ -85,10 +86,13 @@
 				</Table.Body>
 			</Table.Root>
 		{:else}<p class="p-4 text-xs text-muted-foreground">Referenced table metadata is unavailable. Refresh the database.</p>{/if}
+		{#if loading && !rows.length}
+			<div aria-hidden="true" class="space-y-3 p-3"><Skeleton class="h-6 w-full" /><Skeleton class="h-6 w-3/4" /><Skeleton class="h-6 w-1/2" /></div>
+		{/if}
 		{#if !loading && !error && !rows.length}<p class="p-6 text-center text-xs text-muted-foreground">No matching records.</p>{/if}
 	</div>
 	<div class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-		{#if loading}<span role="status" class="flex items-center gap-2"><LoaderCircle class="size-3.5 animate-spin" />Loading records…</span>{/if}
+		{#if loading}<span role="status" class="flex items-center gap-2"><Skeleton class="h-2 w-8" />Loading records…</span>{/if}
 		<div class="ml-auto flex items-center gap-2">
 			<Button variant="outline" size="icon-sm" aria-label="Previous referenced records" disabled={loading || page === 0} onclick={() => page--}><ChevronLeft /></Button>
 			<span>Page {page + 1}</span>

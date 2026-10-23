@@ -14,7 +14,12 @@ after confirming unsaved work; generation checks protect other tabs that did not
 `lib/validation.ts`. It resolves a generation-checked pool exactly once, before calling
 `lib/server/db.ts`. Database functions receive their pool explicitly, never consult cookies,
 and never generate SQL on the client. Identifiers are quoted and values bound as parameters.
-The unused arbitrary-SQL endpoint has been removed.
+No arbitrary-SQL endpoint is exposed.
+
+`hooks.ts` supplies a shared SvelteKit transport codec for records with an own `__proto__`
+column key, which devalue otherwise rejects. It carries entries and reconstructs own data
+properties without prototype assignment. Rows, PK identities, changes and exact filters
+retain the same in-process contracts; ordinary remote validation still applies.
 
 `hooks.server.ts` requires both a loopback socket peer and a localhost/loopback Host header.
 It rejects proxy address/host/port header configuration and initializes the browser's session
@@ -38,12 +43,14 @@ SvelteKit's origin/CSRF validation remains enabled. `bun run start` loads option
   application fields. `Object.fromEntries`/computed keys and own-property checks preserve
   even names such as `__proto__`, `constructor`, and `__key`.
 - `RowIdentity` captures primary-key text values, physical table OID, and xmin version.
+  Explicit copies of the identity and PK map avoid Svelte snapshot dropping `__proto__` keys.
   Writes require all three and exactly one affected row; otherwise the transaction rolls
   back. Physical table OIDs scope inherited/partitioned rows. Keyless tables refuse writes.
 - Display keys encode tableoid/ctid/xmin and identify one loaded row version, not an enduring
   logical row. Pending mutations retain their own identity even after that version disappears.
-- Draft `values` are sparse: omission is DEFAULT, `null` is explicit SQL NULL, `''` is empty
-  text. Identity/generated column metadata controls writability on both client and server.
+- New-row form values are sparse: omission is DEFAULT, `null` is explicit SQL NULL, `''` is
+  empty text. Its local draft Row is used only by nested editors, never added to grid rows.
+  Identity/generated column metadata controls writability on both client and server.
 - `Column.kind` is only a rendering hint, not a serialization or validation rule. The server
   binds input text unchanged and PostgreSQL validates/coerces it to the actual column type.
 - Table keys encode `[schema, table]` tuples; dotted identifier names cannot collide.
@@ -57,7 +64,8 @@ Catalog introspection includes exact formatted types, PK columns (excluding INCL
 enums, FKs, defaults, identity and generated columns. FK metadata preserves ordered source
 and target tuples per constraint; a column in multiple FKs exposes the first by name/OID.
 A WeakMap caches metadata per pool for 30 seconds; `listTables` explicitly refreshes it.
-Each mutation acquires a transaction-local ROW EXCLUSIVE table lock before reading fresh metadata, preventing column/key DDL races.
+Each mutation acquires a transaction-local ROW EXCLUSIVE table lock before reading fresh
+metadata, preventing column/key DDL races.
 Unknown/non-writable columns are rejected, never silently discarded.
 
 Saves and deletions are transactional. Updates/deletes match PK + tableoid + xmin and check
@@ -66,7 +74,9 @@ no automatic retry, silent overwrite, or automatic merging of concurrent changes
 
 Pages use OFFSET/LIMIT with a complete PK tie-break and physical relation/tuple ordering.
 Fetching one extra row gives `hasMore`; there is no mandatory exact COUNT. `rowCount` is a
-catalog estimate. Search is debounced on the client but still uses text-cast ILIKE across
+catalog estimate. The toolbar uses the exact loaded count when a successful, unfiltered
+first page contains the whole table; other totals stay explicitly approximate, with a tooltip
+explaining stale PostgreSQL statistics. Search is debounced but still uses text-cast ILIKE across
 columns, so broad searches can scan large tables. Optional exact filters bind native typed
 equality (or IS NULL), enabling indexed reference navigation rather than approximate text
 search. Filter identifiers are checked against metadata. Refresh reloads metadata and rows.
@@ -94,25 +104,47 @@ checkbox reads/writes sslmode in the URL, keeping one source of truth, and is di
 plaintext URLs. Certificate file options, ambiguous settings, and environment-password
 inheritance are rejected. Environment URLs are trusted and retain pg's parsing behavior.
 
+`lib/remembered-connection.ts` stores one opt-in URL/password in browser localStorage,
+scoped to the app origin (including port). It is not encrypted. ConnectForm saves only after
+a successful connection; manual connection changes first pause automatic restoration.
+Disconnect retains the URL with restoration disabled; Forget removes it without disconnecting.
+Connecting without Remember removes the saved credential. A separate non-secret consent
+cookie, scoped by protocol/port in its name, also gates restoration. Manual changes turn it
+off before touching localStorage; this allows nonpersistent use when localStorage is denied
+without reviving stale credentials once access returns. An intent nonce also prevents a late
+connect response from overwriting a newer choice or undoing Forget in another tab.
+Missing/expired consent fails closed.
+Other storage failures are explicit; failed post-connect persistence does not undo a connection.
+
+On page bootstrap, an enabled saved URL restores a missing session or replaces an implicit
+environment default. An existing browser connection is never replaced automatically. Failed
+restoration stays on onboarding, never falls through to the environment database. This runs
+before EditorApp mounts, never during edits or background polling; after expiration, reload
+with the normal unsaved-work guard. Browser-entered credentials are never persisted on the server.
+
 ## Browser state and grid
 
-`EditorState` stores the active query separately from pending edits/drafts/selections per
-table. Each edit owns the original values and row identity; selected rows retain identities
-across pages. Sort fetches retain the displayed rows and their page offset, with a spinner
-and editing disabled; other fetches clear stale rows immediately. A request counter discards
-out-of-order responses. Reference arrows navigate with a complete exact-key filter;
-selecting a table or Show all rows removes it. Multi-cell reference edits validate the whole
-tuple against the captured row before applying any value.
-Mutations capture an immutable batch and target, block user changes
-until completion, and clear only acknowledged work. Failure preserves pending edits.
-Changing connection generations cannot carry pending edits into another database.
+`EditorState` owns the active query and cross-page row selections, not staged edits.
+Cell buffers and new-row form values stay in their components. `updateRows` validates and
+captures an atomic mutation batch for a cell, composite reference, paste or range clear.
+`insertRow` inserts one complete sparse form. Both await the real database write; PostgreSQL
+validates all types and constraints. Failures throw to the owning editor without replacing
+its rows or buffer. After acknowledgement, a refresh failure is a read error, not a failed
+write that should be submitted again. Updated versions are removed from row selections;
+unrelated selected identities survive.
 
-Live mode is opt-in and scoped to the current result page. EditorApp invokes `poll()` every
+Open editors/forms and pending mutations block navigation and connection reinitialization.
+Mutations capture their target and invalidate older polls. Sort fetches retain displayed rows
+and their page offset, with editing disabled; other fetches clear stale rows immediately.
+A request counter discards out-of-order reads. Reference arrows use a complete exact-key
+filter; selecting a table or Show all rows removes it.
+
+Live mode starts enabled and is scoped to the current result page. EditorApp invokes `poll()` every
 five seconds and on visibility changes, gated by document visibility, data view and connection
 modal state. Polls never overlap or invalidate foreground reads. Foreground request and live
 mode generations reject obsolete responses, including reads begun before a mutation.
 Unchanged results keep the existing row array. Changes update an idle view, or set a notice
-when drafts, edits, an open editor, row selections or cell/range focus need preserving.
+when an open editor/form, row selections or cell/range focus need preserving.
 Live errors are separate from foreground errors and never clear rows. DataGrid reports cell
 selection independently of its edit buffer. Polling does not refresh schema metadata in the UI.
 
@@ -120,12 +152,17 @@ selection independently of its edit buffer. Polling does not refresh schema meta
 never a mutable array index as an edit target. Replacing rows cancels positional selection
 and editing. Bounds and full paste rectangles are validated before local mutation. Native
 child controls own their keyboard events; the grid exposes active-cell focus through ARIA.
+Cells open by double-click, Enter or F2. Escape, blank grid clicks and outside-grid clicks
+clear cell/range focus without changing checkbox row selections. Outside clicks never steal
+focus from controls or clear selection underneath an open cell editor.
 
 `CellEditor.svelte` owns one exact text/NULL/DEFAULT buffer shared between a shadcn Popover
-and a resizable Sheet. Apply stages changes, Escape cancels;
-compact outside-click also applies. A transparent overlay consumes that click so sorting or
+and a resizable Sheet. Apply saves existing rows immediately; Escape cancels the buffer.
+Compact outside-click also saves. The editor stays open on database errors, disables changes
+and dismissal while saving, and closes only after acknowledgement. A transparent overlay consumes that click so sorting or
 navigation cannot run before dismissal applies the buffer. Opening an editor cancels any
-queued toolbar search for the same reason. Expansion preserves the buffer and text selection.
+queued toolbar search for the same reason. Opening a cell places a caret rather than selecting
+all text. Expansion preserves the buffer and deliberate text selection.
 Set to options depend on nullability, type and draft status. Temporal Now uses PostgreSQL's
 `now` literal rather than JS date conversion; PostgreSQL resolves it when the batch is saved.
 Read-only cells can still be inspected and expanded. Sheets do not blur the underlying table;
@@ -133,22 +170,34 @@ regular confirmation and connection dialogs keep their backdrop. Applicable Set 
 sit at the footer's right: one action is a button, multiple actions a DropdownMenu.
 Select handles enum/boolean choices; Escape dismisses the innermost menu first.
 
-`JsonEditor.svelte` uses CodeMirror for JSON/JSONB, retaining EditorState across expansion
-so history and selection survive remounts. Initial pretty-printing and external buffer changes
-do not emit edits. A history field tracks the semantic buffer value alongside the document:
+`TextEditor.svelte` uses CodeMirror for text and JSON/JSONB columns, chosen from `Column.kind`,
+never content or length. Plain text stays literal and soft-wraps; only JSON gets indentation
+and syntax highlighting. Other kinds retain native controls. Both the cell editor and insert
+form use this component. EditorState survives cell-panel expansion, preserving selection and
+undo history. Initial formatting and external buffer changes do not emit edits.
+A shared history field tracks the semantic buffer value alongside the document:
 undo/redo preserves SQL NULL, DEFAULT, explicit empty text and original literal spelling.
 Set-to actions are independently undoable, even when the visible document stays empty.
 `json.ts` formats parser tokens without decoding numbers, strings or duplicate keys.
-Incomplete JSON stays editable. Rendering uses CodeMirror text nodes, never injected HTML.
+Incomplete JSON stays editable. CodeMirror splits only LF, retaining CRLF and lone CR bytes
+even through edits; special-character markers make CR visible. Rendering uses text nodes,
+never injected HTML.
+
+`InsertRow.svelte` is a resizable, unblurred Sheet with all column fields, a scrollable body
+and fixed Save/Cancel footer. Defaults are placeholders, never evaluated into form values.
+Generated/always-identity fields stay omitted. Save performs one insert; errors retain the
+whole form. Create more resets fields and undo history after acknowledgement. Discarding a
+populated form requires confirmation. Nested cell/text/reference editors only update this
+local form until its Save action.
 
 `ReferencePicker.svelte` queries 25 target records per page with debounced search and
-superseded-response cancellation. It fills all source columns atomically, not just the clicked
-cell. NULL-containing target tuples cannot be selected as references. The same resizable
-panel hosts the picker; a raw-value editor remains available.
+superseded-response cancellation. Selection saves all source columns atomically for existing
+rows, or fills the new-row form locally. NULL-containing target tuples cannot be selected.
+The same resizable panel hosts the picker; a raw-value editor remains available.
 
 The grid uses fixed 35px rows/header and 100/250/500-row pages, without virtualization.
-Widths use runed PersistedState keyed by connection/table. Resizing works with pointer or
-keyboard. shadcn provides buttons, checkboxes and textareas; the cell layout stays custom.
+Widths use runed PersistedState keyed by connection/table, with in-memory sizing when browser
+storage is denied at mount. Resizing works with pointer or keyboard. shadcn provides buttons, checkboxes and textareas; the cell layout stays custom.
 `format.ts` keeps display text lossless and implements quoted TSV, including NULL/default
 markers. Opening and closing a cell without input does not coerce its original value.
 
@@ -156,8 +205,15 @@ The shell uses generated shadcn-svelte buttons, inputs, labels, dialogs, selects
 TableDefinition and ReferencePicker use shadcn Table; the picker's outer scroll container
 owns scrolling so the table header remains sticky. The spreadsheet remains custom.
 Dialogs provide focus containment/restoration. Connection URLs are masked with optional
-reveal; all-table discard confirmation and beforeunload guards protect local work. The dark
-neutral/emerald palette in `app.css` is shared by shadcn and the grid.
+reveal; discard confirmation and beforeunload guards protect open editors/forms and writes. The dark
+charcoal palette in `app.css` is shared by shadcn and the grid. Inputs are inset/darker,
+buttons and selections neutral; only Connect and small status accents use brand green.
+JSON syntax uses a muted editor palette rather than green strings.
+
+`LoadingShell.svelte` keeps the sidebar/main layout while connection/catalog data loads.
+Neutral Skeleton bars cover empty table/reference loads; retained rows during sorts show
+only a small progress bar. Live polls do not flash skeletons. Loading regions expose status
+and busy semantics; pulse animation respects reduced-motion preferences.
 
 ## Development and verification
 
@@ -189,7 +245,8 @@ Browser QA likewise uses isolated browser sessions and disposable databases.
 
 `bun run check` typechecks application code. `bun run test` exercises actual compiled runes
 state with mocked remote I/O, connection lifecycle with mocked sockets/request context, and
-value/schema regressions, lossless JSON formatting and semantic CodeMirror history.
+value/schema regressions, lossless JSON formatting, literal text/line endings and semantic
+CodeMirror history.
 With explicit `TEST_DATABASE_URL`, real PostgreSQL tests cover
 precision, defaults, arbitrary names, inheritance/partitions, conflicts and transaction rollback.
 `bun run test:production` builds and checks actual same-origin HTTP commands and Host/CSRF
@@ -205,6 +262,6 @@ rejection through the production launcher.
 - `src/lib/server/` — connection lifecycle, catalog metadata and transactional SQL.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
-No persistent credentials, hosted authentication, multi-process sessions, views, schema
+No server-side credential persistence, hosted authentication, multi-process sessions, views, schema
 editing, SQL editor, or column-specific filters. Offset pagination is not a cross-page
 snapshot under concurrent database changes. The app is intentionally a loopback-only tool.

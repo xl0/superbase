@@ -1,16 +1,17 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, ArrowUpRight, KeyRound, Link2, Pencil } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, ArrowUpRight, KeyRound, Link2 } from '@lucide/svelte';
 	import { PersistedState } from 'runed';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import CellEditor from './CellEditor.svelte';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
 	import { writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
-	let { table, rows, rowOffset, draftCount = 0 }: { table: Table; rows: Row[]; rowOffset: number; draftCount?: number } = $props();
+	let { table, rows, rowOffset }: { table: Table; rows: Row[]; rowOffset: number } = $props();
 	const id = $props.id();
 	const ROW_HEIGHT = 35;
 	const GUTTER = 64;
@@ -23,16 +24,20 @@
 	let editing = $state<Edit | null>(null);
 
 	let resizeCleanup: (() => void) | undefined;
-	const widths = new PersistedState<Record<string, number>>(
-		untrack(() => `superbase:widths:${editor.connection}:${JSON.stringify([table.schema, table.name])}`), {}
-	);
+	let widths = $state<{ current: Record<string, number> }>({ current: {} });
+	try {
+		widths = new PersistedState<Record<string, number>>(
+			untrack(() => `superbase:widths:${editor.connection}:${JSON.stringify([table.schema, table.name])}`), {}
+		);
+	} catch (error) {
+		// Column sizes are optional; denied storage must not disable editing or resizing.
+		if (!(error instanceof DOMException && error.name === 'SecurityError')) throw error;
+	}
 	const width = (column: Column) => Object.hasOwn(widths.current, column.name) && Number.isFinite(widths.current[column.name])
 		? Math.max(64, widths.current[column.name]) : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
 	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')}`);
 	const disabled = $derived(editor.busy || editor.loading);
-	const focusedRow = $derived(focus ? rows[focus.r] : undefined);
 	const focusedColumn = $derived(focus ? table.columns[focus.c] : undefined);
-	const canOpen = $derived(!disabled && !!focusedRow && !!focusedColumn);
 	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
 	const someSelected = $derived(rows.some((row) => editor.isRowSelected(row.key)));
 
@@ -59,6 +64,10 @@
 		else if (left + width(table.columns[c]) > viewport.scrollLeft + viewport.clientWidth) viewport.scrollLeft = left + width(table.columns[c]) - viewport.clientWidth;
 	}
 
+	function deselect() {
+		focus = anchor = head = null;
+	}
+
 	function startEdit(r: number, c: number, initial?: string) {
 		const row = rows[r], column = table.columns[c];
 		if (disabled || !row || !column) return;
@@ -73,7 +82,7 @@
 		viewport?.focus();
 	}
 
-	function clearSelection() {
+	async function clearSelection() {
 		const box = bounds();
 		if (disabled || !editor.tableEditable || !box) return;
 		// Validate the entire operation before changing any cell.
@@ -82,7 +91,11 @@
 				editor.error = 'Only writable, nullable columns can be set to NULL'; return;
 			}
 		}
-		for (let r = box.r1; r <= box.r2; r++) for (let c = box.c1; c <= box.c2; c++) editor.editCell(rows[r], table.columns[c], null);
+		try {
+			await editor.updateRows(rows.slice(box.r1, box.r2 + 1).map((row) => ({
+				row, values: Object.fromEntries(table.columns.slice(box.c1, box.c2 + 1).map((column) => [column.name, null]))
+			})));
+		} catch (error) { editor.error = message(error); }
 	}
 
 	function onKeydown(event: KeyboardEvent) {
@@ -104,8 +117,8 @@
 			event.preventDefault(); setFocus(...moves[event.key], event.shiftKey); return;
 		}
 		if (event.key === 'Enter' || event.key === 'F2') { event.preventDefault(); startEdit(current.r, current.c); }
-		else if (event.key === 'Escape') { focus = anchor = head = null; }
-		else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); clearSelection(); }
+		else if (event.key === 'Escape') deselect();
+		else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); void clearSelection(); }
 		else if (event.key === ' ' && event.shiftKey) { event.preventDefault(); editor.toggleRowSelection(rows[current.r]); }
 		else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); startEdit(current.r, current.c, event.key); }
 	}
@@ -118,23 +131,24 @@
 		event.clipboardData?.setData('text/plain', toTSV(values));
 	}
 
-	function onPaste(event: ClipboardEvent) {
+	async function onPaste(event: ClipboardEvent) {
 		if (editing || event.target !== viewport || !focus || disabled || !editor.tableEditable) return;
 		const text = event.clipboardData?.getData('text/plain');
 		if (!text) return;
 		event.preventDefault();
 		try {
 			const pasted = fromTSV(text);
-			const changes: { row: Row; column: Column; value: CellValue | undefined }[] = [];
+			const changes: { row: Row; values: Record<string, CellValue | undefined> }[] = [];
 			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {
 				const row = rows[focus.r + r], column = table.columns[focus.c + c], value = pasted[r][c];
 				if (!row || !column) throw new Error('Clipboard data extends beyond the loaded grid');
 				if (!writable(column)) throw new Error(`${column.name} is generated and cannot be edited`);
-				if (value === undefined && !row.draft) throw new Error('DEFAULT is only available for new rows');
+				if (value === undefined) throw new Error('DEFAULT is only available in the new-row form');
 				if (value === null && !column.nullable) throw new Error(`${column.name} does not allow NULL`);
-				changes.push({ row, column, value });
+				if (!changes[r]) changes[r] = { row, values: {} };
+				changes[r].values = { ...changes[r].values, [column.name]: value };
 			}
-			for (const { row, column, value } of changes) editor.editCell(row, column, value);
+			await editor.updateRows(changes);
 		} catch (error) { editor.error = message(error); }
 	}
 
@@ -157,23 +171,31 @@
 		rows.map((row) => [row.key, row.identity?.version]);
 		untrack(() => { focus = anchor = head = null; editing = null; });
 	});
-	$effect(() => { if (editor.loading || editor.busy) editing = null; });
 	$effect(() => { editor.editing = editing !== null; });
 	$effect(() => { editor.cellSelected = focus !== null; });
 	onDestroy(() => { resizeCleanup?.(); editor.editing = false; editor.cellSelected = false; });
 </script>
 
+<svelte:window onpointerdowncapture={(event) => {
+	if (event.button === 0 && !editing && event.target instanceof Node && !viewport?.contains(event.target)) deselect();
+}} />
+
 <div class="flex h-full min-h-0 flex-col bg-background">
 	<div class="flex h-8 shrink-0 items-center gap-1 border-b px-2 text-xs text-muted-foreground">
-		<span class="mr-auto truncate">{focusedColumn ? `${focusedColumn.name} · ${focusedColumn.type}` : 'Enter to edit · Tab for controls · Shift+Space selects a row'}</span>
-		<Button variant="ghost" size="xs" disabled={!canOpen} onclick={() => { if (focus) startEdit(focus.r, focus.c); }}><Pencil />Open cell</Button>
+		<span class="mr-auto truncate">{focusedColumn ? `${focusedColumn.name} · ${focusedColumn.type}` : 'Double-click or Enter to edit · Shift+Space selects a row'}</span>
 	</div>
 	<div bind:this={viewport} role="grid" tabindex="0" aria-label={`${table.schema}.${table.name} data`}
 		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 1}
-		aria-busy={editor.loading} aria-readonly={!editor.tableEditable}
+		aria-busy={editor.loading || editor.busy} aria-readonly={!editor.tableEditable}
 		aria-activedescendant={focus ? `${id}-${focus.r}-${focus.c}` : undefined}
 		class="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-		onkeydown={onKeydown} oncopy={onCopy} onpaste={onPaste}>
+		onkeydown={onKeydown} oncopy={onCopy} onpaste={onPaste}
+		onmousedown={(event) => {
+			if (event.button === 0 && event.target instanceof HTMLElement &&
+				!event.target.closest('[role="gridcell"], [role="columnheader"], [role="rowheader"]')) {
+				event.preventDefault(); deselect(); viewport.focus();
+			}
+		}}>
 		<div class="w-max min-w-full">
 			<div class="grid-header" role="row" aria-rowindex={1} style:grid-template-columns={template}>
 				<div class="gutter" role="columnheader" aria-label="Row selection">
@@ -206,14 +228,13 @@
 					<div class="gutter" role="rowheader">
 						<Checkbox aria-label={`Select row ${rowOffset + r + 1}`} tabindex={-1} checked={editor.isRowSelected(row.key)} disabled={disabled || !editor.tableEditable}
 							onCheckedChange={() => editor.toggleRowSelection(row)} class="size-3.5" />
-						<span>{row.draft ? 'new' : rowOffset + r - draftCount + 1}</span>
+						<span>{rowOffset + r + 1}</span>
 					</div>
 					{#each table.columns as column, c (column.name)}
 						{@const value = editor.getValue(row, column.name)}
 						{@const active = focus?.r === r && focus?.c === c}
 						{@const selected = !!selection && r >= selection.r1 && r <= selection.r2 && c >= selection.c1 && c <= selection.c2}
-						{@const dirty = row.draft ? Object.hasOwn(row.values, column.name) : editor.hasEdit(row.key, column.name)}
-						<div id={`${id}-${r}-${c}`} class="cell" class:focused={active} class:selected class:dirty role="gridcell" tabindex="-1" aria-colindex={c + 2}
+						<div id={`${id}-${r}-${c}`} class="cell" class:focused={active} class:selected role="gridcell" tabindex="-1" aria-colindex={c + 2}
 							aria-selected={selected} aria-readonly={!editor.tableEditable || !writable(column)} data-cell={`${r}:${c}`}
 							onmousedown={(event) => { if (event.button !== 0) return; event.preventDefault(); viewport.focus(); setFocus(r, c, event.shiftKey); }}
 							ondblclick={() => startEdit(r, c)}>
@@ -235,18 +256,21 @@
 				</div>
 			{/each}
 		</div>
-		{#if !rows.length}<p class="p-12 text-center text-sm text-muted-foreground">{editor.loading ? 'Loading rows…' : 'No rows match this view.'}</p>{/if}
+		{#if !rows.length}
+			{#if editor.loading}
+				<div role="status" class="space-y-3 p-3">
+					<span class="sr-only">Loading rows…</span>
+					<Skeleton class="h-6 w-full" /><Skeleton class="h-6 w-3/4" /><Skeleton class="h-6 w-1/2" />
+				</div>
+			{:else}<p class="p-12 text-center text-sm text-muted-foreground">No rows match this view.</p>{/if}
+		{/if}
 	</div>
 </div>
 
 {#if editing}
 	{@const edit = editing}
 	{#key edit}
-		<CellEditor {...edit} onclose={closeEditor} onapply={(values) => {
-			if (!editor.editCells(edit.row, values)) return false;
-			void closeEditor();
-			return true;
-		}} />
+		<CellEditor {...edit} onclose={closeEditor} onapply={(values) => editor.updateRows([{ row: edit.row, values }])} />
 	{/key}
 {/if}
 
@@ -259,8 +283,6 @@
 	.resizer { position: absolute; top: 0; right: -3px; z-index: 2; width: 6px; height: 100%; cursor: col-resize; }
 	.resizer:hover, .resizer:focus-visible { background: var(--ring); outline: none; }
 	.cell { position: relative; display: flex; align-items: center; min-width: 0; padding: 0 8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: default; }
-	.cell.selected { background: color-mix(in srgb, var(--primary) 8%, transparent); }
-	.cell.focused { outline: 1px solid var(--primary); outline-offset: -1px; z-index: 1; }
-	.cell.dirty { background: color-mix(in srgb, #e8b04b 12%, transparent); }
-	.cell.dirty::after { content: ''; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: #e8b04b; }
+	.cell.selected { background: var(--muted); }
+	.cell.focused { outline: 1px solid var(--ring); outline-offset: -1px; z-index: 1; }
 </style>

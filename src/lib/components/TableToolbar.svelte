@@ -7,6 +7,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import InsertRow from './InsertRow.svelte';
 
 	let { tab = $bindable('data') }: { tab: 'data' | 'definition' } = $props();
 	let search = $state('');
@@ -14,11 +15,13 @@
 	let deleteOpen = $state(false);
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
-	const blocked = $derived(editor.busy || editor.loading);
+	const blocked = $derived(editor.navigationBlocked || editor.loading);
+	const exactCount = $derived(!editor.loading && !editor.error && editor.rowsPage === 0 && !editor.hasMore
+		? editor.rows.length : null);
 
 	$effect(() => {
 		// A queued search must not replace rows underneath an open cell editor.
-		void [editor.tableKey, editor.page, editor.pageSize, editor.sort, editor.filter, editor.busy, editor.editing, tab];
+		void [editor.tableKey, editor.page, editor.pageSize, editor.sort, editor.filter, editor.busy, editor.editing, editor.inserting, tab];
 		clearTimeout(timer);
 		search = editor.search;
 	});
@@ -29,7 +32,7 @@
 		clearTimeout(timer);
 		const key = editor.tableKey;
 		timer = setTimeout(() => {
-			if (editor.tableKey === key && !editor.busy) void editor.setSearch(value);
+			if (editor.tableKey === key && !editor.navigationBlocked) void editor.setSearch(value);
 		}, 250);
 	}
 
@@ -47,18 +50,18 @@
 			<span class="truncate font-medium">{editor.table.name}</span>
 		</div>
 		{#if !editor.search && !editor.filter && editor.table.rowCount >= 0}
-			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground">~{editor.table.rowCount.toLocaleString()} rows</Badge>
+			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground"
+				title={exactCount === null ? 'PostgreSQL row estimate; statistics may be stale.' : 'Exact row count from the last loaded page.'}>
+				{exactCount === null ? `~${editor.table.rowCount.toLocaleString()}` : exactCount.toLocaleString()} rows
+			</Badge>
 		{/if}
-		{#if editor.draftCount > 0}<Badge variant="secondary" class="text-[10px]">{editor.draftCount} new</Badge>{/if}
 		<div class="ml-2 flex items-center rounded-md border border-border p-0.5" aria-label="Table view">
-			<Button variant={tab === 'data' ? 'secondary' : 'ghost'} size="xs" disabled={editor.busy} aria-pressed={tab === 'data'} onclick={() => (tab = 'data')}>Data</Button>
-			<Button variant={tab === 'definition' ? 'secondary' : 'ghost'} size="xs" disabled={editor.busy} aria-pressed={tab === 'definition'} onclick={() => (tab = 'definition')}>Definition</Button>
+			<Button variant={tab === 'data' ? 'secondary' : 'ghost'} size="xs" disabled={editor.navigationBlocked} aria-pressed={tab === 'data'} onclick={() => (tab = 'data')}>Data</Button>
+			<Button variant={tab === 'definition' ? 'secondary' : 'ghost'} size="xs" disabled={editor.navigationBlocked} aria-pressed={tab === 'definition'} onclick={() => (tab = 'definition')}>Definition</Button>
 		</div>
 		<div class="ml-auto flex items-center gap-2">
-			{#if editor.hasChanges}
-				<span class="text-[11px] text-muted-foreground">Unsaved changes</span>
-				<Button variant="outline" size="xs" disabled={blocked} onclick={() => { if (window.confirm('Discard unsaved changes in this table?')) editor.revert(); }}>Revert</Button>
-				<Button size="xs" disabled={blocked || !editor.tableEditable} onclick={() => void editor.save()}><Check />{editor.busy ? 'Working…' : 'Save'}</Button>
+			{#if editor.busy}
+				<span role="status" class="text-[11px] text-muted-foreground">Saving…</span>
 			{:else if editor.savedAt}
 				<span class="flex items-center gap-1 text-[11px] text-primary"><Check class="size-3" /> Saved</span>
 			{/if}
@@ -91,12 +94,12 @@
 					title="Check for changes every 5 seconds while this tab is visible" onclick={() => editor.setLive(!editor.live)}>
 					<Radio class={editor.live ? 'text-primary' : ''} />Live
 				</Button>
-				<Button variant="outline" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => editor.insertRow()}><Plus />Insert row</Button>
+				<Button variant="outline" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => editor.startInsert()}><Plus />Insert row</Button>
 				{#if editor.selectedCount > 0}
 					<Button variant="ghost" size="icon-sm" disabled={editor.busy} aria-label="Clear row selection" onclick={() => editor.clearRowSelection()}><X /></Button>
 					<Button bind:ref={deleteTrigger} variant="destructive" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => (deleteOpen = true)}><Trash2 />Delete {editor.selectedCount}</Button>
 				{/if}
-				<Button bind:ref={refreshButton} variant="outline" size="icon-sm" disabled={blocked} aria-label="Refresh database" onclick={() => { clearTimeout(timer); search = editor.search; void editor.reload(); }}><RotateCw class={editor.loading ? 'animate-spin' : ''} /></Button>
+				<Button bind:ref={refreshButton} variant="outline" size="icon-sm" disabled={blocked} aria-label="Refresh database" onclick={() => { clearTimeout(timer); search = editor.search; void editor.reload(); }}><RotateCw /></Button>
 			</div>
 		</div>
 		{#if editor.filter}
@@ -116,7 +119,7 @@
 		onCloseAutoFocus={(event) => { event.preventDefault(); (deleteTrigger?.isConnected ? deleteTrigger : refreshButton)?.focus(); }}>
 		<Dialog.Header>
 			<Dialog.Title>Delete {editor.selectedCount} selected rows?</Dialog.Title>
-			<Dialog.Description>This deletion is irreversible. All {editor.selectedCount} selected rows in this table will be deleted, including selections on other pages. Selected unsaved drafts will be removed.</Dialog.Description>
+			<Dialog.Description>This deletion is irreversible. All {editor.selectedCount} selected rows in this table will be deleted, including selections on other pages.</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>
 			<Button variant="outline" disabled={editor.busy} onclick={() => (deleteOpen = false)}>Cancel</Button>
@@ -124,3 +127,7 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+{#if editor.inserting}
+	<InsertRow table={editor.table} onclose={() => editor.inserting = false} />
+{/if}

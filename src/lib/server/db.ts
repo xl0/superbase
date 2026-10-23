@@ -318,7 +318,7 @@ export async function saveTable(pool: pg.Pool, args: SaveArgs): Promise<{ update
 			const assignments = entries.map(([name], i) => `${ident(name)} = $${i + 1}`);
 			const where = identityWhere(update.identity, pk, values);
 			const result = await client.query(`update ${target} set ${assignments.join(', ')} where ${where}`, values);
-			if (result.rowCount !== 1) throw new Error('Row conflict: row changed or was deleted. Pending changes were kept; revert them and refresh before editing again.');
+			if (result.rowCount !== 1) throw new Error('Row conflict: row changed or was deleted. Your input was kept; cancel and refresh before editing again.');
 			updated++;
 		}
 		for (const insert of args.inserts) {

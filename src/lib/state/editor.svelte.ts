@@ -1,12 +1,13 @@
 import { database, deleteRows, saveTable, tableRows } from '#lib/db.remote.js';
 import { message } from '#lib/utils.js';
-import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
+import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type SaveArgs, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
 
-type PendingRow = { identity: RowIdentity; original: Values; changes: Values };
+// Svelte's snapshot drops __proto__ keys; PK column names must survive capture exactly.
+const copyIdentity = (identity: RowIdentity): RowIdentity => ({ ...identity, pk: { ...identity.pk } });
 
-/** One browser workspace. Pending mutations own their identities, not page indexes. */
+/** One browser workspace. Mutations capture row identities, never page indexes. */
 export class EditorState {
 	connection = $state('');
 	tables = $state<Table[]>([]);
@@ -26,18 +27,17 @@ export class EditorState {
 	loading = $state(false);
 	busy = $state(false);
 	editing = $state(false);
+	inserting = $state(false);
 	cellSelected = $state(false);
-	live = $state(false);
+	live = $state(true);
 	polling = $state(false);
 	externalChange = $state(false);
 	liveError = $state<string | null>(null);
 	error = $state<string | null>(null);
 	savedAt = $state<number | null>(null);
 
-	/** Table keys and row keys are encoded tuples, never unescaped identifiers. */
-	edits = $state<Record<string, Record<string, PendingRow>>>({});
-	drafts = $state<Record<string, Row[]>>({});
-	rowSelection = $state<Record<string, Record<string, Row>>>({});
+	/** Selections own their captured identities across pages. */
+	rowSelection = $state<Record<string, Record<string, RowIdentity>>>({});
 	#request = 0;
 	#liveGeneration = 0;
 
@@ -46,24 +46,13 @@ export class EditorState {
 	tableEditable = $derived(editable(this.table));
 	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
-	draftsForTable = $derived(this.drafts[this.tableKey] ?? []);
-	pageRows = $derived(this.rowsPage === 0 ? [...this.draftsForTable, ...this.rows] : this.rows);
-
-	get draftCount() { return this.draftsForTable.length; }
-	get dirtyCount() {
-		return Object.values(this.edits[this.tableKey] ?? {}).reduce((count, row) => count + Object.keys(row.changes).length, 0);
-	}
-	get hasChanges() { return this.dirtyCount > 0 || this.draftCount > 0; }
-	get hasAnyChanges() {
-		return Object.values(this.edits).some((rows) => Object.keys(rows).length > 0) || Object.values(this.drafts).some((rows) => rows.length > 0);
-	}
+	get navigationBlocked() { return this.busy || this.editing || this.inserting; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
 
 	async initialize(connection: string) {
 		if (this.connection === connection && this.ready) return;
 		if (this.connection && this.connection !== connection) {
-			if (this.hasAnyChanges) {
-				this.ready = false;
+			if (this.navigationBlocked) {
 				this.error = 'Connection changed. Reconnect or reload to discard local changes; they will not be sent to another database.';
 				return;
 			}
@@ -77,7 +66,7 @@ export class EditorState {
 	}
 
 	async reload() {
-		if (this.busy || !this.connection) return;
+		if (this.navigationBlocked || !this.connection) return;
 		const request = ++this.#request;
 		this.loading = true;
 		this.rows = [];
@@ -181,7 +170,7 @@ export class EditorState {
 				this.externalChange = false;
 				return;
 			}
-			if (this.hasChanges || this.selectedCount || this.editing || this.cellSelected) {
+			if (this.inserting || this.selectedCount || this.editing || this.cellSelected) {
 				this.externalChange = true;
 				return;
 			}
@@ -197,7 +186,7 @@ export class EditorState {
 	}
 
 	async selectTable(schema: string, name: string, filter: Values | null = null) {
-		if (this.busy || (!filter && !this.filter && schema === this.activeSchema && name === this.activeTableName)) return;
+		if (this.navigationBlocked || (!filter && !this.filter && schema === this.activeSchema && name === this.activeTableName)) return;
 		this.activeSchema = schema;
 		this.activeTableName = name;
 		this.page = 0;
@@ -208,14 +197,14 @@ export class EditorState {
 		await this.fetch();
 	}
 	async clearFilter() {
-		if (this.busy) return;
+		if (this.navigationBlocked) return;
 		this.filter = null;
 		this.page = 0;
 		await this.fetch();
 	}
 	async followReference(row: Row, column: Column) {
 		const fk = column.foreignKey;
-		if (this.busy || this.loading || !fk) return;
+		if (this.navigationBlocked || this.loading || !fk) return;
 		const values = fk.columns.map((name) => this.getValue(row, name));
 		if (values.some((value) => value == null)) return;
 		await this.selectTable(fk.schema, fk.table, Object.fromEntries(
@@ -227,126 +216,100 @@ export class EditorState {
 		if (first) await this.selectTable(schema, first.name);
 	}
 	async setPage(page: number) {
-		if (this.busy || this.loading || page < 0 || !Number.isSafeInteger(page) || (page > this.page && !this.hasMore)) return;
+		if (this.navigationBlocked || this.loading || page < 0 || !Number.isSafeInteger(page) || (page > this.page && !this.hasMore)) return;
 		this.page = page;
 		await this.fetch();
 	}
 	async setPageSize(size: number) {
-		if (this.busy || ![100, 250, 500].includes(size)) return;
+		if (this.navigationBlocked || ![100, 250, 500].includes(size)) return;
 		this.pageSize = size;
 		this.page = 0;
 		await this.fetch();
 	}
 	async setSearch(search: string) {
-		if (this.busy) return;
+		if (this.navigationBlocked) return;
 		this.search = search;
 		this.page = 0;
 		await this.fetch();
 	}
 	async toggleSort(column: string) {
-		if (this.busy) return;
+		if (this.navigationBlocked) return;
 		this.sort = this.sort?.column !== column ? { column, direction: 'asc' } : this.sort.direction === 'asc' ? { column, direction: 'desc' } : null;
 		this.page = 0;
 		await this.fetch(true);
 	}
 	async setSort(column: string) {
-		if (this.busy) return;
+		if (this.navigationBlocked) return;
 		this.sort = column ? { column, direction: 'asc' } : null;
 		this.page = 0;
 		await this.fetch(true);
 	}
 	async toggleSortDirection() {
-		if (this.busy || !this.sort) return;
+		if (this.navigationBlocked || !this.sort) return;
 		this.sort = { ...this.sort, direction: this.sort.direction === 'asc' ? 'desc' : 'asc' };
 		this.page = 0;
 		await this.fetch(true);
 	}
 
 	getValue(row: Row, column: string): CellValue | undefined {
-		const changes = this.edits[this.tableKey]?.[row.key]?.changes;
-		return changes && Object.hasOwn(changes, column) ? changes[column]
-			: Object.hasOwn(row.values, column) ? row.values[column] : undefined;
-	}
-	hasEdit(key: string, column: string) {
-		return Object.hasOwn(this.edits[this.tableKey]?.[key]?.changes ?? {}, column);
+		return Object.hasOwn(row.values, column) ? row.values[column] : undefined;
 	}
 
-	/** Validate a whole reference tuple before applying any of its cells. */
-	editCells(row: Row, values: Record<string, CellValue | undefined>): boolean {
-		if (this.busy || this.loading || !this.tableEditable) return false;
-		const current = this.pageRows.find((candidate) => candidate.key === row.key);
-		if (!current || current.identity?.version !== row.identity?.version) return false;
-		const changes = Object.entries(values).map(([name, value]) => ({ column: this.table.columns.find((column) => column.name === name), value }));
-		if (changes.some(({ column, value }) => !column || !writable(column) ||
-			(value === undefined && !row.draft) || (value === null && !column.nullable))) return false;
-		for (const { column, value } of changes) this.editCell(current, column!, value);
-		return true;
-	}
-
-	editCell(row: Row, column: Column, value: CellValue | undefined) {
-		if (this.busy || this.loading || !this.tableEditable || !writable(column)) return;
-		if (row.draft) {
-			const draft = this.draftsForTable.find((candidate) => candidate.key === row.key);
-			if (!draft) return;
-			if (value === undefined) {
-				draft.values = { ...draft.values };
-				delete draft.values[column.name];
-			} else draft.values = { ...draft.values, [column.name]: value };
-		} else {
-			if (value === undefined || !row.identity || !this.rows.some((candidate) => candidate.key === row.key)) return;
-			const pending = this.edits[this.tableKey] ??= {};
-			const change = pending[row.key] ??= {
-				identity: $state.snapshot(row.identity), original: { ...row.values }, changes: {}
-			};
-			change.changes = { ...change.changes, [column.name]: value };
-			if (value === change.original[column.name]) delete change.changes[column.name];
-			if (!Object.keys(change.changes).length) delete pending[row.key];
-		}
-		this.savedAt = null;
-	}
-
-	insertRow() {
-		if (this.busy || this.loading || !this.tableEditable) return;
-		this.drafts[this.tableKey] = [{ key: `draft:${crypto.randomUUID()}`, values: {}, identity: null, draft: true }, ...this.draftsForTable];
-		this.savedAt = null;
-		if (this.page !== 0) { this.page = 0; void this.fetch(); }
-	}
-
-	async save() {
-		if (this.busy || this.loading || !this.hasChanges) return;
+	/** One atomic write for a cell, composite reference, or rectangular paste. */
+	async updateRows(changes: { row: Row; values: Record<string, CellValue | undefined> }[]) {
+		if (this.inserting) throw new Error('Finish inserting the new row first');
 		const key = this.tableKey;
-		const args = {
-			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-			updates: Object.values(this.edits[key] ?? {}).map((row) => ({ identity: $state.snapshot(row.identity), changes: { ...row.changes } })),
-			inserts: this.draftsForTable.map((row) => ({ ...row.values }))
-		};
+		const updatedKeys: string[] = [];
+		const updates = changes.map(({ row, values }) => {
+			const current = this.rows.find((candidate) => candidate.key === row.key);
+			if (!row.identity || !current || JSON.stringify(current.identity) !== JSON.stringify(row.identity)) {
+				throw new Error('This row is no longer current. Cancel and refresh before editing again.');
+			}
+			const entries = Object.entries(values);
+			for (const [name, value] of entries) {
+				const column = this.table.columns.find((column) => column.name === name);
+				if (!column || !writable(column)) throw new Error(`Column is not writable: ${name}`);
+				if (value === undefined) throw new Error('DEFAULT is only available in the new-row form');
+				if (value === null && !column.nullable) throw new Error(`${name} does not allow NULL`);
+			}
+			const changed = entries.filter(([name, value]) => value !== row.values[name]);
+			if (changed.length) updatedKeys.push(row.key);
+			return { identity: copyIdentity(row.identity), changes: Object.fromEntries(changed) as Values };
+		}).filter((update) => Object.keys(update.changes).length);
+		if (!updates.length) return;
+		await this.#save(updates, []);
+		// Updated versions must not remain selected for a later delete; unrelated selections survive.
+		for (const rowKey of updatedKeys) if (this.rowSelection[key]) delete this.rowSelection[key][rowKey];
+	}
+
+	startInsert() {
+		if (!this.navigationBlocked && !this.loading && this.ready && this.tableEditable) this.inserting = true;
+	}
+
+	async insertRow(values: Values) {
+		await this.#save([], [{ ...values }]);
+	}
+
+	async #save(updates: SaveArgs['updates'], inserts: Values[]) {
+		if (this.busy || this.loading || !this.ready || !this.tableEditable) throw new Error('The table is not ready for editing');
+		const key = this.tableKey;
+		const args = { connection: this.connection, schema: this.activeSchema, table: this.activeTableName, updates, inserts };
 		this.#liveGeneration++;
 		this.busy = true;
+		this.savedAt = null;
 		this.error = null;
 		try {
 			await saveTable(args);
-			delete this.edits[key];
-			delete this.drafts[key];
-			delete this.rowSelection[key];
 			this.savedAt = Date.now();
-			if (this.tableKey === key && this.connection === args.connection) await this.fetch();
-		} catch (error) {
-			this.error = message(error);
+			// Read failure after an acknowledged write must not turn Save into a duplicate-write retry.
+			if (this.tableKey === key && this.connection === args.connection) await this.fetch(true);
 		} finally { this.busy = false; }
 	}
 
-	revert() {
-		if (this.busy) return;
-		delete this.edits[this.tableKey];
-		delete this.drafts[this.tableKey];
-		delete this.rowSelection[this.tableKey];
-		this.savedAt = null;
-	}
 	discardAll() {
-		this.edits = {};
-		this.drafts = {};
 		this.rowSelection = {};
 		this.editing = false;
+		this.inserting = false;
 	}
 
 	clearRowSelection() {
@@ -358,26 +321,22 @@ export class EditorState {
 		if (this.busy || this.loading || !this.tableEditable) return;
 		const selection = this.rowSelection[this.tableKey] ??= {};
 		for (const row of rows) {
-			if (selected) selection[row.key] = $state.snapshot(row);
+			if (selected && row.identity) selection[row.key] = copyIdentity(row.identity);
 			else delete selection[row.key];
 		}
 	}
 	async deleteSelected() {
-		if (this.busy || this.loading || !this.selectedCount) return;
+		if (this.navigationBlocked || this.loading || !this.selectedCount) return;
 		const key = this.tableKey;
-		const rows = Object.values(this.rowSelection[key]);
-		const removing = new Set(rows.map((row) => row.key));
 		const args = {
 			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-			identities: rows.flatMap((row) => row.identity ? [$state.snapshot(row.identity)] : [])
+			identities: Object.values(this.rowSelection[key]).map(copyIdentity)
 		};
 		this.#liveGeneration++;
 		this.busy = true;
 		this.error = null;
 		try {
 			if (args.identities.length) await deleteRows(args);
-			this.drafts[key] = (this.drafts[key] ?? []).filter((row) => !removing.has(row.key));
-			for (const row of rows) if (this.edits[key]) delete this.edits[key][row.key];
 			delete this.rowSelection[key];
 			if (args.identities.length && this.tableKey === key && this.connection === args.connection) await this.fetch();
 		} catch (error) { this.error = message(error); }

@@ -12,7 +12,7 @@ async function fixture() {
 	let save: (() => Promise<void>) | undefined;
 	let read: ((args: any) => Promise<{ rows: Row[]; hasMore: boolean }>) | undefined;
 	const column = (name: string, primaryKey = false) => ({ name, primaryKey, type: 'text', kind: 'text' as const, nullable: !primaryKey, generated: false, identity: null, defaultValue: null });
-	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__')] }));
+	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
 	const row = (id: string, value = 'original'): Row => ({ key: id, values: { id, value }, identity: { pk: { id }, version: '1', relation: '123' } });
 	const api = {
 		database: () => ({ refresh: async () => {}, current: { tables, server: { database: 'test' } } }),
@@ -45,44 +45,87 @@ function deferred<T = void>() {
 	return { promise, resolve };
 }
 
-test('off-page edits and row selections retain their original identities', async () => {
-	const { editor: s, calls, tables } = await fixture();
-	s.editCell(s.rows[0], tables[0].columns[1], 'changed');
+test('immediate updates retain unmodified selections across pages and remove only changed versions', async () => {
+	const { editor: s, calls, row } = await fixture();
 	s.toggleRowSelection(s.rows[0]);
 	await s.setPage(1);
 	assert.equal(s.rows[0].key, '2');
-	assert.equal(s.selectedCount, 1);
-	await s.save();
-	assert.equal(calls[0].args.updates[0].identity.pk.id, '1');
-	assert.deepEqual(calls[0].args.updates[0].changes, { value: 'changed' });
-	assert.equal(s.hasAnyChanges, false);
-	await s.setPage(0);
 	s.toggleRowSelection(s.rows[0]);
-	await s.setPage(1);
+	const unchanged = s.rows[0];
+	s.rows.push(row('3'));
+	const changed = s.rows[1];
+	s.toggleRowSelection(changed);
+	await s.updateRows([{ row: unchanged, values: { value: 'original' } }, { row: changed, values: { value: 'changed' } }]);
+	assert.equal(calls.length, 1);
+	assert.deepEqual(calls[0].args.updates, [{ identity: changed.identity, changes: { value: 'changed' } }]);
+	assert.equal(s.isRowSelected('1'), true);
+	assert.equal(s.isRowSelected('2'), true);
+	assert.equal(s.isRowSelected('3'), false);
 	await s.deleteSelected();
-	assert.equal(calls[1].args.identities[0].pk.id, '1');
+	assert.deepEqual(calls[1].args.identities.map((identity: any) => identity.pk.id), ['1', '2']);
 	assert.equal(s.selectedCount, 0);
 });
 
-test('busy mutations block navigation/new edits and clean only their captured table', async () => {
-	const { editor: s, tables, deferSave } = await fixture();
-	s.editCell(s.rows[0], tables[0].columns[1], 'A');
-	const a = s.tableKey;
-	await s.selectTable('public', 'b');
-	s.editCell(s.rows[0], tables[1].columns[1], 'B');
-	const b = s.tableKey;
-	await s.selectTable('public', 'a');
+test('__proto__ primary keys survive update and cross-page delete identity capture', async () => {
+	const { editor: s, calls } = await fixture();
+	const row = s.rows[0];
+	row.identity.pk = Object.fromEntries([['__proto__', 'key1']]);
+	row.values = { ...row.values, ...row.identity.pk };
+	await s.updateRows([{ row, values: { value: 'changed' } }]);
+	assert.deepEqual(calls[0].args.updates[0].identity.pk, Object.fromEntries([['__proto__', 'key1']]));
+	s.rows = [row];
+	s.toggleRowSelection(row);
+	row.identity.pk.__proto__ = 'changed after selection';
+	await s.setPage(1);
+	await s.deleteSelected();
+	assert.deepEqual(calls[1].args.identities[0].pk, Object.fromEntries([['__proto__', 'key1']]));
+	assert.equal(Object.getPrototypeOf(calls[1].args.identities[0].pk), Object.prototype);
+});
+
+test('atomic multirow updates snapshot composite identities and values, skip no-ops, and block busy mutations', async () => {
+	const { editor: s, calls, row, deferSave, deferRead } = await fixture();
+	s.rows.push(row('2'));
+	s.table.columns.push({ ...s.table.columns[0], name: 'tenant' });
+	for (const row of s.rows) {
+		row.values.tenant = 'tenant-1';
+		row.identity.pk.tenant = 'tenant-1';
+	}
+	const first = s.rows[0];
+	const second = s.rows[1];
+	await s.updateRows([{ row: first, values: { value: 'original' } }]);
+	assert.equal(calls.length, 0);
+	const values = { id: '42', value: 'exact %_ value' };
+	const identity = structuredClone({ ...first.identity, pk: { ...first.identity.pk } });
+	const original = s.rows;
+	s.toggleRowSelection(first);
 	const pending = deferred(); deferSave(() => pending.promise);
-	const saving = s.save();
+	const secondValues = Object.fromEntries([['value', null], ['__proto__', ''], ['constructor', 'literal']]);
+	const saving = s.updateRows([{ row: first, values }, { row: second, values: secondValues }]);
 	assert.equal(s.busy, true);
+	assert.equal(s.rows, original);
+	assert.equal(s.getValue(first, 'value'), 'original');
+	values.value = 'changed after submit';
+	first.identity.pk.tenant = 'changed after submit';
+	assert.deepEqual(calls[0].args, {
+		connection: 'connection-1', schema: 'public', table: 'a', inserts: [],
+		updates: [{ identity, changes: { id: '42', value: 'exact %_ value' } }, { identity: second.identity, changes: secondValues }]
+	});
+	await assert.rejects(s.updateRows([{ row: second, values: { value: 'blocked' } }]), /not ready/);
+	await assert.rejects(s.insertRow({ value: 'blocked' }), /not ready/);
+	await s.deleteSelected();
+	s.clearRowSelection();
+	s.toggleRowSelection(second);
+	s.startInsert();
 	await s.selectTable('public', 'b');
-	assert.equal(s.tableKey, a);
-	s.editCell(s.rows[0], tables[0].columns[1], 'ignored while busy');
-	assert.equal(s.getValue(s.rows[0], 'value'), 'A');
-	// Even an external context change cannot make the old completion erase B.
-	s.activeTableName = 'b'; pending.resolve(); await saving;
-	assert.equal(s.edits[a], undefined);
-	assert.equal(s.edits[b]['1'].changes.value, 'B');
+	assert.equal(s.activeTableName, 'a');
+	assert.equal(s.selectedCount, 1);
+	assert.equal(s.inserting, false);
+	assert.equal(calls.length, 1);
+	deferRead(async () => ({ rows: [row('committed', 'exact %_ value')], hasMore: false }));
+	pending.resolve(); await saving;
+	assert.equal(s.rows[0].key, 'committed');
+	assert.equal(s.busy, false);
+	assert.equal(typeof s.savedAt, 'number');
 });
 
 test('table/page loads clear stale rows and reject out-of-order responses', async () => {
@@ -98,8 +141,8 @@ test('table/page loads clear stale rows and reject out-of-order responses', asyn
 	assert.equal(s.hasMore, false);
 });
 
-test('sorting retains displayed rows, blocks edits and ignores superseded results', async () => {
-	const { editor: s, deferRead, row, tables } = await fixture();
+test('sorting retains displayed rows, blocks writes and ignores superseded results', async () => {
+	const { editor: s, deferRead, row, calls } = await fixture();
 	await s.setPage(1);
 	const old = s.rows[0];
 	const slow = deferred<{ rows: Row[]; hasMore: boolean }>();
@@ -108,9 +151,10 @@ test('sorting retains displayed rows, blocks edits and ignores superseded result
 	assert.equal(s.rows[0].key, old.key);
 	assert.equal(s.rowsPage, 1);
 	assert.equal(s.loading, true);
-	assert.equal(s.editCells(old, { value: 'ignored' }), false);
-	s.editCell(old, tables[0].columns[1], 'also ignored');
-	assert.equal(s.hasChanges, false);
+	await assert.rejects(s.updateRows([{ row: old, values: { value: 'blocked' } }]), /not ready/);
+	s.startInsert();
+	assert.equal(s.inserting, false);
+	assert.equal(calls.length, 0);
 	deferRead(async () => ({ rows: [row('replacement')], hasMore: false }));
 	await s.selectTable('public', 'b');
 	slow.resolve({ rows: [row('old-sort')], hasMore: true });
@@ -120,7 +164,7 @@ test('sorting retains displayed rows, blocks edits and ignores superseded result
 	assert.equal(s.loading, false);
 });
 
-test('failed sort resets the displayed page so new drafts remain visible', async () => {
+test('failed sort clears stale rows and resets their displayed page', async () => {
 	const { editor: s, deferRead } = await fixture();
 	await s.setPage(1);
 	deferRead(async () => { throw new Error('Sort failed'); });
@@ -128,84 +172,150 @@ test('failed sort resets the displayed page so new drafts remain visible', async
 	assert.equal(s.error, 'Sort failed');
 	assert.equal(s.loading, false);
 	assert.equal(s.rowsPage, 0);
-	s.insertRow();
-	assert.equal(s.pageRows.length, 1);
-	assert.equal(s.pageRows[0].draft, true);
+	assert.equal(s.rows.length, 0);
 });
 
-test('composite reference changes are atomic and navigation uses exact current values', async () => {
-	const { editor: s, tables, deferRead } = await fixture();
+test('invalid or stale batches fail before writing; reference navigation uses exact persisted values', async () => {
+	const { editor: s, tables, deferRead, calls, row } = await fixture();
 	const fk = { schema: 'public', table: 'b', column: 'id', columns: ['id', 'value'], referencedColumns: ['id', 'value'] };
 	tables[0].columns[0].foreignKey = fk;
-	const row = s.rows[0];
-	assert.equal(s.editCells(row, { id: '42', missing: 'invalid' }), false);
-	assert.equal(s.hasChanges, false);
-	assert.equal(s.editCells(row, { id: null, value: 'invalid' }), false);
-	assert.equal(s.hasChanges, false);
-	assert.equal(s.editCells(row, { id: '42', value: 'exact %_ value' }), true);
+	s.rows.push(row('2'));
+	const captured = s.rows[0];
+	for (const values of [{ missing: 'invalid' }, { id: null }, { value: undefined }]) {
+		await assert.rejects(s.updateRows([{ row: captured, values: { value: 'valid' } }, { row: s.rows[1], values }]));
+	}
+	for (const mode of ['generated', 'identity'] as const) {
+		const column = s.table.columns[1];
+		if (mode === 'generated') column.generated = true;
+		else column.identity = 'always';
+		await assert.rejects(s.updateRows([{ row: captured, values: { value: 'invalid' } }]), /not writable/);
+		column.generated = false; column.identity = null;
+	}
+	await assert.rejects(s.updateRows([{ row: { ...captured, identity: { ...captured.identity, version: 'stale' } }, values: { value: 'stale' } }]), /no longer current/);
+	await assert.rejects(s.updateRows([{ row: row('off-page'), values: { value: 'stale' } }]), /no longer current/);
+	assert.equal(calls.length, 0);
+	assert.equal(s.getValue(captured, 'value'), 'original');
+	captured.values.id = '42'; captured.values.value = 'exact %_ value';
 	let args: any;
 	deferRead(async (value) => { args = value; return { rows: [], hasMore: false }; });
-	await s.followReference(row, tables[0].columns[0]);
+	await s.followReference(captured, tables[0].columns[0]);
 	assert.equal(s.activeTableName, 'b');
 	assert.deepEqual(args.filter, { id: '42', value: 'exact %_ value' });
-	assert.equal(s.editCells(row, { value: 'stale panel' }), false);
+	await assert.rejects(s.updateRows([{ row: captured, values: { value: 'stale panel' } }]), /no longer current/);
 	await s.selectTable('public', 'b');
 	assert.equal(s.filter, null);
 	assert.equal(args.filter, undefined);
 });
 
-test('draft defaults, explicit null/empty, and arbitrary column names stay distinct', async () => {
-	const { editor: s, calls, tables } = await fixture();
-	s.insertRow();
-	const draft = s.draftsForTable[0];
-	assert.deepEqual(Object.keys(draft.values), []);
-	s.editCell(draft, tables[0].columns[1], null);
-	s.editCell(draft, tables[0].columns[2], 'literal prototype');
-	assert.equal(Object.hasOwn(draft.values, '__proto__'), true);
-	await s.save();
-	assert.deepEqual(calls[0].args.inserts[0], Object.fromEntries([['value', null], ['__proto__', 'literal prototype']]));
-	s.insertRow();
-	s.editCell(s.draftsForTable[0], tables[0].columns[1], '');
-	assert.equal(s.draftsForTable[0].values.value, '');
-	s.editCell(s.draftsForTable[0], tables[0].columns[1], undefined);
-	assert.equal(Object.hasOwn(s.draftsForTable[0].values, 'value'), false);
+test('insert form never adds grid drafts and preserves sparse DEFAULT, NULL, empty and arbitrary names', async () => {
+	const { editor: s, calls, deferSave } = await fixture();
+	const original = s.rows;
+	s.startInsert();
+	assert.equal(s.inserting, true);
+	assert.equal(s.rows, original);
+	await assert.rejects(s.updateRows([{ row: s.rows[0], values: { value: 'blocked' } }]), /Finish inserting/);
+	assert.equal(calls.length, 0);
+	const values = Object.fromEntries([['value', ''], ['__proto__', null], ['constructor', 'literal constructor']]);
+	const draft: Row = { key: 'local', values, identity: null, draft: true };
+	assert.equal(s.getValue(draft, 'id'), undefined);
+	assert.equal(s.getValue(draft, '__proto__'), null);
+	assert.equal(s.getValue(draft, 'constructor'), 'literal constructor');
+	assert.equal(s.getValue({ ...draft, values: {} }, 'constructor'), undefined);
+	const pending = deferred(); deferSave(() => pending.promise);
+	const saving = s.insertRow(values);
+	values.value = 'changed after submit';
+	assert.equal(s.rows, original);
+	assert.deepEqual(calls[0].args.inserts, [Object.fromEntries([['value', ''], ['__proto__', null], ['constructor', 'literal constructor']])]);
+	assert.deepEqual(calls[0].args.updates, []);
+	assert.equal(Object.hasOwn(calls[0].args.inserts[0], 'id'), false);
+	pending.resolve(); await saving;
+	assert.equal(s.inserting, true); // The form, not persistence, owns closing / Create more.
+	await s.insertRow({});
+	assert.deepEqual(calls[1].args.inserts, [{}]);
 });
 
-test('connection reinitialization cannot move pending edits to a new database', async () => {
-	const { editor: s, tables } = await fixture();
-	s.editCell(s.rows[0], tables[0].columns[1], 'keep on original database');
-	await s.initialize('connection-2');
-	assert.equal(s.connection, 'connection-1');
-	assert.equal(s.hasAnyChanges, true);
-	assert.match(s.error, /Connection changed/);
-	s.discardAll();
-	await s.initialize('connection-2');
-	assert.equal(s.connection, 'connection-2');
-	assert.equal(s.hasAnyChanges, false);
+test('open cell and insert forms block navigation, reload and connection changes', async () => {
+	for (const flag of ['editing', 'inserting']) {
+		const { editor: s, deferRead } = await fixture();
+		let reads = 0;
+		deferRead(async () => { reads++; return { rows: [], hasMore: false }; });
+		s.sort = { column: 'value', direction: 'asc' };
+		s.filter = { id: '1' };
+		s[flag] = true;
+		const original = s.rows;
+		await s.selectTable('public', 'b');
+		await s.setSchema('public');
+		await s.setPage(1);
+		await s.setPageSize(250);
+		await s.setSearch('blocked');
+		await s.toggleSort('id');
+		await s.setSort('id');
+		await s.toggleSortDirection();
+		await s.clearFilter();
+		await s.reload();
+		await s.initialize('connection-2');
+		assert.equal(reads, 0);
+		assert.equal(s.rows, original);
+		assert.equal(s.activeTableName, 'a');
+		assert.equal(s.page, 0);
+		assert.equal(s.pageSize, 100);
+		assert.equal(s.search, '');
+		assert.deepEqual(s.sort, { column: 'value', direction: 'asc' });
+		assert.deepEqual(s.filter, { id: '1' });
+		assert.equal(s.connection, 'connection-1');
+		assert.equal(s[flag], true);
+		assert.match(s.error, /Connection changed/);
+		s.discardAll();
+		await s.initialize('connection-2');
+		assert.equal(s.connection, 'connection-2');
+		assert.equal(s.navigationBlocked, false);
+	}
 });
 
-test('failed saves preserve pending changes and exact originals; editing back removes an overlay', async () => {
-	const { editor: s, tables, deferSave } = await fixture();
-	const original = s.rows[0];
-	s.editCell(original, tables[0].columns[1], 'changed');
-	deferSave(async () => { throw { message: 'Row conflict' }; });
-	await s.save();
-	assert.equal(s.error, 'Row conflict');
-	assert.equal(s.hasChanges, true);
-	assert.equal(s.busy, false);
-	s.editCell(original, tables[0].columns[1], 'original');
-	assert.equal(s.hasAnyChanges, false);
+test('write failures reject without changing displayed rows, selections or open form flags', async () => {
+	for (const flag of ['editing', 'inserting']) {
+		const { editor: s, calls, deferSave } = await fixture();
+		const original = s.rows;
+		s.toggleRowSelection(s.rows[0]);
+		s[flag] = true;
+		const values = { value: 'UI-owned buffer' };
+		deferSave(async () => { throw new Error('Row conflict'); });
+		await assert.rejects(flag === 'editing' ? s.updateRows([{ row: s.rows[0], values }]) : s.insertRow(values), /Row conflict/);
+		assert.equal(s.rows, original);
+		assert.equal(s.getValue(s.rows[0], 'value'), 'original');
+		assert.deepEqual(values, { value: 'UI-owned buffer' });
+		assert.equal(s.selectedCount, 1);
+		assert.equal(s[flag], true);
+		assert.equal(s.busy, false);
+		assert.equal(s.error, null);
+		assert.equal(s.savedAt, null);
+		assert.equal(calls.length, 1);
+	}
+});
+
+test('post-commit refresh failures resolve the write and never retry it', async () => {
+	for (const insert of [false, true]) {
+		const { editor: s, calls, deferRead } = await fixture();
+		deferRead(async () => { throw new Error('Refresh failed'); });
+		if (insert) s.startInsert();
+		else s.editing = true;
+		await (insert ? s.insertRow({ value: 'once' }) : s.updateRows([{ row: s.rows[0], values: { value: 'once' } }]));
+		assert.equal(calls.length, 1);
+		assert.equal(s.error, 'Refresh failed');
+		assert.equal(typeof s.savedAt, 'number');
+		assert.equal(s.busy, false);
+		assert.equal(s.loading, false);
+		assert.equal(insert ? s.inserting : s.editing, true);
+	}
 });
 
 test('live polls refresh current query, preserve unchanged arrays and update idle pages', async () => {
-	const { editor: s, deferRead, row, tables } = await fixture();
-	assert.equal(s.live, false);
+	const { editor: s, deferRead, row } = await fixture();
+	assert.equal(s.live, true);
 	assert.equal(s.polling, false);
 	assert.equal(s.externalChange, false);
 	assert.equal(s.liveError, null);
 	assert.equal(s.cellSelected, false);
-	// Work in another table does not prevent refreshing the active table.
-	s.editCell(s.rows[0], tables[0].columns[1], 'local');
 	await s.selectTable('public', 'b', { id: 'exact' });
 	await s.setSearch('query');
 	await s.setSort('value');
@@ -229,7 +339,6 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(s.rows[0].key, 'updated');
 	assert.equal(s.rowsPage, 1);
 	assert.equal(s.hasMore, false);
-	assert.equal(s.hasAnyChanges, true);
 	// An emptied page is applied as returned, without a foreground page-zero fetch.
 	result = { rows: [], hasMore: false };
 	await s.poll();
@@ -238,23 +347,20 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(calls.length, 3);
 });
 
-for (const protection of ['draft', 'edit', 'row selection', 'editor', 'cell selection']) {
+for (const protection of ['insert form', 'row selection', 'editor', 'cell selection']) {
 	test(`live updates preserve ${protection}, including work begun in flight`, async () => {
-		const { editor: s, deferRead, row, tables } = await fixture();
+		const { editor: s, deferRead, row } = await fixture();
 		s.setLive(true);
 		const original = s.rows;
 		const slow = deferred<RowsPage>();
 		deferRead(() => slow.promise);
 		const polling = s.poll();
-		if (protection === 'draft') {
-			s.insertRow();
-			s.editCell(s.draftsForTable[0], tables[0].columns[1], 'draft buffer');
-		} else if (protection === 'edit') s.editCell(s.rows[0], tables[0].columns[1], 'edit buffer');
+		if (protection === 'insert form') s.startInsert();
 		else if (protection === 'row selection') s.toggleRowSelection(s.rows[0]);
 		else if (protection === 'editor') s.editing = true;
 		else s.cellSelected = true;
 		const local = () => JSON.stringify({
-			edits: s.edits, drafts: s.drafts, selection: s.rowSelection,
+			selection: s.rowSelection, inserting: s.inserting,
 			editing: s.editing, cellSelected: s.cellSelected, page: s.page, rowsPage: s.rowsPage
 		});
 		const before = local();
@@ -268,8 +374,7 @@ for (const protection of ['draft', 'edit', 'row selection', 'editor', 'cell sele
 		await s.poll();
 		assert.equal(s.rows, original);
 		assert.equal(local(), before);
-		s.revert();
-		s.editing = false;
+		s.discardAll();
 		s.cellSelected = false;
 		await s.poll();
 		assert.equal(s.rows[0].key, 'external');
@@ -279,6 +384,7 @@ for (const protection of ['draft', 'edit', 'row selection', 'editor', 'cell sele
 
 test('live polls skip ineligible states and never overlap, even across off/on', async () => {
 	const { editor: s, deferRead, row } = await fixture();
+	s.setLive(false);
 	let reads = 0;
 	const slow = deferred<RowsPage>();
 	deferRead(() => { reads++; return slow.promise; });
@@ -378,41 +484,43 @@ test('poll completions are ignored when inactive or busy, including stale errors
 	}
 });
 
-test('a save invalidates an older poll even after the save finishes', async () => {
-	const { editor: s, deferRead, deferSave, tables, row } = await fixture();
-	s.setLive(true);
-	const slow = deferred<RowsPage>();
-	deferRead(() => slow.promise);
-	const polling = s.poll();
-	s.editCell(s.rows[0], tables[0].columns[1], 'local');
-	deferSave(async () => { throw new Error('save failure'); });
-	await s.save();
-	// Remove the foreground error to isolate the mutation-generation guard.
-	s.error = null;
-	s.revert();
-	const original = s.rows;
-	slow.resolve({ rows: [row('before-save')], hasMore: false });
-	await polling;
-	assert.equal(s.rows, original);
-	assert.equal(s.externalChange, false);
+test('attempted writes invalidate older polls even after failed writes finish', async () => {
+	for (const insert of [false, true]) {
+		const { editor: s, deferRead, deferSave, row } = await fixture();
+		s.setLive(true);
+		const slow = deferred<RowsPage>();
+		deferRead(() => slow.promise);
+		const polling = s.poll();
+		deferSave(async () => { throw new Error('save failure'); });
+		await assert.rejects(insert ? s.insertRow({ value: 'local' }) : s.updateRows([{ row: s.rows[0], values: { value: 'local' } }]), /save failure/);
+		// No form flags or foreground error mask a missing mutation-generation guard.
+		assert.equal(s.error, null);
+		assert.equal(s.navigationBlocked, false);
+		const original = s.rows;
+		slow.resolve({ rows: [row('before-save')], hasMore: false });
+		await polling;
+		assert.equal(s.rows, original);
+		assert.equal(s.externalChange, false);
+	}
 });
 
 test('live errors preserve local work, recover, and clear on explicit view transitions', async () => {
-	const { editor: s, deferRead, row, tables } = await fixture();
+	const { editor: s, deferRead, row } = await fixture();
 	s.setLive(true);
-	s.editCell(s.rows[0], tables[0].columns[1], 'local');
+	s.editing = true;
 	const original = s.rows;
 	deferRead(async () => { throw new Error('offline'); });
 	await s.poll();
 	assert.equal(s.liveError, 'offline');
 	assert.equal(s.error, null);
 	assert.equal(s.rows, original);
-	assert.equal(s.getValue(s.rows[0], 'value'), 'local');
+	assert.equal(s.editing, true);
 	assert.equal(s.polling, false);
 	deferRead(async () => ({ rows: [row('changed')], hasMore: false }));
 	await s.poll();
 	assert.equal(s.liveError, null);
 	assert.equal(s.externalChange, true);
+	s.editing = false;
 	assert.equal(s.rows, original);
 	deferRead(async () => { throw new Error('offline again'); });
 	await s.poll();
@@ -429,6 +537,6 @@ test('live errors preserve local work, recover, and clear on explicit view trans
 		assert.equal(s.externalChange, false);
 		slow.resolve({ rows: [row('explicit')], hasMore: true });
 		await reading;
-		assert.equal(s.hasChanges, true);
+		assert.equal(s.rows[0].key, 'explicit');
 	}
 });

@@ -5,26 +5,26 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Studio-inspired neutral surfaces and emerald actions; shared by shadcn and the grid. */
+/* Studio-like charcoal surfaces; brand green is an accent, not a surface color. */
 :root {
-	--background: #171717;
+	--background: #131413;
 	--foreground: #ededed;
-	--card: #1c1c1c;
+	--card: #181a19;
 	--card-foreground: #ededed;
-	--popover: #232323;
+	--popover: #1b1d1c;
 	--popover-foreground: #ededed;
 	--primary: #3ecf8e;
 	--primary-foreground: #062e1a;
-	--secondary: #292929;
+	--secondary: #252726;
 	--secondary-foreground: #ededed;
-	--muted: #262626;
-	--muted-foreground: #a1a1a1;
-	--accent: #303030;
+	--muted: #232523;
+	--muted-foreground: #a1a3a1;
+	--accent: #2c2e2d;
 	--accent-foreground: #ededed;
 	--destructive: #f07575;
-	--border: #303030;
-	--input: #3a3a3a;
-	--ring: #3ecf8e;
+	--border: #292b29;
+	--input: #383a39;
+	--ring: #737873;
 	--radius: 0.5rem;
 }
 
@@ -59,5 +59,5 @@
 	* { @apply border-border outline-ring/50; scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
 	html, body { height: 100%; }
 	body { @apply bg-background text-foreground font-sans; margin: 0; font-size: 13px; -webkit-font-smoothing: antialiased; }
-	::selection { background: color-mix(in srgb, var(--primary) 30%, transparent); }
+	::selection { background: color-mix(in srgb, var(--foreground) 20%, transparent); }
 }

@@ -4,10 +4,11 @@ import { history, isolateHistory, redo, undo } from '@codemirror/commands';
 import { jsonValue, prettyJSON, setJSONValue } from '../src/lib/json.js';
 import type { CellValue } from '../src/lib/types.js';
 
-function buffer(value: CellValue | undefined) {
+function buffer(value: CellValue | undefined, language: 'text' | 'json' = 'json') {
+	const documentText = (value: CellValue | undefined) => language === 'json' ? prettyJSON(value ?? '') : value ?? '';
 	let state = EditorState.create({
-		doc: prettyJSON(value ?? ''),
-		extensions: [history(), jsonValue.init(() => value)]
+		doc: documentText(value),
+		extensions: [EditorState.lineSeparator.of('\n'), history(), jsonValue.init(() => value)]
 	});
 	return {
 		get state() { return state; },
@@ -19,7 +20,7 @@ function buffer(value: CellValue | undefined) {
 			}).state;
 		},
 		set(value: CellValue | undefined) {
-			const doc = prettyJSON(value ?? '');
+			const doc = documentText(value);
 			state = state.update({
 				changes: doc === state.doc.toString() ? undefined : { from: 0, to: state.doc.length, insert: doc },
 				effects: setJSONValue.of({ value }),
@@ -149,6 +150,40 @@ describe('JSON buffer semantic history', () => {
 		expect(editor.state.field(jsonValue)).toBe('[]');
 		expect(undo(editor)).toBe(true);
 		expect(editor.state.field(jsonValue)).toBe(original);
+	});
+});
+
+describe('plain-text buffer', () => {
+	test('JSON-looking text and mixed line endings survive input and undo verbatim', () => {
+		for (const original of [' \t{ "n": 9007199254740993 }\r\n', 'first\r\nsecond\rthird\nfourth\t ']) {
+			const editor = buffer(original, 'text');
+			expect(editor.state.doc.toString()).toBe(original);
+			editor.dispatch(editor.state.update({ changes: { from: 0, insert: 'X' } }));
+			expect(editor.state.field(jsonValue)).toBe(`X${original}`);
+			expect(undo(editor)).toBe(true);
+			expect(editor.state.doc.toString()).toBe(original);
+			expect(editor.state.field(jsonValue)).toBe(original);
+			expect(redo(editor)).toBe(true);
+			expect(editor.state.field(jsonValue)).toBe(`X${original}`);
+			editor.set(original);
+			expect(editor.state.doc.toString()).toBe(original);
+		}
+	});
+
+	test('plain text retains NULL, DEFAULT and empty semantics through undo', () => {
+		for (const original of [null, undefined, '']) {
+			const editor = buffer(original, 'text');
+			editor.edit('hello');
+			expect(undo(editor)).toBe(true);
+			expect(editor.state.field(jsonValue)).toBe(original);
+		}
+		const editor = buffer(null, 'text');
+		editor.set('');
+		editor.set(undefined);
+		expect(undo(editor)).toBe(true);
+		expect(editor.state.field(jsonValue)).toBe('');
+		expect(undo(editor)).toBe(true);
+		expect(editor.state.field(jsonValue)).toBeNull();
 	});
 });
 

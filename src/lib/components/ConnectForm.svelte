@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { rememberedConnection, rememberConnection, pauseRememberedConnection, forgetConnection } from '#lib/remembered-connection.js';
 	import { Eye, EyeOff } from '@lucide/svelte';
 	import { connect, disconnect, useDefault } from '#lib/db.remote.js';
 	import type { ConnectionStatus } from '#lib/types.js';
@@ -19,6 +21,27 @@
 	const id = $props.id();
 	let url = $state('');
 	let reveal = $state(false);
+	let remember = $state(false);
+	let saved = $state(false);
+	onMount(() => {
+		try {
+			const stored = rememberedConnection();
+			if (stored) { url = stored.url; remember = true; saved = true; }
+		} catch {
+			saved = true;
+			error = 'Cannot read browser storage. Forget the saved connection or allow storage for this site.';
+		}
+	});
+
+	function forget() {
+		try {
+			forgetConnection();
+			url = '';
+			remember = false;
+			saved = false;
+			error = null;
+		} catch { error = 'Cannot clear browser storage. Remove this site’s saved data in browser settings.'; }
+	}
 	let error = $state<string | null>(null);
 	let action = $state('');
 	const parsedUrl = $derived.by(() => {
@@ -40,10 +63,20 @@
 		action = kind;
 		error = null;
 		try {
+			// Disable restoration before changing targets; only a successful opt-in connect re-enables it.
+			const intent = pauseRememberedConnection();
 			const expected = status.connection?.id ?? null;
 			if (kind === 'connect') await connect({ url: url.trim(), expected });
 			else if (kind === 'default') await useDefault({ expected });
 			else await disconnect({ expected });
+			if (kind === 'connect') {
+				try {
+					if (remember) rememberConnection(url.trim(), intent);
+					else forgetConnection(intent);
+				} catch {
+					window.alert('Connected, but browser storage could not be updated. Automatic reconnection is disabled.');
+				}
+			}
 			url = '';
 			onsuccess();
 			window.location.reload();
@@ -84,10 +117,24 @@
 			{/if}
 		</p>
 	</div>
+	<div class="space-y-2">
+		<div class="flex items-center gap-2">
+			<Checkbox id={`${id}-remember`} bind:checked={remember} disabled={pending || disabled}
+				aria-describedby={`${id}-remember-help`} />
+			<Label for={`${id}-remember`} class="text-xs">Remember on this browser</Label>
+		</div>
+		<p id={`${id}-remember-help`} class="text-[11px] leading-relaxed text-muted-foreground">
+			Stores the URL and password in this browser, unencrypted. Scripts on this site and anyone
+			with access to your browser profile can read them. Reconnects on page load, not during edits.
+		</p>
+		{#if saved}
+			<Button type="button" variant="outline" size="sm" disabled={pending || disabled} onclick={forget}>Forget saved connection</Button>
+		{/if}
+	</div>
 	{#if error}
 		<p role="alert" class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs break-words text-destructive">{error}</p>
 	{/if}
-	<Button type="submit" class="w-full text-xs" disabled={pending || disabled || !url.trim()}>
+	<Button type="submit" class="w-full border-[#07834b] bg-[#026439] text-xs text-foreground hover:bg-[#027a46]" disabled={pending || disabled || !url.trim()}>
 		{pending && action === 'connect' ? 'Connecting…' : 'Connect'}
 	</Button>
 	{#if status.defaultAvailable || status.connection}

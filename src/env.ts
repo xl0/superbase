@@ -2,9 +2,8 @@ import { defineEnvVars } from '@sveltejs/kit/env';
 
 export const variables = defineEnvVars({
 	DATABASE_URL: {
-		description: 'Postgres connection string, e.g. postgresql://user:pass@host:5432/db',
-		// Optional at startup so the app can show a connection error screen instead of
-		// failing to boot. The db module throws a readable error when it is empty.
+		description: 'Optional trusted default Postgres URL; browsers can choose a separate connection.',
+		// Missing configuration is a normal disconnected state, not a startup error.
 		schema: (value) => value ?? ''
 	}
 });

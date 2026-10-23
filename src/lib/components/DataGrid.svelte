@@ -1,748 +1,306 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, ArrowUpDown, KeyRound, Link2 } from 'lucide-svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import { ArrowDown, ArrowUp, KeyRound, Link2 } from '@lucide/svelte';
 	import { PersistedState } from 'runed';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
+	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { displayValue } from '#lib/format.js';
-	import type { Column, Row, Table } from '#lib/types.js';
+	import { message } from '#lib/utils.js';
+	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
+	import { writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
-	let {
-		table,
-		rows,
-		rowOffset,
-		draftCount = 0
-	}: { table: Table; rows: Row[]; rowOffset: number; draftCount?: number } = $props();
-
+	let { table, rows, rowOffset, draftCount = 0 }: { table: Table; rows: Row[]; rowOffset: number; draftCount?: number } = $props();
+	const id = $props.id();
 	const ROW_HEIGHT = 35;
-	const HEADER_HEIGHT = 35;
-	const ROWNUM_WIDTH = 64;
-
+	const GUTTER = 64;
 	type Cell = { r: number; c: number };
-
+	type Edit = { row: Row; column: Column; original: CellValue | undefined; typed: boolean; changed: boolean };
 	let viewport: HTMLDivElement;
-
+	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let focus = $state<Cell | null>(null);
 	let anchor = $state<Cell | null>(null);
 	let head = $state<Cell | null>(null);
-	let editing = $state<Cell | null>(null);
+	let editing = $state<Edit | null>(null);
 	let editValue = $state('');
-
+	let resizeCleanup: (() => void) | undefined;
 	const widths = new PersistedState<Record<string, number>>(
-		untrack(() => `superbase:widths:v2:${table.schema}.${table.name}`),
-		untrack(() =>
-			Object.fromEntries(table.columns.map((column) => [column.name, widthFor(column)]))
-		)
+		untrack(() => `superbase:widths:${editor.connection}:${JSON.stringify([table.schema, table.name])}`), {}
 	);
+	const width = (column: Column) => Object.hasOwn(widths.current, column.name) && Number.isFinite(widths.current[column.name])
+		? Math.max(64, widths.current[column.name]) : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
+	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')}`);
+	const disabled = $derived(editor.busy || editor.loading);
+	const focusedRow = $derived(focus ? rows[focus.r] : undefined);
+	const focusedColumn = $derived(focus ? table.columns[focus.c] : undefined);
+	const canEdit = $derived(!disabled && editor.tableEditable && !!focusedRow && !!focusedColumn && writable(focusedColumn));
+	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
+	const someSelected = $derived(rows.some((row) => editor.isRowSelected(row.key)));
 
-	const template = $derived(
-		`${ROWNUM_WIDTH}px ${table.columns.map((column) => `${widths.current[column.name] ?? widthFor(column)}px`).join(' ')}`
-	);
-
-	function widthFor(column: Column): number {
-		switch (column.kind) {
-			case 'boolean':
-			case 'number':
-				return 120;
-			case 'enum':
-				return 150;
-			case 'timestamp':
-				return 200;
-			case 'uuid':
-				return 250;
-			case 'json':
-			case 'array':
-			case 'text':
-				return column.name === 'body' ? 320 : 250;
-		}
-		return 180;
-	}
-
-	function currentValue(row: Row, column: Column): unknown {
-		return editor.hasEdit(row.__key, column.name)
-			? editor.getEdit(row.__key, column.name)
-			: row[column.name];
-	}
-
-	function rawString(value: unknown, column: Column): string {
-		if (value === null || value === undefined) return '';
-		if (column.kind === 'json') return JSON.stringify(value);
-		if (column.kind === 'array') return Array.isArray(value) ? value.join(', ') : String(value);
-		return String(value);
-	}
-
-	function coerce(input: string, column: Column): unknown {
-		if (input === '__NULL__') return null;
-		switch (column.kind) {
-			case 'number': {
-				const trimmed = input.trim();
-				if (!trimmed) return null;
-				const number = Number(trimmed);
-				return Number.isNaN(number) ? input : number;
-			}
-			case 'boolean':
-				return input === 'true';
-			case 'json': {
-				try {
-					return JSON.parse(input);
-				} catch {
-					return input;
-				}
-			}
-			case 'array': {
-				const trimmed = input.trim();
-				if (!trimmed) return null;
-				return trimmed
-					.replace(/^\{|\}$/g, '')
-					.split(',')
-					.map((part) => part.trim())
-					.filter(Boolean);
-			}
-			default:
-				return input;
-		}
-	}
-
-	function clamp(value: number, min: number, max: number) {
-		return Math.min(Math.max(value, min), max);
-	}
-
-	function lastRow() {
-		return Math.max(0, rows.length - 1);
-	}
-
-	function lastCol() {
-		return Math.max(0, table.columns.length - 1);
-	}
-
-	function isFocused(r: number, c: number) {
-		return focus?.r === r && focus?.c === c;
-	}
-
-	function selection(): { r1: number; r2: number; c1: number; c2: number } | null {
+	function bounds() {
 		if (!anchor || !head) return null;
-		return {
-			r1: Math.min(anchor.r, head.r),
-			r2: Math.max(anchor.r, head.r),
-			c1: Math.min(anchor.c, head.c),
-			c2: Math.max(anchor.c, head.c)
-		};
+		const box = { r1: Math.min(anchor.r, head.r), r2: Math.max(anchor.r, head.r), c1: Math.min(anchor.c, head.c), c2: Math.max(anchor.c, head.c) };
+		return box.r1 >= 0 && box.c1 >= 0 && box.r2 < rows.length && box.c2 < table.columns.length ? box : null;
 	}
-
-	function inSelection(r: number, c: number) {
-		const box = selection();
-		return !!box && r >= box.r1 && r <= box.r2 && c >= box.c1 && c <= box.c2;
-	}
-
-	function scrollToCell(r: number, c: number) {
-		if (!viewport) return;
-		const top = r * ROW_HEIGHT;
-		const bottom = top + ROW_HEIGHT;
-		const viewTop = viewport.scrollTop + HEADER_HEIGHT;
-		const viewBottom = viewport.scrollTop + viewport.clientHeight;
-		if (top < viewTop) {
-			viewport.scrollTop = top - HEADER_HEIGHT;
-		} else if (bottom > viewBottom) {
-			viewport.scrollTop = bottom - viewport.clientHeight;
-		}
-
-		const left =
-			ROWNUM_WIDTH +
-			table.columns.slice(0, c).reduce((sum, column) => sum + (widths.current[column.name] ?? 160), 0);
-		const width = widths.current[table.columns[c].name] ?? 160;
-		const viewLeft = viewport.scrollLeft + ROWNUM_WIDTH;
-		const viewRight = viewport.scrollLeft + viewport.clientWidth;
-		if (left < viewLeft) {
-			viewport.scrollLeft = left - ROWNUM_WIDTH;
-		} else if (left + width > viewRight) {
-			viewport.scrollLeft = left + width - viewport.clientWidth + 16;
-		}
-	}
-
-	const allPageSelected = $derived(
-		rows.length > 0 && rows.every((row) => editor.isRowSelected(row.__key))
-	);
-
-	function togglePage(selected: boolean) {
-		editor.setRowsSelected(
-			rows.map((row) => row.__key),
-			selected
-		);
-	}
+	const selection = $derived(bounds());
 
 	function setFocus(r: number, c: number, extend = false) {
+		if (!rows.length || !table.columns.length) return;
+		r = Math.max(0, Math.min(r, rows.length - 1));
+		c = Math.max(0, Math.min(c, table.columns.length - 1));
 		focus = { r, c };
-		if (extend) {
-			head = { r, c };
-		} else {
-			anchor = { r, c };
-			head = { r, c };
-		}
-		scrollToCell(r, c);
-	}
-
-	function move(r: number, c: number, extend = false, wrap = false) {
-		let row = clamp(r, 0, lastRow());
-		let col = clamp(c, 0, lastCol());
-		if (wrap) {
-			if (c < 0) {
-				row = clamp(r - 1, 0, lastRow());
-				col = lastCol();
-			} else if (c > lastCol()) {
-				row = clamp(r + 1, 0, lastRow());
-				col = 0;
-			}
-		}
-		setFocus(row, col, extend);
+		if (!extend || !anchor) anchor = focus;
+		head = focus;
+		if (!viewport) return;
+		const top = ROW_HEIGHT + r * ROW_HEIGHT;
+		if (top < viewport.scrollTop + ROW_HEIGHT) viewport.scrollTop = top - ROW_HEIGHT;
+		else if (top + ROW_HEIGHT > viewport.scrollTop + viewport.clientHeight) viewport.scrollTop = top + ROW_HEIGHT - viewport.clientHeight;
+		const left = GUTTER + table.columns.slice(0, c).reduce((sum, column) => sum + width(column), 0);
+		if (left < viewport.scrollLeft + GUTTER) viewport.scrollLeft = left - GUTTER;
+		else if (left + width(table.columns[c]) > viewport.scrollLeft + viewport.clientWidth) viewport.scrollLeft = left + width(table.columns[c]) - viewport.clientWidth;
 	}
 
 	function startEdit(r: number, c: number, initial?: string) {
-		const row = rows[r];
-		const column = table.columns[c];
-		if (!row || !column) return;
-		editing = { r, c };
-		editValue = initial ?? rawString(currentValue(row, column), column);
+		const row = rows[r], column = table.columns[c];
+		if (disabled || !editor.tableEditable || !row || !column || !writable(column)) return;
+		setFocus(r, c);
+		const original = editor.getValue(row, column.name);
+		editing = { row, column, original, typed: initial !== undefined, changed: initial !== undefined };
+		editValue = initial ?? original ?? '';
 	}
 
-	function commitEdit(direction?: 'down' | 'right' | 'left') {
-		if (!editing) return;
-		const { r, c } = editing;
-		const row = rows[r];
-		const column = table.columns[c];
+	function commitEdit(returnFocus = false) {
+		const edit = editing;
 		editing = null;
-		if (!row || !column) return;
-
-		const value = coerce(editValue, column);
-		const original = currentValue(row, column);
-		if (JSON.stringify(value) !== JSON.stringify(original)) {
-			editor.editCell(row.__key, column.name, value);
-		}
-
-		if (direction === 'down') move(r + 1, c);
-		if (direction === 'right') move(r, c + 1, false, true);
-		if (direction === 'left') move(r, c - 1, false, true);
-		viewport?.focus();
+		if (!edit) return;
+		const row = rows.find((row) => row.key === edit.row.key);
+		// A refresh may replace or change the row while an editor is open. Never retarget it.
+		if (row && row.identity?.version === edit.row.identity?.version && edit.changed) editor.editCell(row, edit.column, editValue);
+		if (returnFocus) viewport?.focus();
 	}
 
-	function cancelEdit() {
-		editing = null;
-		viewport?.focus();
-	}
-
-	function onEditKeydown(event: KeyboardEvent) {
+	function endEdit(event: KeyboardEvent) {
 		event.stopPropagation();
-		if (event.key === 'Enter') {
-			event.preventDefault();
-			commitEdit('down');
+		if (event.isComposing) return;
+		if (event.key === 'Escape') {
+			event.preventDefault(); editing = null; viewport.focus();
+		} else if (event.key === 'Enter' && !event.shiftKey) {
+			event.preventDefault(); commitEdit(true);
+			if (focus) setFocus(focus.r + 1, focus.c);
 		} else if (event.key === 'Tab') {
-			event.preventDefault();
-			commitEdit(event.shiftKey ? 'left' : 'right');
-		} else if (event.key === 'Escape') {
-			event.preventDefault();
-			cancelEdit();
+			// Finish editing; the next Tab exits the grid rather than trapping keyboard users.
+			event.preventDefault(); commitEdit(true);
 		}
 	}
 
-	function onCellMouseDown(event: MouseEvent, r: number, c: number) {
-		if (event.button !== 0) return;
-		if (editing) commitEdit();
-		viewport?.focus();
-		if (event.shiftKey && anchor) {
-			focus = { r, c };
-			head = { r, c };
-		} else {
-			setFocus(r, c);
+	function options(column: Column): string[] {
+		return column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? [];
+	}
+
+	function focusInput(node: HTMLTextAreaElement | HTMLSelectElement) {
+		node.focus();
+		if (node instanceof HTMLTextAreaElement) {
+			if (editing?.typed) node.setSelectionRange(node.value.length, node.value.length);
+			else node.select();
 		}
 	}
 
-	function selectAll() {
-		if (rows.length === 0) return;
-		anchor = { r: 0, c: 0 };
-		head = { r: lastRow(), c: lastCol() };
-		focus = { r: 0, c: 0 };
-	}
-
-	function copyText(): string {
-		const box = selection();
-		if (!box) return '';
-		const lines: string[] = [];
-		for (let r = box.r1; r <= box.r2; r++) {
-			const row = rows[r];
-			const cells: string[] = [];
-			for (let c = box.c1; c <= box.c2; c++) {
-				cells.push(rawString(currentValue(row, table.columns[c]), table.columns[c]));
-			}
-			lines.push(cells.join('\t'));
-		}
-		return lines.join('\n');
-	}
-
-	function onCopy(event: ClipboardEvent) {
-		if (editing) return;
-		const box = selection();
-		if (!box) return;
-		event.preventDefault();
-		event.clipboardData?.setData('text/plain', copyText());
-	}
-
-	function onPaste(event: ClipboardEvent) {
-		if (editing || !focus) return;
-		const text = event.clipboardData?.getData('text/plain');
-		if (!text) return;
-		event.preventDefault();
-		const grid = text
-			.replace(/\r/g, '')
-			.replace(/\n$/, '')
-			.split('\n')
-			.map((line) => line.split('\t'));
-
-		grid.forEach((cells, dr) => {
-			cells.forEach((raw, dc) => {
-				const r = focus!.r + dr;
-				const c = focus!.c + dc;
-				const row = rows[r];
-				const column = table.columns[c];
-				if (!row || !column) return;
-				editor.editCell(row.__key, column.name, raw === '' ? null : coerce(raw, column));
-			});
-		});
+	function setSpecial(value: null | undefined | '') {
+		if (!canEdit || !focusedRow || !focusedColumn) return;
+		editing = null;
+		editor.editCell(focusedRow, focusedColumn, value);
+		viewport.focus();
 	}
 
 	function clearSelection() {
-		const box = selection();
-		if (!box) return;
-		for (let r = box.r1; r <= box.r2; r++) {
-			for (let c = box.c1; c <= box.c2; c++) {
-				editor.editCell(rows[r].__key, table.columns[c].name, null);
+		const box = bounds();
+		if (disabled || !editor.tableEditable || !box) return;
+		// Validate the entire operation before changing any cell.
+		for (let c = box.c1; c <= box.c2; c++) {
+			if (!writable(table.columns[c]) || !table.columns[c].nullable) {
+				editor.error = 'Only writable, nullable columns can be set to NULL'; return;
 			}
 		}
+		for (let r = box.r1; r <= box.r2; r++) for (let c = box.c1; c <= box.c2; c++) editor.editCell(rows[r], table.columns[c], null);
 	}
 
 	function onKeydown(event: KeyboardEvent) {
-		if (editing) return;
+		// Leave native buttons, checkboxes and editors in charge of their own keys.
+		if (event.target !== viewport || editing || event.isComposing || !rows.length) return;
 		const current = focus ?? { r: 0, c: 0 };
-
-		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
-			event.preventDefault();
-			selectAll();
-			return;
+		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+			event.preventDefault(); focus = { r: 0, c: 0 }; anchor = focus; head = { r: rows.length - 1, c: table.columns.length - 1 }; return;
 		}
-
-		switch (event.key) {
-			case 'ArrowUp':
-				event.preventDefault();
-				move(current.r - 1, current.c, event.shiftKey);
-				return;
-			case 'ArrowDown':
-				event.preventDefault();
-				move(current.r + 1, current.c, event.shiftKey);
-				return;
-			case 'ArrowLeft':
-				event.preventDefault();
-				move(current.r, current.c - 1, event.shiftKey);
-				return;
-			case 'ArrowRight':
-				event.preventDefault();
-				move(current.r, current.c + 1, event.shiftKey);
-				return;
-			case 'Tab':
-				event.preventDefault();
-				move(current.r, current.c + (event.shiftKey ? -1 : 1), false, true);
-				return;
-			case 'Enter':
-			case 'F2':
-				event.preventDefault();
-				startEdit(current.r, current.c);
-				return;
-			case 'Escape':
-				focus = null;
-				anchor = null;
-				head = null;
-				return;
-			case 'Delete':
-			case 'Backspace':
-				event.preventDefault();
-				clearSelection();
-				return;
-			case 'Home':
-				event.preventDefault();
-				move(event.metaKey || event.ctrlKey ? 0 : current.r, 0);
-				return;
-			case 'End':
-				event.preventDefault();
-				move(event.metaKey || event.ctrlKey ? lastRow() : current.r, lastCol());
-				return;
-			case 'PageUp':
-				event.preventDefault();
-				move(current.r - 20, current.c);
-				return;
-			case 'PageDown':
-				event.preventDefault();
-				move(current.r + 20, current.c);
-				return;
+		const moves: Record<string, [number, number]> = {
+			ArrowUp: [current.r - 1, current.c], ArrowDown: [current.r + 1, current.c],
+			ArrowLeft: [current.r, current.c - 1], ArrowRight: [current.r, current.c + 1],
+			Home: [event.ctrlKey || event.metaKey ? 0 : current.r, 0],
+			End: [event.ctrlKey || event.metaKey ? rows.length - 1 : current.r, table.columns.length - 1],
+			PageUp: [current.r - Math.floor(viewport.clientHeight / ROW_HEIGHT), current.c],
+			PageDown: [current.r + Math.floor(viewport.clientHeight / ROW_HEIGHT), current.c]
+		};
+		if (Object.hasOwn(moves, event.key)) {
+			event.preventDefault(); setFocus(...moves[event.key], event.shiftKey); return;
 		}
+		if (event.key === 'Enter' || event.key === 'F2') { event.preventDefault(); startEdit(current.r, current.c); }
+		else if (event.key === 'Escape') { focus = anchor = head = null; }
+		else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); clearSelection(); }
+		else if (event.key === ' ' && event.shiftKey) { event.preventDefault(); editor.toggleRowSelection(rows[current.r]); }
+		else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); startEdit(current.r, current.c, event.key); }
+	}
 
-		if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-			event.preventDefault();
-			startEdit(current.r, current.c, event.key);
-		}
+	function onCopy(event: ClipboardEvent) {
+		const box = bounds();
+		if (editing || event.target !== viewport || !box) return;
+		event.preventDefault();
+		const values = rows.slice(box.r1, box.r2 + 1).map((row) => table.columns.slice(box.c1, box.c2 + 1).map((column) => editor.getValue(row, column.name)));
+		event.clipboardData?.setData('text/plain', toTSV(values));
+	}
+
+	function onPaste(event: ClipboardEvent) {
+		if (editing || event.target !== viewport || !focus || disabled || !editor.tableEditable) return;
+		const text = event.clipboardData?.getData('text/plain');
+		if (!text) return;
+		event.preventDefault();
+		try {
+			const pasted = fromTSV(text);
+			const changes: { row: Row; column: Column; value: CellValue | undefined }[] = [];
+			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {
+				const row = rows[focus.r + r], column = table.columns[focus.c + c], value = pasted[r][c];
+				if (!row || !column) throw new Error('Clipboard data extends beyond the loaded grid');
+				if (!writable(column)) throw new Error(`${column.name} is generated and cannot be edited`);
+				if (value === undefined && !row.draft) throw new Error('DEFAULT is only available for new rows');
+				if (value === null && !column.nullable) throw new Error(`${column.name} does not allow NULL`);
+				changes.push({ row, column, value });
+			}
+			for (const { row, column, value } of changes) editor.editCell(row, column, value);
+		} catch (error) { editor.error = message(error); }
 	}
 
 	function startResize(event: PointerEvent, column: Column) {
-		event.preventDefault();
-		event.stopPropagation();
-		const startX = event.clientX;
-		const startWidth = widths.current[column.name] ?? widthFor(column);
-		const onMove = (moveEvent: PointerEvent) => {
-			const width = Math.max(64, Math.round(startWidth + moveEvent.clientX - startX));
-			widths.current = { ...widths.current, [column.name]: width };
+		event.preventDefault(); resizeCleanup?.();
+		const startX = event.clientX, startWidth = width(column);
+		const move = (event: PointerEvent) => { widths.current = { ...widths.current, [column.name]: Math.max(64, startWidth + event.clientX - startX) }; };
+		resizeCleanup = () => {
+			window.removeEventListener('pointermove', move);
+			window.removeEventListener('pointerup', resizeCleanup!);
+			window.removeEventListener('pointercancel', resizeCleanup!);
 		};
-		const onUp = () => {
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		};
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-	}
-
-	function focusInput(node: HTMLElement) {
-		node.focus();
-		if (node instanceof HTMLInputElement) node.select();
+		window.addEventListener('pointermove', move);
+		window.addEventListener('pointerup', resizeCleanup);
+		window.addEventListener('pointercancel', resizeCleanup);
 	}
 
 	$effect(() => {
-		if (focus && focus.r >= rows.length) {
-			focus = null;
-			anchor = null;
-			head = null;
-			editing = null;
-		}
+		// New page/order/version: discard positional selection, never apply it to replacement rows.
+		rows.map((row) => [row.key, row.identity?.version]);
+		untrack(() => { focus = anchor = head = null; editing = null; });
 	});
+	$effect(() => { editor.editing = editing !== null; });
+	$effect(() => { const node = textarea; if (node) untrack(() => focusInput(node)); });
+	onDestroy(() => { resizeCleanup?.(); editor.editing = false; });
 </script>
 
-<div class="relative h-full min-h-0 bg-surface">
-	<div
-		bind:this={viewport}
-		tabindex="0"
-		role="grid"
-		aria-rowcount={rows.length}
-		aria-colcount={table.columns.length}
-		class="h-full overflow-auto outline-none"
-		onkeydown={onKeydown}
-		oncopy={onCopy}
-		onpaste={onPaste}
-	>
+<div class="flex h-full min-h-0 flex-col bg-background">
+	<div class="flex h-8 shrink-0 items-center gap-1 border-b px-2 text-xs text-muted-foreground">
+		<span class="mr-auto truncate">{focusedColumn ? `${focusedColumn.name} · ${focusedColumn.type}` : 'Enter to edit · Tab for controls · Shift+Space selects a row'}</span>
+		<Button variant="ghost" size="xs" disabled={!canEdit || !focusedColumn?.nullable} onclick={() => setSpecial(null)}>Set NULL</Button>
+		<Button variant="ghost" size="xs" disabled={!canEdit || focusedColumn?.kind !== 'text'} onclick={() => setSpecial('')}>Empty text</Button>
+		<Button variant="ghost" size="xs" disabled={!canEdit || !focusedRow?.draft} onclick={() => setSpecial(undefined)}>Use default</Button>
+	</div>
+	<div bind:this={viewport} role="grid" tabindex="0" aria-label={`${table.schema}.${table.name} data`}
+		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 1}
+		aria-busy={editor.loading} aria-readonly={!editor.tableEditable}
+		aria-activedescendant={focus ? `${id}-${focus.r}-${focus.c}` : undefined}
+		class="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+		onkeydown={onKeydown} oncopy={onCopy} onpaste={onPaste}>
 		<div class="w-max min-w-full">
-			<div class="grid-header" role="row" style="grid-template-columns: {template}">
-				<div class="rownum header-rownum">
-					<input
-						type="checkbox"
-						class="row-check"
-						checked={allPageSelected}
-						title="Select page"
-						onchange={(event) => togglePage(event.currentTarget.checked)}
-					/>
+			<div class="grid-header" role="row" aria-rowindex={1} style:grid-template-columns={template}>
+				<div class="gutter" role="columnheader" aria-label="Row selection">
+					<Checkbox aria-label="Select loaded rows" checked={allSelected} indeterminate={someSelected && !allSelected}
+						disabled={disabled || !editor.tableEditable} onCheckedChange={(checked) => editor.setRowsSelected(rows, checked)} class="size-3.5" />
 					<span>#</span>
 				</div>
-				{#each table.columns as column, c (column.name)}
-					<div class="header-cell group">
-						<button
-							class="flex h-full w-full min-w-0 items-center gap-1.5 px-2 text-left"
-							onclick={() => editor.toggleSort(column.name)}
-							title={`${column.name} · ${column.type} — click to sort`}
-						>
-							{#if column.primaryKey}
-								<KeyRound size={11} class="shrink-0 text-faint" />
-							{:else if column.foreignKey}
-								<Link2 size={11} class="shrink-0 text-faint" />
-							{/if}
-							<span class="truncate text-[12px] font-semibold text-fg">{column.name}</span>
-							<span class="shrink-0 truncate text-[12px] text-faint">{column.type}</span>
-							{#if editor.sort?.column === column.name}
-								{#if editor.sort.direction === 'asc'}
-									<ArrowUp size={11} class="shrink-0 text-accent" />
-								{:else}
-									<ArrowDown size={11} class="shrink-0 text-accent" />
-								{/if}
-							{:else}
-								<ArrowUpDown
-									size={11}
-									class="ml-auto shrink-0 text-faint opacity-30 transition-opacity group-hover:opacity-70"
-								/>
-							{/if}
+				{#each table.columns as column (column.name)}
+					<div class="header-cell" role="columnheader" aria-sort={editor.sort?.column === column.name ? editor.sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
+						<button class="flex h-full w-full items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={disabled}
+							onclick={() => editor.toggleSort(column.name)} title={`${column.name} · ${column.type} — sort`}>
+							{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-muted-foreground" />{:else if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" />{/if}
+							<span class="truncate font-semibold">{column.name}</span><span class="truncate text-muted-foreground">{column.type}</span>
+							{#if editor.sort?.column === column.name}{#if editor.sort.direction === 'asc'}<ArrowUp class="size-3 shrink-0 text-primary" />{:else}<ArrowDown class="size-3 shrink-0 text-primary" />{/if}{/if}
 						</button>
-						<div
-							class="resizer"
-							role="separator"
-							aria-orientation="vertical"
+						<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
+						<div class="resizer" role="separator" tabindex="0" aria-label={`Resize ${column.name}`}
+							aria-orientation="vertical" aria-valuenow={Math.round(width(column))} aria-valuemin={64}
 							onpointerdown={(event) => startResize(event, column)}
-						></div>
+							onkeydown={(event) => {
+								if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+								event.preventDefault();
+								widths.current = { ...widths.current, [column.name]: Math.max(64, width(column) + (event.key === 'ArrowLeft' ? -16 : 16)) };
+							}}></div>
 					</div>
 				{/each}
 			</div>
-
-			{#each rows as row, r (row.__key)}
-				<div class="grid-row" role="row" style="grid-template-columns: {template}">
-					<div class="rownum">
-						<input
-							type="checkbox"
-							class="row-check"
-							checked={editor.isRowSelected(row.__key)}
-							title="Select row"
-							onmousedown={(event) => event.stopPropagation()}
-							onclick={(event) => event.stopPropagation()}
-							onchange={() => editor.toggleRowSelection(row.__key)}
-						/>
-						<span>{row.__draft ? 'new' : rowOffset + r - draftCount + 1}</span>
+			{#each rows as row, r (row.key)}
+				<div class="grid-row" role="row" aria-rowindex={r + 2} style:grid-template-columns={template}>
+					<div class="gutter" role="rowheader">
+						<Checkbox aria-label={`Select row ${rowOffset + r + 1}`} tabindex={-1} checked={editor.isRowSelected(row.key)} disabled={disabled || !editor.tableEditable}
+							onCheckedChange={() => editor.toggleRowSelection(row)} class="size-3.5" />
+						<span>{row.draft ? 'new' : rowOffset + r - draftCount + 1}</span>
 					</div>
 					{#each table.columns as column, c (column.name)}
-						{@const edited = editor.hasEdit(row.__key, column.name)}
-						{@const value = edited ? editor.getEdit(row.__key, column.name) : row[column.name]}
-						{@const active = isFocused(r, c)}
-						<div
-							class="cell"
-							tabindex="-1"
-							class:focused={active}
-							class:selected={inSelection(r, c)}
-							class:dirty={edited}
-							data-cell={`${r}:${c}`}
-							role="gridcell"
-							onmousedown={(event) => onCellMouseDown(event, r, c)}
-							ondblclick={() => startEdit(r, c)}
-						>
-							{#if editing?.r === r && editing?.c === c}
-								{#if column.kind === 'enum'}
-									<select
-										value={editValue}
-										class="cell-input"
-										use:focusInput
-										onmousedown={(event) => event.stopPropagation()}
-										onkeydown={onEditKeydown}
-										onblur={() => commitEdit()}
+						{@const value = editor.getValue(row, column.name)}
+						{@const active = focus?.r === r && focus?.c === c}
+						{@const selected = !!selection && r >= selection.r1 && r <= selection.r2 && c >= selection.c1 && c <= selection.c2}
+						{@const dirty = row.draft ? Object.hasOwn(row.values, column.name) : editor.hasEdit(row.key, column.name)}
+						<div id={`${id}-${r}-${c}`} class="cell" class:focused={active} class:selected class:dirty role="gridcell" tabindex="-1" aria-colindex={c + 2}
+							aria-selected={selected} aria-readonly={!editor.tableEditable || !writable(column)} data-cell={`${r}:${c}`}
+							onmousedown={(event) => { if (event.button !== 0) return; event.preventDefault(); commitEdit(); viewport.focus(); setFocus(r, c, event.shiftKey); }}
+							ondblclick={() => startEdit(r, c)}>
+							{#if editing?.row.key === row.key && editing.column.name === column.name}
+								{#if column.kind === 'boolean' || column.kind === 'enum'}
+									<select class="cell-input" aria-label={`Edit ${column.name}`}
+										value={editing.original == null && !editing.changed ? '' : String(options(column).indexOf(editValue))}
+										use:focusInput onmousedown={(event) => event.stopPropagation()}
+										onkeydown={endEdit} onblur={() => commitEdit()}
 										onchange={(event) => {
-											editValue = event.currentTarget.value;
-											commitEdit('down');
-										}}
-									>
-										{#each column.enumValues ?? [] as option (option)}
-											<option value={option}>{option}</option>
+											editValue = options(column)[Number(event.currentTarget.value)];
+											if (editing) editing.changed = true;
+											commitEdit(true);
+										}}>
+										{#if editing.original == null}<option value="" disabled>{editing.original === null ? 'NULL' : 'DEFAULT'}</option>{/if}
+										{#each options(column) as option, i (option)}
+											<option value={String(i)}>{column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)'}</option>
 										{/each}
-										{#if column.nullable}
-											<option value="__NULL__">NULL</option>
-										{/if}
-									</select>
-								{:else if column.kind === 'boolean'}
-									<select
-										value={editValue}
-										class="cell-input"
-										use:focusInput
-										onmousedown={(event) => event.stopPropagation()}
-										onkeydown={onEditKeydown}
-										onblur={() => commitEdit()}
-										onchange={(event) => {
-											editValue = event.currentTarget.value;
-											commitEdit('down');
-										}}
-									>
-										<option value="true">true</option>
-										<option value="false">false</option>
-										{#if column.nullable}
-											<option value="__NULL__">NULL</option>
-										{/if}
 									</select>
 								{:else}
-									<input
-										bind:value={editValue}
-										class="cell-input"
-										spellcheck={false}
-										use:focusInput
-										onmousedown={(event) => event.stopPropagation()}
-										onkeydown={onEditKeydown}
-										onblur={() => commitEdit()}
-									/>
+									<Textarea bind:ref={textarea} class="absolute inset-0 size-full min-h-0 resize-none rounded-none border-0 bg-popover px-2 py-1.5 text-xs shadow-none focus-visible:ring-1" rows={1} aria-label={`Edit ${column.name}`} bind:value={editValue} spellcheck={false}
+										oninput={() => { if (editing) editing.changed = true; }} onmousedown={(event) => event.stopPropagation()} onkeydown={endEdit} onblur={() => commitEdit()} />
 								{/if}
-							{:else if value === null || value === undefined}
-								<span class="text-[13px] text-fg opacity-50">NULL</span>
-							{:else if column.kind === 'boolean'}
-								<span class={value ? 'text-accent' : 'text-muted'}>{value ? 'TRUE' : 'FALSE'}</span>
-							{:else if column.kind === 'number'}
-								<span class="tabular-nums">{displayValue(value, column)}</span>
-							{:else if column.kind === 'json' || column.kind === 'array'}
-								<span class="truncate text-[12.5px] text-muted">{displayValue(value, column)}</span>
-							{:else if column.kind === 'timestamp'}
-								<span class="font-mono text-[12px]">{displayValue(value, column)}</span>
-							{:else if column.kind === 'uuid'}
-								<span class="truncate font-mono text-[12px]">{displayValue(value, column)}</span>
 							{:else}
-								<span class="truncate">{displayValue(value, column)}</span>
-							{/if}
-							{#if edited}
-								<span class="dirty-dot"></span>
+								<span class="truncate" class:text-muted-foreground={value == null} class:italic={value == null} title={displayValue(value, column)}>{value === undefined && !writable(column) ? 'GENERATED' : displayValue(value, column)}</span>
 							{/if}
 						</div>
 					{/each}
 				</div>
 			{/each}
 		</div>
+		{#if !rows.length}<p class="p-12 text-center text-sm text-muted-foreground">{editor.loading ? 'Loading rows…' : 'No rows match this view.'}</p>{/if}
 	</div>
-
-	{#if rows.length === 0}
-		<div class="pointer-events-none absolute inset-0 grid place-items-center pt-10">
-			<div class="text-center">
-				<p class="text-xs text-muted">No rows</p>
-				<p class="mt-1 text-[11px] text-faint">Insert a row to get started.</p>
-			</div>
-		</div>
-	{/if}
 </div>
 
 <style>
-	.grid-header {
-		position: sticky;
-		top: 0;
-		z-index: 20;
-		display: grid;
-		height: 35px;
-		background: var(--color-panel);
-		border-bottom: 1px solid var(--color-line-strong);
-	}
-
-	.header-cell {
-		position: relative;
-		display: flex;
-		min-width: 0;
-		align-items: stretch;
-		border-right: 1px solid var(--color-line);
-		user-select: none;
-	}
-
-	.header-rownum {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 0 8px;
-		font-family: var(--font-mono);
-		font-size: 10px;
-		color: var(--color-faint);
-		border-right: 1px solid var(--color-line);
-	}
-
-	.row-check {
-		width: 13px;
-		height: 13px;
-		flex-shrink: 0;
-		accent-color: var(--color-accent);
-		cursor: pointer;
-	}
-
-	.resizer {
-		position: absolute;
-		top: 0;
-		right: -3px;
-		z-index: 2;
-		height: 100%;
-		width: 6px;
-		cursor: col-resize;
-	}
-
-	.resizer:hover {
-		background: color-mix(in srgb, var(--color-accent) 40%, transparent);
-	}
-
-	.grid-row {
-		display: grid;
-		height: 35px;
-		background: var(--color-surface);
-	}
-
-	.grid-row:hover {
-		background: color-mix(in srgb, var(--color-hover) 45%, var(--color-surface));
-	}
-
-	.rownum {
-		position: sticky;
-		left: 0;
-		z-index: 10;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 0 8px;
-		font-family: var(--font-mono);
-		font-size: 10px;
-		color: var(--color-faint);
-		background: var(--color-surface);
-		border-right: 1px solid var(--color-line);
-		border-bottom: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
-		user-select: none;
-	}
-
-	.grid-row:hover .rownum {
-		background: color-mix(in srgb, var(--color-hover) 45%, var(--color-surface));
-	}
-
-	.header-rownum {
-		position: sticky;
-		left: 0;
-		z-index: 21;
-		background: var(--color-panel);
-		border-bottom: none;
-	}
-
-	.rownum span {
-		margin-left: auto;
-	}
-
-	.cell {
-		position: relative;
-		display: flex;
-		min-width: 0;
-		align-items: center;
-		padding: 0 8px;
-		font-size: 13px;
-		border-right: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
-		border-bottom: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
-		white-space: nowrap;
-		overflow: hidden;
-		cursor: default;
-	}
-
-	.cell.selected {
-		background: color-mix(in srgb, var(--color-accent) 9%, transparent);
-	}
-
-	.cell.focused {
-		outline: 1px solid var(--color-accent);
-		outline-offset: -1px;
-		z-index: 1;
-	}
-
-	.cell.dirty {
-		background: color-mix(in srgb, var(--color-warn) 7%, transparent);
-	}
-
-	.cell.dirty.selected {
-		background: color-mix(in srgb, var(--color-warn) 12%, transparent);
-	}
-
-	.dirty-dot {
-		position: absolute;
-		top: 4px;
-		right: 4px;
-		width: 4px;
-		height: 4px;
-		border-radius: 999px;
-		background: var(--color-warn);
-	}
-
-	.cell-input {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		padding: 0 7px;
-		border: none;
-		background: var(--color-elevated);
-		font-size: 13px;
-		outline: 1px solid var(--color-accent);
-		outline-offset: -1px;
-	}
+	.grid-header, .grid-row { display: grid; height: 35px; }
+	.grid-header { position: sticky; top: 0; z-index: 20; background: var(--card); }
+	.header-cell { position: relative; min-width: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+	.gutter { position: sticky; left: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); color: var(--muted-foreground); font: 10px var(--font-mono); }
+	.gutter span { margin-left: auto; }
+	.resizer { position: absolute; top: 0; right: -3px; z-index: 2; width: 6px; height: 100%; cursor: col-resize; }
+	.resizer:hover, .resizer:focus-visible { background: var(--ring); outline: none; }
+	.cell { position: relative; display: flex; align-items: center; min-width: 0; padding: 0 8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12px; white-space: nowrap; overflow: hidden; cursor: default; }
+	.cell.selected { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+	.cell.focused { outline: 1px solid var(--primary); outline-offset: -1px; z-index: 1; }
+	.cell.dirty { background: color-mix(in srgb, #e8b04b 12%, transparent); }
+	.cell.dirty::after { content: ''; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: #e8b04b; }
+	.cell-input { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 7px; background: var(--popover); color: var(--foreground); font: inherit; line-height: 20px; outline: 1px solid var(--primary); outline-offset: -1px; }
 </style>

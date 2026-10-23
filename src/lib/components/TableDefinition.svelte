@@ -1,48 +1,54 @@
 <script lang="ts">
-	import { KeyRound, Link2 } from 'lucide-svelte';
+	import { KeyRound, Link2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 </script>
 
-<div class="h-full overflow-auto p-6">
-	<div class="mx-auto max-w-3xl">
+<div class="h-full overflow-auto p-5">
+	<div class="mx-auto max-w-5xl">
 		<div class="mb-4 flex items-baseline gap-2">
-			<h2 class="font-mono text-sm font-medium">{editor.table.name}</h2>
-			<span class="font-mono text-[11px] text-faint">{editor.table.columns.length} columns</span>
+			<h2 class="font-mono text-sm font-medium">{editor.table.schema}.{editor.table.name}</h2>
+			<span class="text-xs text-muted-foreground">{editor.table.columns.length} columns</span>
 		</div>
-
-		<div class="overflow-hidden rounded-lg border border-line bg-surface">
-			<div class="grid grid-cols-[1.2fr_1fr_0.6fr_1.4fr] border-b border-line bg-panel px-3 py-2 font-mono text-[10px] tracking-wide text-faint uppercase">
-				<span>Column</span>
-				<span>Type</span>
-				<span>Null</span>
-				<span>Default</span>
-			</div>
-			{#each editor.table.columns as column (column.name)}
-				<div class="grid grid-cols-[1.2fr_1fr_0.6fr_1.4fr] items-center border-b border-line/60 px-3 py-2 last:border-0">
-					<div class="flex min-w-0 items-center gap-1.5">
-						{#if column.primaryKey}
-							<KeyRound size={10} class="shrink-0 text-accent" />
-						{:else if column.foreignKey}
-							<Link2 size={10} class="shrink-0 text-info/80" />
-						{/if}
-						<span class="truncate font-mono text-[11.5px]">{column.name}</span>
-					</div>
-					<span class="truncate font-mono text-[11px] text-muted">{column.type}</span>
-					<span class="font-mono text-[11px] text-muted">{column.nullable ? 'yes' : 'no'}</span>
-					<span class="truncate font-mono text-[11px] text-faint">{column.defaultValue ?? '—'}</span>
-				</div>
-			{/each}
+		<div class="overflow-x-auto rounded-md border border-border bg-card">
+			<table class="w-full text-left text-xs">
+				<caption class="sr-only">Column definitions for {editor.table.name}</caption>
+				<thead class="border-b border-border bg-muted/50 text-[10px] tracking-wide text-muted-foreground uppercase">
+					<tr><th scope="col" class="px-3 py-2 font-medium">Column</th><th scope="col" class="px-3 py-2 font-medium">Type</th><th scope="col" class="px-3 py-2 font-medium">Nullable</th><th scope="col" class="px-3 py-2 font-medium">Default / generation</th></tr>
+				</thead>
+				<tbody>
+					{#each editor.table.columns as column (column.name)}
+						<tr class="border-b border-border last:border-0">
+							<th scope="row" class="px-3 py-2 text-left font-normal">
+								<div class="flex items-center gap-1.5 font-mono">
+									{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-primary" /><span class="sr-only">Primary key:</span>{/if}
+									{#if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" /><span class="sr-only">Foreign key:</span>{/if}
+									{column.name}
+								</div>
+								{#if column.comment}<p class="mt-1 max-w-sm text-[11px] text-muted-foreground">{column.comment}</p>{/if}
+							</th>
+							<td class="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+								{column.type}
+								{#if column.enumValues}<div class="mt-1 text-[10px]">{column.enumValues.join(' · ')}</div>{/if}
+							</td>
+							<td class="px-3 py-2 text-muted-foreground">{column.nullable ? 'yes' : 'no'}</td>
+							<td class="max-w-md px-3 py-2 font-mono text-[11px] break-words text-muted-foreground">
+								{#if column.generated}<Badge variant="secondary" class="mr-1 text-[10px]">generated</Badge>{/if}
+								{#if column.identity}<Badge variant="secondary" class="mr-1 text-[10px]">identity {column.identity}</Badge>{/if}
+								{column.defaultValue ?? '—'}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
 		</div>
-
 		{#if editor.table.columns.some((column) => column.foreignKey)}
-			<div class="mt-4 space-y-1">
-				<h3 class="text-[10px] font-medium tracking-[0.08em] text-faint uppercase">Relations</h3>
-				{#each editor.table.columns.filter((column) => column.foreignKey) as column (column.name)}
-					<p class="font-mono text-[11px] text-muted">
-						{column.name} → {column.foreignKey!.schema}.{column.foreignKey!.table}.{column.foreignKey!.column}
-					</p>
+			<section class="mt-5 space-y-2" aria-label="Foreign key relations">
+				<h3 class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Relations</h3>
+				{#each editor.table.columns as column (column.name)}
+					{#if column.foreignKey}<p class="font-mono text-xs break-all text-muted-foreground">{column.name} → {column.foreignKey.schema}.{column.foreignKey.table}.{column.foreignKey.column}</p>{/if}
 				{/each}
-			</div>
+			</section>
 		{/if}
 	</div>
 </div>

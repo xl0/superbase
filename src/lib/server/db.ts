@@ -1,49 +1,15 @@
 import pg from 'pg';
 
-import { DATABASE_URL } from '$app/env/private';
-import type { Column, ColumnKind, Row, ServerInfo, Sort, Table } from '#lib/types.js';
-
-const { Pool, types } = pg;
-
-// Keep the values the grid expects: int8 as a number when safe, timestamps and
-// dates as strings, everything else as node-postgres parses it.
-types.setTypeParser(20, (value) => {
-	const number = Number(value);
-	return Number.isSafeInteger(number) ? number : value;
-});
-types.setTypeParser(1082, (value) => value); // date
-types.setTypeParser(1114, (value) => value); // timestamp
-types.setTypeParser(1184, (value) => value); // timestamptz
-types.setTypeParser(1186, (value) => value); // interval
-
-let pool: pg.Pool | undefined;
-
-function getPool(): pg.Pool {
-	if (pool) return pool;
-	const connectionString = DATABASE_URL;
-	if (!connectionString) {
-		throw new Error('DATABASE_URL is not set. Add it to .env and restart the server.');
-	}
-	pool = new Pool({
-		connectionString,
-		max: 5,
-		application_name: 'superbase',
-		statement_timeout: 30_000
-	});
-	pool.on('error', (error) => console.error('[pg] idle client error', error));
-	return pool;
-}
-
-async function select<T extends pg.QueryResultRow>(
-	text: string,
-	values: unknown[] = []
-): Promise<T[]> {
-	const result = await getPool().query<T>(text, values);
-	return result.rows;
-}
+import type {
+	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowsArgs, RowsPage,
+	SaveArgs, ServerInfo, Table, Values
+} from '../types.js';
+import { tableKey, writable } from '../types.js';
 
 function ident(name: string): string {
-	if (typeof name !== 'string' || name.length === 0) throw new Error('Invalid identifier');
+	if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) {
+		throw new Error('Invalid identifier');
+	}
 	return `"${name.replaceAll('"', '""')}"`;
 }
 
@@ -54,9 +20,9 @@ function qualify(schema: string, table: string): string {
 const NUMBER_TYPES = new Set(['int2', 'int4', 'int8', 'float4', 'float8', 'numeric', 'money', 'oid']);
 const TIMESTAMP_TYPES = new Set(['date', 'timestamp', 'timestamptz', 'time', 'timetz', 'interval']);
 
-function kindOf(typeName: string, typeKind: string): ColumnKind {
+function kindOf(typeName: string, typeKind: string, category: string): ColumnKind {
 	if (typeKind === 'e') return 'enum';
-	if (typeName.startsWith('_')) return 'array';
+	if (category === 'A') return 'array';
 	if (typeName === 'bool') return 'boolean';
 	if (typeName === 'json' || typeName === 'jsonb') return 'json';
 	if (typeName === 'uuid') return 'uuid';
@@ -65,24 +31,24 @@ function kindOf(typeName: string, typeKind: string): ColumnKind {
 	return 'text';
 }
 
-function displayType(typeName: string): string {
-	return typeName.startsWith('_') ? `${typeName.slice(1)}[]` : typeName;
-}
-
-type TableRow = { id: number; schema: string; name: string; row_count: number | string };
+type TableRow = { id: string; schema: string; name: string; row_count: number };
 type ColumnRow = {
-	table_id: number;
+	table_id: string;
 	name: string;
 	type_name: string;
 	type_kind: string;
+	type_category: string;
+	exact_type: string;
 	not_null: boolean;
+	generated: boolean;
+	identity: string;
 	default_value: string | null;
 	comment: string | null;
 	enum_values: string[] | null;
 	is_primary_key: boolean;
 };
 type ForeignKeyRow = {
-	table_id: number;
+	table_id: string;
 	column_name: string;
 	target_schema: string;
 	target_table: string;
@@ -91,345 +57,273 @@ type ForeignKeyRow = {
 
 const SYSTEM_SCHEMAS = `('pg_catalog', 'information_schema', 'pg_toast')`;
 
-async function loadMetadata(filter?: { schema: string; table: string }): Promise<Table[]> {
+async function loadMetadata(
+	db: pg.Pool | pg.PoolClient,
+	filter?: { schema: string; table: string }
+): Promise<Table[]> {
 	const params = filter ? [filter.schema, filter.table] : [];
 	const scope = filter ? 'and n.nspname = $1 and c.relname = $2' : '';
-
-	const [tables, columns, foreignKeys] = await Promise.all([
-		select<TableRow>(
-			`select c.oid::int8 as id, n.nspname as schema, c.relname as name,
-			        greatest(coalesce(pg_stat_get_live_tuples(c.oid), 0)::int8, 0) as row_count
+	const visible = `c.relkind in ('r', 'p')
+		and n.nspname not in ${SYSTEM_SCHEMAS}
+		and n.nspname !~ '^pg_(toast_)?temp_' ${scope}`;
+	const tables = await db.query<TableRow>(
+			`select c.oid::text as id, n.nspname as schema, c.relname as name,
+			        greatest(c.reltuples, 0) as row_count
 			 from pg_class c
 			 join pg_namespace n on n.oid = c.relnamespace
-			 where c.relkind in ('r', 'p')
-			   and n.nspname not in ${SYSTEM_SCHEMAS}
-			   and n.nspname not like 'pg_temp_%'
-			   and n.nspname not like 'pg_toast_temp_%'
-			   ${scope}
-			 order by n.nspname, c.relname`,
-			params
-		),
-		select<ColumnRow>(
-			`select a.attrelid::int8 as table_id,
-			        a.attname as name,
-			        t.typname as type_name,
-			        t.typtype as type_kind,
-			        a.attnotnull as not_null,
+			 where ${visible}
+			 order by n.nspname, c.relname`, params
+		);
+	const columns = await db.query<ColumnRow>(
+			`select a.attrelid::text as table_id, a.attname as name,
+			        t.typname as type_name, t.typtype as type_kind, t.typcategory as type_category,
+			        format_type(a.atttypid, a.atttypmod) as exact_type,
+			        a.attnotnull as not_null, a.attgenerated <> '' as generated,
+			        a.attidentity as identity,
 			        pg_get_expr(d.adbin, d.adrelid) as default_value,
 			        col_description(a.attrelid, a.attnum) as comment,
 			        (select json_agg(e.enumlabel order by e.enumsortorder)
 			           from pg_enum e where e.enumtypid = t.oid) as enum_values,
-			        exists (
-			          select 1 from pg_index i
-			          where i.indrelid = a.attrelid
-			            and i.indisprimary
-			            and a.attnum = any(i.indkey)
-			        ) as is_primary_key
+			        exists (select 1 from pg_index i
+			          where i.indrelid = a.attrelid and i.indisprimary
+			            and a.attnum = any((i.indkey::smallint[])[0:i.indnkeyatts - 1])) as is_primary_key
 			 from pg_attribute a
 			 join pg_class c on c.oid = a.attrelid
 			 join pg_namespace n on n.oid = c.relnamespace
 			 join pg_type t on t.oid = a.atttypid
 			 left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
-			 where a.attnum > 0
-			   and not a.attisdropped
-			   and c.relkind in ('r', 'p')
-			   and n.nspname not in ${SYSTEM_SCHEMAS}
-			   ${scope}
-			 order by a.attrelid, a.attnum`,
-			params
-		),
-		select<ForeignKeyRow>(
-			`select con.conrelid::int8 as table_id,
-			        a.attname as column_name,
-			        fn.nspname as target_schema,
-			        fc.relname as target_table,
+			 where a.attnum > 0 and not a.attisdropped and ${visible}
+			 order by a.attrelid, a.attnum`, params
+		);
+	const foreignKeys = await db.query<ForeignKeyRow>(
+			`select con.conrelid::text as table_id, a.attname as column_name,
+			        fn.nspname as target_schema, fc.relname as target_table,
 			        fa.attname as target_column
 			 from pg_constraint con
 			 join pg_class c on c.oid = con.conrelid
 			 join pg_namespace n on n.oid = c.relnamespace
-			 cross join lateral unnest(con.conkey, con.confkey) with ordinality as k(src, tgt, ord)
+			 cross join lateral unnest(con.conkey, con.confkey) as k(src, tgt)
 			 join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.src
 			 join pg_class fc on fc.oid = con.confrelid
 			 join pg_namespace fn on fn.oid = fc.relnamespace
 			 join pg_attribute fa on fa.attrelid = con.confrelid and fa.attnum = k.tgt
-			 where con.contype = 'f'
-			   and n.nspname not in ${SYSTEM_SCHEMAS}
-			   ${scope}`,
-			params
-		)
-	]);
+			 where con.contype = 'f' and ${visible}`, params
+		);
 
 	const fkByColumn = new Map<string, ForeignKeyRow>();
-	for (const foreignKey of foreignKeys) {
-		fkByColumn.set(`${foreignKey.table_id}.${foreignKey.column_name}`, foreignKey);
-	}
-
-	const columnsByTable = new Map<number, Column[]>();
-	for (const row of columns) {
-		const foreignKey = fkByColumn.get(`${row.table_id}.${row.name}`);
+	for (const fk of foreignKeys.rows) fkByColumn.set(JSON.stringify([fk.table_id, fk.column_name]), fk);
+	const columnsByTable = new Map<string, Column[]>();
+	for (const row of columns.rows) {
+		const fk = fkByColumn.get(JSON.stringify([row.table_id, row.name]));
 		const column: Column = {
 			name: row.name,
-			type: displayType(row.type_name),
-			kind: kindOf(row.type_name, row.type_kind),
+			type: row.exact_type,
+			kind: kindOf(row.type_name, row.type_kind, row.type_category),
 			nullable: !row.not_null,
 			primaryKey: row.is_primary_key,
+			generated: row.generated,
+			identity: row.identity === 'a' ? 'always' : row.identity === 'd' ? 'by-default' : null,
 			enumValues: row.enum_values ?? undefined,
 			defaultValue: row.default_value,
 			comment: row.comment,
-			foreignKey: foreignKey
-				? {
-						schema: foreignKey.target_schema,
-						table: foreignKey.target_table,
-						column: foreignKey.target_column
-					}
-				: undefined
+			foreignKey: fk ? { schema: fk.target_schema, table: fk.target_table, column: fk.target_column } : undefined
 		};
 		const list = columnsByTable.get(row.table_id) ?? [];
 		list.push(column);
 		columnsByTable.set(row.table_id, list);
 	}
-
-	return tables.map((table) => ({
+	return tables.rows.map((table) => ({
 		schema: table.schema,
 		name: table.name,
 		columns: columnsByTable.get(table.id) ?? [],
-		rowCount: Number(table.row_count) || 0
+		rowCount: Math.max(0, Math.round(Number(table.row_count)))
 	}));
 }
 
-export type RowsArgs = {
-	schema: string;
-	table: string;
-	page: number;
-	pageSize: number;
-	sort: Sort | null;
-	search: string;
-};
+// Refresh explicitly on listTables, or at most every 30 seconds on reads.
+// Replacing the whole map also discards dropped tables instead of accumulating stale entries.
+const metadata = new WeakMap<pg.Pool, { expires: number; tables: Promise<Map<string, Table>> }>();
 
-export type SaveArgs = {
-	schema: string;
-	table: string;
-	updates: { pk: Record<string, unknown>; changes: Record<string, unknown> }[];
-	inserts: Record<string, unknown>[];
-};
-
-export type DeleteArgs = {
-	schema: string;
-	table: string;
-	pks: Record<string, unknown>[];
-};
-
-export type RowsPage = { rows: Row[]; total: number };
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-async function getTable(schema: string, table: string): Promise<Table> {
-	const [found] = await loadMetadata({ schema, table });
-	if (!found) throw new Error(`Table ${schema}.${table} not found`);
-	return found;
-}
-
-function primaryKey(columns: Column[]): string[] {
-	return columns.filter((column) => column.primaryKey).map((column) => column.name);
-}
-
-function rowKey(row: Record<string, unknown>, pkColumns: string[]): { key: string; pk: Record<string, unknown> } {
-	if (pkColumns.length > 0) {
-		const pk = Object.fromEntries(pkColumns.map((column) => [column, row[column]]));
-		return { key: JSON.stringify(pk), pk };
+async function cachedTables(pool: pg.Pool, refresh = false): Promise<Map<string, Table>> {
+	let cached = metadata.get(pool);
+	if (refresh || !cached || cached.expires <= Date.now()) {
+		cached = {
+			expires: Date.now() + 30_000,
+			tables: loadMetadata(pool).then((tables) => new Map(tables.map((table) => [tableKey(table.schema, table.name), table])))
+		};
+		metadata.set(pool, cached);
 	}
-	const ctid = row.__ctid;
-	delete row.__ctid;
-	if (typeof ctid !== 'string') throw new Error('Row has neither a primary key nor a ctid');
-	return { key: `ctid:${ctid}`, pk: { __ctid: ctid } };
+	try {
+		return await cached.tables;
+	} catch (error) {
+		if (metadata.get(pool) === cached) metadata.delete(pool);
+		throw error;
+	}
 }
 
-export async function listTables(): Promise<{ tables: Table[]; server: ServerInfo }> {
-	const tables = await loadMetadata();
-	const [info] = await select<{
-		version: string;
-		database: string;
-		user: string;
-		host: string | null;
-		port: number | null;
-	}>(
-		`select version() as version,
-		        current_database() as database,
-		        current_user as "user",
-		        inet_server_addr()::text as host,
-		        inet_server_port() as port`
-	);
+function primaryKey(table: Table): string[] {
+	return table.columns.filter((column) => column.primaryKey).map((column) => column.name);
+}
 
-	const vm = /^PostgreSQL (\S+)/.exec(info?.version ?? '');
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; server: ServerInfo }> {
+	const [tables, info] = await Promise.all([
+		cachedTables(pool, true),
+		pool.query<ServerInfo>(
+			`select version() as version, current_database() as database,
+			        current_user as "user", inet_server_addr()::text as host,
+			        inet_server_port() as port`
+		)
+	]);
+	const server = info.rows[0];
 	return {
-		tables,
-		server: {
-			version: vm?.[1] ?? 'unknown',
-			database: info?.database ?? '',
-			user: info?.user ?? '',
-			host: info?.host ?? null,
-			port: info?.port ?? null
-		}
+		tables: [...tables.values()],
+		server: { ...server, version: /^PostgreSQL (\S+)/.exec(server.version)?.[1] ?? server.version }
 	};
 }
 
-export async function listRows(args: RowsArgs): Promise<RowsPage> {
-	const table = await getTable(args.schema, args.table);
-	const columns = table.columns;
-	if (columns.length === 0) throw new Error('Table has no columns');
-
-	const pageSize = Math.min(Math.max(Math.trunc(args.pageSize) || 100, 1), 1000);
-	const page = Math.max(0, Math.trunc(args.page) || 0);
-	const offset = page * pageSize;
-
-	const search = args.search.trim();
-	const searchValues = search ? [`%${search}%`] : [];
-	const filter = search
-		? `where (${columns.map((column) => `t.${ident(column.name)}::text ilike $1`).join(' or ')})`
+export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
+	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
+	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
+	if (!Number.isSafeInteger(args.page) || args.page < 0 ||
+		!Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 500 ||
+		!Number.isSafeInteger(args.page * args.pageSize)) throw new Error('Invalid pagination');
+	if (args.sort && (!table.columns.some((column) => column.name === args.sort!.column) ||
+		!['asc', 'desc'].includes(args.sort.direction))) throw new Error('Invalid sort');
+	const pkColumns = primaryKey(table);
+	const search = table.columns.length ? args.search.trim() : '';
+	const values: (string | number)[] = search ? [`%${search}%`] : [];
+	const filter = search && table.columns.length
+		? `where (${table.columns.map((column) => `t.${ident(column.name)}::text ilike $1`).join(' or ')})`
 		: '';
-
-	const pkColumns = primaryKey(columns);
-	const tiebreak = pkColumns.length
-		? pkColumns.map((column) => `t.${ident(column)}`).join(', ')
-		: 't.ctid';
-	const sortColumn =
-		args.sort && columns.some((column) => column.name === args.sort!.column)
-			? args.sort.column
-			: null;
-	const sort = sortColumn
-		? `order by t.${ident(sortColumn)} ${args.sort!.direction === 'desc' ? 'desc' : 'asc'} nulls last` +
-			(pkColumns.includes(sortColumn) ? '' : `, ${tiebreak} asc`)
-		: `order by ${tiebreak} asc`;
-
-	const [count, rows] = await Promise.all([
-		select<{ count: number }>(
-			`select count(*)::int8 as count from ${qualify(args.schema, args.table)} t ${filter}`,
-			searchValues
-		),
-		select<Record<string, unknown>>(
-			`select t.*, t.ctid::text as __ctid
-			 from ${qualify(args.schema, args.table)} t
-			 ${filter}
-			 ${sort}
-			 limit $${searchValues.length + 1} offset $${searchValues.length + 2}`,
-			[...searchValues, pageSize, offset]
-		)
-	]);
-
-	const keyed = rows.map((row) => {
-		const { key, pk } = rowKey(row, pkColumns);
-		return { ...row, __key: key, __pk: pk } as Row;
+	const order = args.sort ? [`t.${ident(args.sort.column)} ${args.sort.direction} nulls last`] : [];
+	for (const column of pkColumns) {
+		if (column !== args.sort?.column) order.push(`t.${ident(column)} asc`);
+	}
+	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only.
+	order.push('t.tableoid asc', 't.ctid asc');
+	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
+	selected.push('t.xmin', 't.tableoid', 't.ctid');
+	const result = await pool.query<(string | null)[]>({
+		text: `select ${selected.join(', ')} from ${qualify(args.schema, args.table)} t
+			${filter} order by ${order.join(', ')} limit $${values.length + 1} offset $${values.length + 2}`,
+		values: [...values, args.pageSize + 1, args.page * args.pageSize],
+		rowMode: 'array',
+		// Per-query parsing preserves PostgreSQL's text output even for JSON, numeric and arrays.
+		types: { getTypeParser: () => (value: string) => value }
 	});
-
-	return { rows: keyed, total: Number(count[0]?.count ?? 0) };
+	const rows: Row[] = result.rows.slice(0, args.pageSize).map((cells) => {
+		const values: Values = Object.fromEntries(table.columns.map((column, i) => [column.name, cells[i]]));
+		const [version, relation, ctid] = cells.slice(table.columns.length) as string[];
+		const pk = Object.fromEntries(pkColumns.map((name) => [name, values[name] as string]));
+		return {
+			// Display key for this physical row version, not a durable logical identifier:
+			// updates/rewrites can change ctid; xmin distinguishes reused tuple slots.
+			// Mutations use identity only, never this key or ctid.
+			key: JSON.stringify([relation, ctid, version]),
+			values,
+			identity: pkColumns.length ? { pk, version, relation } : null
+		};
+	});
+	return { rows, hasMore: result.rows.length > args.pageSize };
 }
 
-function whereFromPk(
-	pk: Record<string, unknown>,
-	pkColumns: string[],
-	values: unknown[]
-): string {
-	if (typeof pk.__ctid === 'string') {
-		values.push(pk.__ctid);
-		return `ctid = $${values.length}::tid`;
+function entriesForWrite(table: Table, values: Values): [string, string | null][] {
+	if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('Invalid row values');
+	const columns = new Map(table.columns.map((column) => [column.name, column]));
+	const entries = Object.entries(values);
+	for (const [name, value] of entries) {
+		const column = columns.get(name);
+		if (!column) throw new Error(`Unknown column: ${name}`);
+		if (!writable(column)) throw new Error(`Column is not writable: ${name}`);
+		if (value !== null && typeof value !== 'string') throw new Error(`Expected PostgreSQL text or null for ${name}`);
 	}
-	if (pkColumns.length === 0) throw new Error('Cannot identify a row without a primary key');
-	return pkColumns
-		.map((column) => {
-			if (!(column in pk)) throw new Error(`Missing primary key value for ${column}`);
-			values.push(pk[column]);
-			return `${ident(column)} = $${values.length}`;
-		})
-		.join(' and ');
+	return entries;
 }
 
-export async function saveTable(args: SaveArgs): Promise<{ updated: number; inserted: number }> {
-	const table = await getTable(args.schema, args.table);
-	const pkColumns = primaryKey(table.columns);
-	const columnNames = new Set(table.columns.map((column) => column.name));
-	const target = qualify(args.schema, args.table);
+function identityWhere(identity: RowIdentity, pkColumns: string[], values: (string | null)[]): string {
+	if (!identity || !identity.pk || typeof identity.pk !== 'object' || Array.isArray(identity.pk) ||
+		Object.keys(identity.pk).length !== pkColumns.length ||
+		pkColumns.some((name) => !Object.hasOwn(identity.pk, name) || typeof identity.pk[name] !== 'string') ||
+		typeof identity.version !== 'string' || !/^\d+$/.test(identity.version) ||
+		typeof identity.relation !== 'string' || !/^\d+$/.test(identity.relation)) {
+		throw new Error('Invalid row identity; reload the table');
+	}
+	const clauses = pkColumns.map((name) => {
+		values.push(identity.pk[name]);
+		return `${ident(name)} = $${values.length}`;
+	});
+	values.push(identity.relation, identity.version);
+	clauses.push(`tableoid = $${values.length - 1}::oid`, `xmin = $${values.length}::xid`);
+	return clauses.join(' and ');
+}
 
-	const client = await getPool().connect();
-	let updated = 0;
-	let inserted = 0;
+async function mutate<T>(
+	pool: pg.Pool,
+	args: { schema: string; table: string },
+	operation: (client: pg.PoolClient, table: Table, target: string, pk: string[]) => Promise<T>
+): Promise<T> {
+	const target = qualify(args.schema, args.table);
+	const client = await pool.connect();
 	try {
 		await client.query('begin');
+		// Hold off column/key DDL before reading metadata, without serializing ordinary writes.
+		// Concurrent partition membership changes still have to pass the row identity check.
+		await client.query(`lock table ${target} in row exclusive mode`);
+		const [table] = await loadMetadata(client, args);
+		if (!table) throw new Error(`Table ${args.schema}.${args.table} not found`);
+		const pk = primaryKey(table);
+		if (!pk.length) throw new Error('Tables without a primary key are read-only');
+		const result = await operation(client, table, target, pk);
+		await client.query('commit');
+		return result;
+	} catch (error) {
+		await client.query('rollback');
+		throw error;
+	} finally {
+		client.release();
+	}
+}
 
+export async function saveTable(pool: pg.Pool, args: SaveArgs): Promise<{ updated: number; inserted: number }> {
+	return mutate(pool, args, async (client, table, target, pk) => {
+		let updated = 0;
+		let inserted = 0;
 		for (const update of args.updates) {
-			const entries = Object.entries(update.changes).filter(([name]) => columnNames.has(name));
-			if (entries.length === 0) continue;
-			const values: unknown[] = [];
-			const assignments = entries.map(([name, value]) => {
-				values.push(value);
-				return `${ident(name)} = $${values.length}`;
-			});
-			const where = whereFromPk(update.pk, pkColumns, values);
-			await client.query(`update ${target} set ${assignments.join(', ')} where ${where}`, values);
-			updated += 1;
+			const entries = entriesForWrite(table, update.changes);
+			if (!entries.length) throw new Error('Update has no changes');
+			const values = entries.map(([, value]) => value);
+			const assignments = entries.map(([name], i) => `${ident(name)} = $${i + 1}`);
+			const where = identityWhere(update.identity, pk, values);
+			const result = await client.query(`update ${target} set ${assignments.join(', ')} where ${where}`, values);
+			if (result.rowCount !== 1) throw new Error('Row conflict: row changed or was deleted. Pending changes were kept; revert them and refresh before editing again.');
+			updated++;
 		}
-
 		for (const insert of args.inserts) {
-			const entries = Object.entries(insert).filter(
-				([name]) => columnNames.has(name) && !name.startsWith('__')
+			const entries = entriesForWrite(table, insert);
+			const names = entries.map(([name]) => ident(name));
+			const values = entries.map(([, value]) => value);
+			const placeholders = values.map((_, i) => `$${i + 1}`);
+			const result = await client.query(
+				`insert into ${target} ${entries.length ? `(${names.join(', ')}) values (${placeholders.join(', ')})` : 'default values'}`,
+				values
 			);
-			if (entries.length === 0) {
-				await client.query(`insert into ${target} default values`);
-			} else {
-				const values = entries.map(([, value]) => value);
-				const names = entries.map(([name]) => ident(name)).join(', ');
-				const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
-				await client.query(`insert into ${target} (${names}) values (${placeholders})`, values);
-			}
-			inserted += 1;
+			if (result.rowCount !== 1) throw new Error('Insert did not create exactly one row');
+			inserted++;
 		}
-
-		await client.query('commit');
-	} catch (error) {
-		await client.query('rollback').catch(() => {});
-		throw new Error(errorMessage(error));
-	} finally {
-		client.release();
-	}
-
-	return { updated, inserted };
+		return { updated, inserted };
+	});
 }
 
-export async function deleteRows(args: DeleteArgs): Promise<{ deleted: number }> {
-	const table = await getTable(args.schema, args.table);
-	const pkColumns = primaryKey(table.columns);
-	const target = qualify(args.schema, args.table);
-
-	const client = await getPool().connect();
-	let deleted = 0;
-	try {
-		await client.query('begin');
-		for (const pk of args.pks) {
-			const values: unknown[] = [];
-			const where = whereFromPk(pk, pkColumns, values);
-			await client.query(`delete from ${target} where ${where}`, values);
-			deleted += 1;
+export async function deleteRows(pool: pg.Pool, args: DeleteArgs): Promise<{ deleted: number }> {
+	return mutate(pool, args, async (client, _table, target, pk) => {
+		let deleted = 0;
+		for (const identity of args.identities) {
+			const values: string[] = [];
+			const where = identityWhere(identity, pk, values);
+			const result = await client.query(`delete from ${target} where ${where}`, values);
+			if (result.rowCount !== 1) throw new Error('Row conflict: row changed or was deleted. Nothing was deleted; refresh and reselect the rows.');
+			deleted++;
 		}
-		await client.query('commit');
-	} catch (error) {
-		await client.query('rollback').catch(() => {});
-		throw new Error(errorMessage(error));
-	} finally {
-		client.release();
-	}
-
-	return { deleted };
+		return { deleted };
+	});
 }
-
-/** Runs one or more statements and returns the last result set with rows. */
-export async function runSql(sql: string): Promise<Record<string, unknown>[]> {
-	const result = await getPool().query(sql);
-	if (Array.isArray(result)) {
-		const last = [...result].reverse().find((entry) => entry.rows.length > 0);
-		return last?.rows ?? [];
-	}
-	return result.rows;
-}
-
-export type { Column, Row, ServerInfo, Sort, Table };

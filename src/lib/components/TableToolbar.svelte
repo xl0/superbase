@@ -1,168 +1,112 @@
 <script lang="ts">
-	import {
-		ArrowDown,
-		ArrowUp,
-		ArrowUpDown,
-		Check,
-		Plus,
-		RotateCw,
-		Search,
-		Trash2,
-		X
-	} from 'lucide-svelte';
+	import { onDestroy } from 'svelte';
+	import { ArrowDown, ArrowUp, Check, Plus, RotateCw, Search, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { formatNumber } from '#lib/format.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Input } from '#lib/components/ui/input/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
 
 	let { tab = $bindable('data') }: { tab: 'data' | 'definition' } = $props();
+	let search = $state('');
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let deleteOpen = $state(false);
+	let deleteTrigger = $state<HTMLButtonElement | null>(null);
+	let refreshButton = $state<HTMLButtonElement | null>(null);
+	const blocked = $derived(editor.busy || editor.loading);
 
-	function onSearch(event: Event) {
-		void editor.setSearch((event.currentTarget as HTMLInputElement).value);
+	$effect(() => {
+		// Cancel a pending filter whenever its navigation context changes.
+		void [editor.tableKey, editor.page, editor.pageSize, editor.sort, editor.busy, tab];
+		clearTimeout(timer);
+		search = editor.search;
+	});
+	onDestroy(() => clearTimeout(timer));
+
+	function filter(value: string) {
+		search = value;
+		clearTimeout(timer);
+		const key = editor.tableKey;
+		timer = setTimeout(() => {
+			if (editor.tableKey === key && !editor.busy) void editor.setSearch(value);
+		}, 250);
+	}
+
+	async function deleteRows() {
+		if (blocked || !editor.tableEditable) return;
+		await editor.deleteSelected();
+		deleteOpen = false;
 	}
 </script>
 
-<header class="shrink-0 border-b border-line bg-bg">
-	<div class="flex h-11 items-center gap-3 px-3.5">
-		<div class="flex min-w-0 items-baseline gap-1.5">
-			<span class="font-mono text-xs text-muted">{editor.table.schema}</span>
-			<span class="text-xs text-faint">/</span>
-			<span class="truncate font-mono text-[13px] font-medium">{editor.table.name}</span>
+<header class="shrink-0 border-b border-border bg-background">
+	<div class="flex min-h-12 flex-wrap items-center gap-2 px-3 py-2">
+		<div class="flex min-w-0 items-baseline gap-1.5 font-mono text-xs">
+			<span class="text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
+			<span class="truncate font-medium">{editor.table.name}</span>
 		</div>
-
-		<span class="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted">
-			{formatNumber(editor.rowCount)} rows
-		</span>
-		{#if editor.draftCount > 0}
-			<span class="rounded border border-accent/30 bg-accent/8 px-1.5 py-0.5 font-mono text-[10px] text-accent">
-				+{editor.draftCount} new
-			</span>
+		{#if !editor.search && editor.table.rowCount >= 0}
+			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground">~{editor.table.rowCount.toLocaleString()} rows</Badge>
 		{/if}
-
-		<div class="ml-2 flex h-7 items-center gap-0.5 rounded-md border border-line bg-surface p-0.5">
-			<button
-				onclick={() => (tab = 'data')}
-				class={[
-					'rounded px-2.5 py-1 text-[12px] font-medium transition-colors',
-					tab === 'data' ? 'bg-elevated text-fg shadow-sm' : 'text-muted hover:text-fg'
-				]}
-			>
-				Data
-			</button>
-			<button
-				onclick={() => (tab = 'definition')}
-				class={[
-					'rounded px-2.5 py-1 text-[12px] font-medium transition-colors',
-					tab === 'definition' ? 'bg-elevated text-fg shadow-sm' : 'text-muted hover:text-fg'
-				]}
-			>
-				Definition
-			</button>
+		{#if editor.draftCount > 0}<Badge variant="secondary" class="text-[10px]">{editor.draftCount} new</Badge>{/if}
+		<div class="ml-2 flex items-center rounded-md border border-border p-0.5" aria-label="Table view">
+			<Button variant={tab === 'data' ? 'secondary' : 'ghost'} size="xs" disabled={editor.busy} aria-pressed={tab === 'data'} onclick={() => (tab = 'data')}>Data</Button>
+			<Button variant={tab === 'definition' ? 'secondary' : 'ghost'} size="xs" disabled={editor.busy} aria-pressed={tab === 'definition'} onclick={() => (tab = 'definition')}>Definition</Button>
 		</div>
-
-		<div class="ml-auto flex items-center gap-1.5">
+		<div class="ml-auto flex items-center gap-2">
 			{#if editor.hasChanges}
-				<span class="mr-1 font-mono text-[10px] text-warn">
-					{editor.dirtyCount} unsaved
-				</span>
-				<button
-					onclick={() => void editor.revert()}
-					class="h-7 rounded-md border border-line px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
-				>
-					Revert
-				</button>
-				<button
-					onclick={() => void editor.save()}
-					disabled={editor.saving}
-					class="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-[12px] font-medium text-[#08130d] transition-colors hover:bg-accent-dim disabled:opacity-60"
-				>
-					<Check size={12} strokeWidth={2.5} />
-					{editor.saving ? 'Saving…' : 'Save'}
-				</button>
+				<span class="text-[11px] text-muted-foreground">Unsaved changes</span>
+				<Button variant="outline" size="xs" disabled={blocked} onclick={() => { if (window.confirm('Discard unsaved changes in this table?')) editor.revert(); }}>Revert</Button>
+				<Button size="xs" disabled={blocked || !editor.tableEditable} onclick={() => void editor.save()}><Check />{editor.busy ? 'Working…' : 'Save'}</Button>
 			{:else if editor.savedAt}
-				<span class="mr-1 flex items-center gap-1 font-mono text-[10px] text-accent">
-					<Check size={11} strokeWidth={2.5} /> saved
-				</span>
+				<span class="flex items-center gap-1 text-[11px] text-primary"><Check class="size-3" /> Saved</span>
 			{/if}
 		</div>
 	</div>
-
-	<div class="flex h-9 items-center gap-1.5 px-2.5">
-		<div class="relative w-64">
-			<Search
-				size={12}
-				class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint"
-			/>
-			<input
-				value={editor.search}
-				oninput={onSearch}
-				placeholder="Filter rows…"
-				spellcheck={false}
-				class="h-7 w-full rounded-md border border-line bg-surface pr-6 pl-7 text-[12px] outline-none placeholder:text-faint focus:border-line-strong focus:bg-elevated"
-			/>
-			{#if editor.search}
-				<button
-					onclick={() => void editor.setSearch('')}
-					class="absolute top-1/2 right-1.5 grid size-4 -translate-y-1/2 place-items-center rounded text-faint hover:text-fg"
-					aria-label="Clear filter"
-				>
-					<X size={11} />
-				</button>
-			{/if}
-		</div>
-
-		<div class="flex h-7 items-center rounded-md border border-line bg-surface">
-			<select
-				value={editor.sort?.column ?? ''}
-				onchange={(event) => void editor.setSort(event.currentTarget.value)}
-				class="h-full appearance-none rounded-l-md bg-transparent pr-1 pl-2 text-[12px] text-muted outline-none hover:text-fg"
-				title="Sort by column"
-			>
-				<option value="">Sort</option>
-				{#each editor.table.columns as column (column.name)}
-					<option value={column.name}>{column.name}</option>
-				{/each}
-			</select>
-			<button
-				onclick={() => void editor.toggleSortDirection()}
-				disabled={!editor.sort}
-				title="Toggle sort direction"
-				class="grid h-full w-6 place-items-center border-l border-line text-muted transition-colors hover:text-fg disabled:opacity-35"
-			>
-				{#if editor.sort?.direction === 'asc'}
-					<ArrowUp size={11} />
-				{:else if editor.sort?.direction === 'desc'}
-					<ArrowDown size={11} />
-				{:else}
-					<ArrowUpDown size={11} />
+	{#if tab === 'data'}
+		<div class="flex flex-wrap items-center gap-2 px-3 pb-2">
+			<div class="relative w-56">
+				<Search class="pointer-events-none absolute top-2 left-2 size-3.5 text-muted-foreground" />
+				<Input value={search} oninput={(event) => filter(event.currentTarget.value)} disabled={editor.busy}
+					aria-label="Filter rows" placeholder="Filter rows…" spellcheck={false} class="h-8 pr-7 pl-7 text-xs" />
+				{#if search}
+					<Button variant="ghost" size="icon-xs" class="absolute top-1 right-1" disabled={editor.busy} aria-label="Clear filter"
+						onclick={() => { clearTimeout(timer); search = ''; void editor.setSearch(''); }}><X /></Button>
 				{/if}
-			</button>
+			</div>
+			<NativeSelect.Root size="sm" aria-label="Sort by column" value={editor.sort?.column ?? ''} disabled={blocked}
+				onchange={(event) => void editor.setSort(event.currentTarget.value)}>
+				<NativeSelect.Option value="">Sort by…</NativeSelect.Option>
+				{#each editor.table.columns as column (column.name)}<NativeSelect.Option value={column.name}>{column.name}</NativeSelect.Option>{/each}
+			</NativeSelect.Root>
+			<Button variant="outline" size="icon-sm" disabled={blocked || !editor.sort} aria-label={editor.sort?.direction === 'asc' ? 'Sort descending' : 'Sort ascending'} onclick={() => void editor.toggleSortDirection()}>
+				{#if editor.sort?.direction === 'desc'}<ArrowDown />{:else}<ArrowUp />{/if}
+			</Button>
+			<div class="ml-auto flex items-center gap-2">
+				<Button variant="outline" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => editor.insertRow()}><Plus />Insert row</Button>
+				{#if editor.selectedCount > 0}
+					<Button variant="ghost" size="icon-sm" disabled={editor.busy} aria-label="Clear row selection" onclick={() => editor.clearRowSelection()}><X /></Button>
+					<Button bind:ref={deleteTrigger} variant="destructive" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => (deleteOpen = true)}><Trash2 />Delete {editor.selectedCount}</Button>
+				{/if}
+				<Button bind:ref={refreshButton} variant="outline" size="icon-sm" disabled={blocked} aria-label="Refresh database" onclick={() => { clearTimeout(timer); search = editor.search; void editor.reload(); }}><RotateCw class={editor.loading ? 'animate-spin' : ''} /></Button>
+			</div>
 		</div>
-
-		<div class="ml-auto flex items-center gap-1.5">
-			<button
-				onclick={() => editor.insertRow()}
-				class="flex h-7 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
-			>
-				<Plus size={12} />
-				Insert row
-			</button>
-
-			{#if editor.selectedCount > 0}
-				<button
-					onclick={() => void editor.deleteSelected()}
-					class="flex h-7 items-center gap-1.5 rounded-md border border-danger/35 bg-danger/8 px-2.5 text-[12px] text-danger transition-colors hover:bg-danger/15"
-				>
-					<Trash2 size={12} />
-					Delete {editor.selectedCount}
-				</button>
-			{/if}
-
-			<button
-				onclick={() => void editor.reload()}
-				title="Refresh"
-				class="grid size-7 place-items-center rounded-md border border-line bg-surface text-muted transition-colors hover:bg-hover hover:text-fg"
-			>
-				<RotateCw size={12} />
-			</button>
-		</div>
-	</div>
+	{/if}
 </header>
+
+<Dialog.Root open={deleteOpen} onOpenChange={(value) => { if (!editor.busy) deleteOpen = value; }}>
+	<Dialog.Content showCloseButton={!editor.busy}
+		onEscapeKeydown={(event) => { if (editor.busy) event.preventDefault(); }}
+		onInteractOutside={(event) => { if (editor.busy) event.preventDefault(); }}
+		onCloseAutoFocus={(event) => { event.preventDefault(); (deleteTrigger?.isConnected ? deleteTrigger : refreshButton)?.focus(); }}>
+		<Dialog.Header>
+			<Dialog.Title>Delete {editor.selectedCount} selected rows?</Dialog.Title>
+			<Dialog.Description>This deletion is irreversible. All {editor.selectedCount} selected rows in this table will be deleted, including selections on other pages. Selected unsaved drafts will be removed.</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button variant="outline" disabled={editor.busy} onclick={() => (deleteOpen = false)}>Cancel</Button>
+			<Button variant="destructive" disabled={blocked || !editor.selectedCount || !editor.tableEditable} onclick={() => void deleteRows()}>{editor.busy ? 'Deleting…' : `Delete ${editor.selectedCount} rows`}</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

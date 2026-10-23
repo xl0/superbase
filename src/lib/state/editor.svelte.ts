@@ -1,125 +1,126 @@
-import { deleteRows, saveTable, tableRows } from '#lib/db.remote.js';
-import type { Row, ServerInfo, Sort, Table } from '#lib/types.js';
+import { database, deleteRows, saveTable, tableRows } from '#lib/db.remote.js';
+import { message } from '#lib/utils.js';
+import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
 
-function message(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
+type PendingRow = { identity: RowIdentity; original: Values; changes: Values };
 
+/** One browser workspace. Pending mutations own their identities, not page indexes. */
 export class EditorState {
+	connection = $state('');
 	tables = $state<Table[]>([]);
 	server = $state<ServerInfo | null>(null);
-
+	ready = $state(false);
 	activeSchema = $state('');
 	activeTableName = $state('');
 	page = $state(0);
 	pageSize = $state(100);
 	sort = $state<Sort | null>(null);
 	search = $state('');
-
 	rows = $state<Row[]>([]);
-	total = $state(0);
+	hasMore = $state(false);
 	loading = $state(false);
-	saving = $state(false);
+	busy = $state(false);
+	editing = $state(false);
 	error = $state<string | null>(null);
 	savedAt = $state<number | null>(null);
 
-	/** tableKey -> rowKey -> true */
-	rowSelection = $state<Record<string, Record<string, true>>>({});
-	/** tableKey -> rowKey -> column -> value */
-	edits = $state<Record<string, Record<string, Record<string, unknown>>>>({});
-	/** tableKey -> locally inserted rows */
+	/** Table keys and row keys are encoded tuples, never unescaped identifiers. */
+	edits = $state<Record<string, Record<string, PendingRow>>>({});
 	drafts = $state<Record<string, Row[]>>({});
-
-	#initialized = false;
+	rowSelection = $state<Record<string, Record<string, Row>>>({});
 	#request = 0;
 
-	tableKey = $derived(`${this.activeSchema}.${this.activeTableName}`);
-
-	table = $derived(
-		this.tables.find((t) => t.schema === this.activeSchema && t.name === this.activeTableName) ??
-			this.tables[0] ??
-			EMPTY_TABLE
-	);
-
-	schemas = $derived([...new Set(this.tables.map((t) => t.schema))]);
-	schemaTables = $derived(this.tables.filter((t) => t.schema === this.activeSchema));
-
+	tableKey = $derived(tableKey(this.activeSchema, this.activeTableName));
+	table = $derived(this.tables.find((table) => table.schema === this.activeSchema && table.name === this.activeTableName) ?? EMPTY_TABLE);
+	tableEditable = $derived(editable(this.table));
+	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
+	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
 	draftsForTable = $derived(this.drafts[this.tableKey] ?? []);
+	pageRows = $derived(this.page === 0 ? [...this.draftsForTable, ...this.rows] : this.rows);
 
-	pageRows = $derived(
-		this.page === 0 ? [...this.draftsForTable, ...this.rows] : this.rows
-	);
-
-	pageCount = $derived(Math.max(1, Math.ceil(this.total / this.pageSize)));
-
-	get draftCount() {
-		return this.draftsForTable.length;
-	}
-
-	get rowCount() {
-		return this.total + this.draftCount;
-	}
-
+	get draftCount() { return this.draftsForTable.length; }
 	get dirtyCount() {
-		const edits = this.edits[this.tableKey];
-		if (!edits) return 0;
-		return Object.values(edits).reduce((total, row) => total + Object.keys(row).length, 0);
+		return Object.values(this.edits[this.tableKey] ?? {}).reduce((count, row) => count + Object.keys(row.changes).length, 0);
 	}
-
-	get hasChanges() {
-		return this.dirtyCount > 0 || this.draftCount > 0;
+	get hasChanges() { return this.dirtyCount > 0 || this.draftCount > 0; }
+	get hasAnyChanges() {
+		return Object.values(this.edits).some((rows) => Object.keys(rows).length > 0) || Object.values(this.drafts).some((rows) => rows.length > 0);
 	}
+	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
 
-	get selectedCount() {
-		const rows = this.rowSelection[this.tableKey];
-		return rows ? Object.keys(rows).length : 0;
-	}
-
-	init(data: { tables: Table[]; server: ServerInfo }) {
-		if (this.#initialized) return;
-		this.#initialized = true;
-		this.tables = data.tables;
-		this.server = data.server;
-
-		const initial =
-			data.tables.find((table) => table.schema === 'public' && table.name === 'users') ??
-			data.tables.find((table) => table.schema === 'public') ??
-			data.tables[0];
-
-		if (initial) {
-			this.activeSchema = initial.schema;
-			this.activeTableName = initial.name;
+	async initialize(connection: string) {
+		if (this.connection === connection && this.ready) return;
+		if (this.connection && this.connection !== connection) {
+			if (this.hasAnyChanges) {
+				this.ready = false;
+				this.error = 'Connection changed. Reconnect or reload to discard local changes; they will not be sent to another database.';
+				return;
+			}
+			this.discardAll();
+			this.tables = [];
+			this.activeSchema = this.activeTableName = '';
+			this.ready = false;
 		}
-		void this.fetch();
+		this.connection = connection;
+		await this.reload();
+	}
+
+	async reload() {
+		if (this.busy || !this.connection) return;
+		const request = ++this.#request;
+		this.loading = true;
+		this.rows = [];
+		this.error = null;
+		try {
+			const resource = database({ connection: this.connection });
+			await resource.refresh();
+			if (request !== this.#request) return;
+			if (resource.error) throw resource.error;
+			if (!resource.current) throw new Error('No response from the database');
+			this.tables = resource.current.tables;
+			this.server = resource.current.server;
+			this.ready = true;
+			if (!this.table.columns.length) {
+				const first = this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
+				this.activeSchema = first?.schema ?? '';
+				this.activeTableName = first?.name ?? '';
+				this.sort = null;
+				this.search = '';
+			}
+			this.page = 0;
+			await this.fetch();
+		} catch (error) {
+			if (request === this.#request) this.error = message(error);
+		} finally {
+			if (request === this.#request) this.loading = false;
+		}
 	}
 
 	async fetch(): Promise<void> {
-		if (!this.activeSchema || !this.activeTableName) return;
 		const request = ++this.#request;
-		this.loading = true;
+		this.rows = [];
+		this.hasMore = false;
 		this.error = null;
+		if (!this.activeTableName) { this.loading = false; return; }
+		this.loading = true;
 		try {
-			const args = {
-				schema: this.activeSchema,
-				table: this.activeTableName,
-				page: this.page,
-				pageSize: this.pageSize,
-				sort: this.sort,
-				search: this.search
-			};
-			const resource = tableRows(args);
+			const resource = tableRows({
+				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
+				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search
+			});
 			await resource.refresh();
-			const page = resource.current;
 			if (request !== this.#request) return;
-			if (!page) throw new Error('No response from the database');
-			if (page.rows.length === 0 && this.page > 0) {
-				this.page = Math.max(0, Math.ceil(page.total / this.pageSize) - 1);
+			if (resource.error) throw resource.error;
+			const result = resource.current;
+			if (!result) throw new Error('No response from the database');
+			if (!result.rows.length && this.page > 0) {
+				this.page = 0;
 				return this.fetch();
 			}
-			this.rows = page.rows;
-			this.total = page.total;
+			this.rows = result.rows;
+			this.hasMore = result.hasMore;
 		} catch (error) {
 			if (request === this.#request) this.error = message(error);
 		} finally {
@@ -128,228 +129,161 @@ export class EditorState {
 	}
 
 	async selectTable(schema: string, name: string) {
-		if (schema === this.activeSchema && name === this.activeTableName) return;
+		if (this.busy || (schema === this.activeSchema && name === this.activeTableName)) return;
 		this.activeSchema = schema;
 		this.activeTableName = name;
 		this.page = 0;
 		this.sort = null;
 		this.search = '';
-		this.error = null;
+		this.savedAt = null;
 		await this.fetch();
 	}
-
 	async setSchema(schema: string) {
 		const first = this.tables.find((table) => table.schema === schema);
 		if (first) await this.selectTable(schema, first.name);
 	}
-
 	async setPage(page: number) {
-		this.page = Math.min(Math.max(0, page), this.pageCount - 1);
+		if (this.busy || this.loading || page < 0 || !Number.isSafeInteger(page) || (page > this.page && !this.hasMore)) return;
+		this.page = page;
 		await this.fetch();
 	}
-
-	async setPageSize(pageSize: number) {
-		this.pageSize = pageSize;
+	async setPageSize(size: number) {
+		if (this.busy || ![100, 250, 500].includes(size)) return;
+		this.pageSize = size;
 		this.page = 0;
 		await this.fetch();
 	}
-
 	async setSearch(search: string) {
+		if (this.busy) return;
 		this.search = search;
 		this.page = 0;
 		await this.fetch();
 	}
-
 	async toggleSort(column: string) {
-		if (this.sort?.column !== column) {
-			this.sort = { column, direction: 'asc' };
-		} else if (this.sort.direction === 'asc') {
-			this.sort = { column, direction: 'desc' };
-		} else {
-			this.sort = null;
-		}
+		if (this.busy) return;
+		this.sort = this.sort?.column !== column ? { column, direction: 'asc' } : this.sort.direction === 'asc' ? { column, direction: 'desc' } : null;
 		this.page = 0;
 		await this.fetch();
 	}
-
 	async setSort(column: string) {
-		this.sort = column
-			? this.sort?.column === column
-				? this.sort
-				: { column, direction: 'asc' }
-			: null;
+		if (this.busy) return;
+		this.sort = column ? { column, direction: 'asc' } : null;
 		this.page = 0;
 		await this.fetch();
 	}
-
 	async toggleSortDirection() {
-		if (!this.sort) return;
-		this.sort = {
-			...this.sort,
-			direction: this.sort.direction === 'asc' ? 'desc' : 'asc'
-		};
-		await this.fetch();
-	}
-
-	async reload() {
+		if (this.busy || !this.sort) return;
+		this.sort = { ...this.sort, direction: this.sort.direction === 'asc' ? 'desc' : 'asc' };
 		this.page = 0;
 		await this.fetch();
 	}
 
-	getEdit(rowKey: string, column: string) {
-		return this.edits[this.tableKey]?.[rowKey]?.[column];
+	getValue(row: Row, column: string): CellValue | undefined {
+		const changes = this.edits[this.tableKey]?.[row.key]?.changes;
+		return changes && Object.hasOwn(changes, column) ? changes[column]
+			: Object.hasOwn(row.values, column) ? row.values[column] : undefined;
+	}
+	hasEdit(key: string, column: string) {
+		return Object.hasOwn(this.edits[this.tableKey]?.[key]?.changes ?? {}, column);
 	}
 
-	hasEdit(rowKey: string, column: string) {
-		const edits = this.edits[this.tableKey];
-		return edits !== undefined && edits[rowKey] !== undefined && column in edits[rowKey];
-	}
-
-	editCell(rowKey: string, column: string, value: unknown) {
-		const edits = this.edits[this.tableKey] ?? {};
-		const rowEdits = edits[rowKey] ?? {};
-		rowEdits[column] = value;
-		edits[rowKey] = rowEdits;
-		this.edits[this.tableKey] = edits;
+	editCell(row: Row, column: Column, value: CellValue | undefined) {
+		if (this.busy || this.loading || !this.tableEditable || !writable(column)) return;
+		if (row.draft) {
+			const draft = this.draftsForTable.find((candidate) => candidate.key === row.key);
+			if (!draft) return;
+			if (value === undefined) {
+				draft.values = { ...draft.values };
+				delete draft.values[column.name];
+			} else draft.values = { ...draft.values, [column.name]: value };
+		} else {
+			if (value === undefined || !row.identity || !this.rows.some((candidate) => candidate.key === row.key)) return;
+			const pending = this.edits[this.tableKey] ??= {};
+			const change = pending[row.key] ??= {
+				identity: $state.snapshot(row.identity), original: { ...row.values }, changes: {}
+			};
+			change.changes = { ...change.changes, [column.name]: value };
+			if (value === change.original[column.name]) delete change.changes[column.name];
+			if (!Object.keys(change.changes).length) delete pending[row.key];
+		}
 		this.savedAt = null;
-	}
-
-	isDraft(rowKey: string) {
-		return this.draftsForTable.some((row) => row.__key === rowKey);
 	}
 
 	insertRow() {
-		const draft: Row = {
-			__key: `draft:${crypto.randomUUID()}`,
-			__draft: true
-		};
-		for (const column of this.table.columns) {
-			draft[column.name] = column.kind === 'boolean' ? false : null;
-		}
-		this.drafts[this.tableKey] = [draft, ...this.draftsForTable];
-		this.page = 0;
+		if (this.busy || this.loading || !this.tableEditable) return;
+		this.drafts[this.tableKey] = [{ key: `draft:${crypto.randomUUID()}`, values: {}, identity: null, draft: true }, ...this.draftsForTable];
 		this.savedAt = null;
+		if (this.page !== 0) { this.page = 0; void this.fetch(); }
 	}
 
 	async save() {
-		if (!this.hasChanges || this.saving) return;
-		this.saving = true;
+		if (this.busy || this.loading || !this.hasChanges) return;
+		const key = this.tableKey;
+		const args = {
+			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
+			updates: Object.values(this.edits[key] ?? {}).map((row) => ({ identity: $state.snapshot(row.identity), changes: { ...row.changes } })),
+			inserts: this.draftsForTable.map((row) => ({ ...row.values }))
+		};
+		this.busy = true;
 		this.error = null;
 		try {
-			const edits = this.edits[this.tableKey] ?? {};
-			const drafts = this.draftsForTable;
-			const draftKeys = new Set(drafts.map((row) => row.__key));
-
-			const updates: { pk: Record<string, unknown>; changes: Record<string, unknown> }[] = [];
-			for (const [rowKey, changes] of Object.entries(edits)) {
-				if (draftKeys.has(rowKey)) continue;
-				const row = this.rows.find((candidate) => candidate.__key === rowKey);
-				if (row?.__pk) updates.push({ pk: row.__pk, changes });
-			}
-
-			const inserts = drafts.map((draft) => {
-				const values: Record<string, unknown> = {};
-				for (const column of this.table.columns) {
-					const value =
-						edits[draft.__key] && column.name in edits[draft.__key]
-							? edits[draft.__key][column.name]
-							: draft[column.name];
-					// A null cell with a database default means "use the default".
-					if (value === null && column.defaultValue != null) continue;
-					values[column.name] = value;
-				}
-				return values;
-			});
-
-			await saveTable({
-				schema: this.activeSchema,
-				table: this.activeTableName,
-				updates,
-				inserts
-			});
-
-			this.edits[this.tableKey] = {};
-			this.drafts[this.tableKey] = [];
+			await saveTable(args);
+			delete this.edits[key];
+			delete this.drafts[key];
+			delete this.rowSelection[key];
 			this.savedAt = Date.now();
-			await this.fetch();
+			if (this.tableKey === key && this.connection === args.connection) await this.fetch();
 		} catch (error) {
 			this.error = message(error);
-		} finally {
-			this.saving = false;
-		}
+		} finally { this.busy = false; }
 	}
 
-	async revert() {
-		this.edits[this.tableKey] = {};
-		this.drafts[this.tableKey] = [];
+	revert() {
+		if (this.busy) return;
+		delete this.edits[this.tableKey];
+		delete this.drafts[this.tableKey];
+		delete this.rowSelection[this.tableKey];
 		this.savedAt = null;
 	}
-
-	isRowSelected(rowKey: string) {
-		return this.rowSelection[this.tableKey]?.[rowKey] === true;
-	}
-
-	toggleRowSelection(rowKey: string) {
-		const rows = this.rowSelection[this.tableKey] ?? {};
-		if (rows[rowKey]) {
-			delete rows[rowKey];
-		} else {
-			rows[rowKey] = true;
-		}
-		this.rowSelection[this.tableKey] = rows;
-	}
-
-	setRowsSelected(rowKeys: string[], selected: boolean) {
-		const rows = this.rowSelection[this.tableKey] ?? {};
-		for (const rowKey of rowKeys) {
-			if (selected) rows[rowKey] = true;
-			else delete rows[rowKey];
-		}
-		this.rowSelection[this.tableKey] = rows;
+	discardAll() {
+		this.edits = {};
+		this.drafts = {};
+		this.rowSelection = {};
+		this.editing = false;
 	}
 
 	clearRowSelection() {
-		delete this.rowSelection[this.tableKey];
+		if (!this.busy) delete this.rowSelection[this.tableKey];
 	}
-
+	isRowSelected(key: string) { return Object.hasOwn(this.rowSelection[this.tableKey] ?? {}, key); }
+	toggleRowSelection(row: Row) { this.setRowsSelected([row], !this.isRowSelected(row.key)); }
+	setRowsSelected(rows: Row[], selected: boolean) {
+		if (this.busy || this.loading || !this.tableEditable) return;
+		const selection = this.rowSelection[this.tableKey] ??= {};
+		for (const row of rows) {
+			if (selected) selection[row.key] = $state.snapshot(row);
+			else delete selection[row.key];
+		}
+	}
 	async deleteSelected() {
-		const selected = this.rowSelection[this.tableKey];
-		if (!selected) return;
-		const keys = Object.keys(selected);
-		if (keys.length === 0) return;
-
-		const draftKeys = new Set(this.draftsForTable.map((row) => row.__key));
-		const removingDrafts = keys.filter((key) => draftKeys.has(key));
-		const removingRows = keys.filter((key) => !draftKeys.has(key));
-		const pks = this.rows
-			.filter((row) => removingRows.includes(row.__key))
-			.map((row) => row.__pk)
-			.filter((pk): pk is Record<string, unknown> => pk !== undefined);
-
+		if (this.busy || this.loading || !this.selectedCount) return;
+		const key = this.tableKey;
+		const rows = Object.values(this.rowSelection[key]);
+		const removing = new Set(rows.map((row) => row.key));
+		const args = {
+			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
+			identities: rows.flatMap((row) => row.identity ? [$state.snapshot(row.identity)] : [])
+		};
+		this.busy = true;
 		this.error = null;
-		if (pks.length > 0) {
-			try {
-				await deleteRows({
-					schema: this.activeSchema,
-					table: this.activeTableName,
-					pks
-				});
-			} catch (error) {
-				this.error = message(error);
-				return;
-			}
-		}
-
-		if (removingDrafts.length > 0) {
-			this.drafts[this.tableKey] = this.draftsForTable.filter(
-				(row) => !removingDrafts.includes(row.__key)
-			);
-		}
-		const edits = this.edits[this.tableKey];
-		if (edits) for (const key of keys) delete edits[key];
-		delete this.rowSelection[this.tableKey];
-		this.table.rowCount = Math.max(0, this.table.rowCount - keys.length);
-		if (pks.length > 0) await this.fetch();
+		try {
+			if (args.identities.length) await deleteRows(args);
+			this.drafts[key] = (this.drafts[key] ?? []).filter((row) => !removing.has(row.key));
+			for (const row of rows) if (this.edits[key]) delete this.edits[key][row.key];
+			delete this.rowSelection[key];
+			if (args.identities.length && this.tableKey === key && this.connection === args.connection) await this.fetch();
+		} catch (error) { this.error = message(error); }
+		finally { this.busy = false; }
 	}
 }
 

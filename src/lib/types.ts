@@ -36,7 +36,21 @@ export interface Table {
 }
 
 /** A single row of a table. `__key` is a stable identity for edits/selection. */
-export type Row = Record<string, unknown> & { __key: string };
+export type Row = Record<string, unknown> & {
+	__key: string;
+	/** Primary key values (or `{ __ctid }` for tables without one). */
+	__pk?: Record<string, unknown>;
+	/** Locally inserted row that has not been saved yet. */
+	__draft?: boolean;
+};
+
+export interface ServerInfo {
+	version: string;
+	database: string;
+	user: string;
+	host: string | null;
+	port: number | null;
+}
 
 export type SortDirection = 'asc' | 'desc';
 

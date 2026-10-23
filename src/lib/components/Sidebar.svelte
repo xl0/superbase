@@ -16,7 +16,7 @@
 	}
 </script>
 
-<aside class="flex h-full w-58 shrink-0 flex-col border-r border-line bg-panel">
+<aside class="flex h-full w-64 shrink-0 flex-col border-r border-line bg-panel">
 	<header class="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
 		<div class="grid size-6 place-items-center rounded-md bg-accent/12 text-accent">
 			<Database size={13} strokeWidth={2.2} />
@@ -28,19 +28,6 @@
 	</header>
 
 	<div class="shrink-0 space-y-2.5 p-2.5 pb-2">
-		<div class="relative">
-			<Search
-				size={13}
-				class="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint"
-			/>
-			<input
-				bind:value={tableSearch}
-				placeholder="Search tables"
-				spellcheck={false}
-				class="h-8 w-full rounded-md border border-line bg-surface pr-2 pl-7.5 text-xs outline-none placeholder:text-faint focus:border-line-strong focus:bg-elevated"
-			/>
-		</div>
-
 		<div>
 			<div class="mb-1 px-1 text-[10px] font-medium tracking-[0.08em] text-faint uppercase">
 				Schema
@@ -61,6 +48,19 @@
 				/>
 			</div>
 		</div>
+
+		<div class="relative">
+			<Search
+				size={13}
+				class="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint"
+			/>
+			<input
+				bind:value={tableSearch}
+				placeholder="Search tables"
+				spellcheck={false}
+				class="h-8 w-full rounded-md border border-line bg-surface pr-2 pl-7.5 text-xs outline-none placeholder:text-faint focus:border-line-strong focus:bg-elevated"
+			/>
+		</div>
 	</div>
 
 	<div class="flex min-h-0 flex-1 flex-col">
@@ -76,12 +76,12 @@
 				<button
 					onclick={() => editor.selectTable(table.schema, table.name)}
 					class={[
-						'group flex h-7.5 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors',
+						'group flex h-7 w-full items-center gap-2 rounded-md px-2 text-left transition-colors',
 						active ? 'bg-elevated text-fg' : 'text-muted hover:bg-hover/70 hover:text-fg'
 					]}
 				>
 					<Table2 size={13} class={active ? 'text-accent' : 'text-faint'} />
-					<span class="truncate font-mono text-[11.5px]">{table.name}</span>
+					<span class="truncate text-[12px]">{table.name}</span>
 					<span class="ml-auto font-mono text-[10px] text-faint">{compact(table.rowCount)}</span>
 				</button>
 			{:else}
@@ -92,7 +92,14 @@
 
 	<footer class="flex shrink-0 items-center gap-2 border-t border-line px-3 py-2.5 text-[11px]">
 		<span class="size-1.5 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent)]"></span>
-		<span class="text-muted">PostgreSQL 16.4</span>
-		<span class="ml-auto font-mono text-[10px] text-faint">postgres</span>
+		<span class="text-muted">PostgreSQL {editor.server?.version ?? ''}</span>
+		<span
+			class="ml-auto max-w-24 truncate font-mono text-[10px] text-faint"
+			title={editor.server
+				? `${editor.server.host ?? 'local'}:${editor.server.port ?? ''}/${editor.server.database}`
+				: undefined}
+		>
+			{editor.server?.user ?? ''}
+		</span>
 	</footer>
 </aside>

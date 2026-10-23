@@ -37,18 +37,23 @@ pagination, definition tab.
 - [x] Inline editors (text/number, enum and boolean selects)
 - [x] Dirty overlay, revert/save, insert row
 - [x] Header sort, drag-to-resize with persisted widths
-- [ ] Row selection + delete selected rows
+- [x] Row selection (checkbox gutter) + delete selected rows
+- [x] Toolbar: insert/delete/refresh, column sort select, row filter
 - [ ] Column filters / "where" bar
 - [ ] Virtualization (only if page sizes above ~500 need it)
 - [ ] Optimistic edit batching (one transaction per save)
 
-## [ ] Real database
+## [~] Real database
 
-- [ ] `pg` pool + `/query`-style server module, `DATABASE_URL` from env
-- [ ] Structured intents over remote functions: `tables()`, `tableMeta()`, `rows()`,
-  `saveRows()`, `sql()`
-- [ ] Catalog SQL adapted from pg-meta (MIT) for tables, columns, PK/FK/index metadata
-- [ ] Connection handling: env default, paste-a-URL connect session (HttpOnly cookie → pool map)
+- [x] `pg` pool + `DATABASE_URL` (dynamic private env)
+- [x] Typed remote functions: `database()`, `tableRows()`, `saveTable()`, `deleteRows()`,
+  `executeSql()`
+- [x] Catalog queries for tables, columns, enums, FKs; PK ordering; `ctid` fallback
+- [x] Edit/save/insert/delete against Postgres, transactions, defaults on insert
+- [x] Server info in the sidebar; connection error screen
+- [ ] Metadata cache (avoid re-reading the catalog on every page)
+- [ ] Connection handling: paste-a-URL connect session (HttpOnly cookie → pool map)
+- [ ] SQL editor UI over `executeSql()`
 - [ ] Type generation? (later)
 
 ## [ ] Desktop / packaging

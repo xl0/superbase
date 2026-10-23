@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, KeyRound, Link2 } from 'lucide-svelte';
+	import { ArrowDown, ArrowUp, ArrowUpDown, KeyRound, Link2 } from 'lucide-svelte';
 	import { PersistedState } from 'runed';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { displayValue } from '#lib/format.js';
 	import type { Column, Row, Table } from '#lib/types.js';
 
-	let { table, rows, rowOffset }: { table: Table; rows: Row[]; rowOffset: number } = $props();
+	let {
+		table,
+		rows,
+		rowOffset,
+		draftCount = 0
+	}: { table: Table; rows: Row[]; rowOffset: number; draftCount?: number } = $props();
 
-	const ROW_HEIGHT = 30;
-	const HEADER_HEIGHT = 42;
-	const ROWNUM_WIDTH = 56;
+	const ROW_HEIGHT = 35;
+	const HEADER_HEIGHT = 35;
+	const ROWNUM_WIDTH = 64;
 
 	type Cell = { r: number; c: number };
 
@@ -23,7 +28,7 @@
 	let editValue = $state('');
 
 	const widths = new PersistedState<Record<string, number>>(
-		untrack(() => `superbase:widths:${table.schema}.${table.name}`),
+		untrack(() => `superbase:widths:v2:${table.schema}.${table.name}`),
 		untrack(() =>
 			Object.fromEntries(table.columns.map((column) => [column.name, widthFor(column)]))
 		)
@@ -36,25 +41,20 @@
 	function widthFor(column: Column): number {
 		switch (column.kind) {
 			case 'boolean':
-				return 84;
 			case 'number':
-				return 96;
-			case 'timestamp':
-				return 178;
-			case 'json':
-				return 250;
-			case 'array':
-				return 140;
-			case 'uuid':
-				return 288;
+				return 120;
 			case 'enum':
-				return 104;
-			default:
-				if (column.name === 'email') return 244;
-				if (column.name === 'body') return 340;
-				if (column.name === 'full_name' || column.name === 'title') return 208;
-				return 160;
+				return 150;
+			case 'timestamp':
+				return 200;
+			case 'uuid':
+				return 250;
+			case 'json':
+			case 'array':
+			case 'text':
+				return column.name === 'body' ? 320 : 250;
 		}
+		return 180;
 	}
 
 	function currentValue(row: Row, column: Column): unknown {
@@ -156,6 +156,17 @@
 		} else if (left + width > viewRight) {
 			viewport.scrollLeft = left + width - viewport.clientWidth + 16;
 		}
+	}
+
+	const allPageSelected = $derived(
+		rows.length > 0 && rows.every((row) => editor.isRowSelected(row.__key))
+	);
+
+	function togglePage(selected: boolean) {
+		editor.setRowsSelected(
+			rows.map((row) => row.__key),
+			selected
+		);
 	}
 
 	function setFocus(r: number, c: number, extend = false) {
@@ -422,28 +433,42 @@
 	>
 		<div class="w-max min-w-full">
 			<div class="grid-header" role="row" style="grid-template-columns: {template}">
-				<div class="rownum header-rownum">#</div>
+				<div class="rownum header-rownum">
+					<input
+						type="checkbox"
+						class="row-check"
+						checked={allPageSelected}
+						title="Select page"
+						onchange={(event) => togglePage(event.currentTarget.checked)}
+					/>
+					<span>#</span>
+				</div>
 				{#each table.columns as column, c (column.name)}
-					<div class="header-cell">
+					<div class="header-cell group">
 						<button
-							class="flex h-full w-full min-w-0 items-center gap-1.5 px-2.5 text-left"
+							class="flex h-full w-full min-w-0 items-center gap-1.5 px-2 text-left"
 							onclick={() => editor.toggleSort(column.name)}
-							title={`${column.name} · ${column.type}`}
+							title={`${column.name} · ${column.type} — click to sort`}
 						>
-							<span class="truncate font-mono text-[11px] text-fg">{column.name}</span>
 							{#if column.primaryKey}
-								<KeyRound size={10} class="shrink-0 text-faint" />
+								<KeyRound size={11} class="shrink-0 text-faint" />
 							{:else if column.foreignKey}
-								<Link2 size={10} class="shrink-0 text-faint" />
+								<Link2 size={11} class="shrink-0 text-faint" />
 							{/if}
+							<span class="truncate text-[12px] font-semibold text-fg">{column.name}</span>
+							<span class="shrink-0 truncate text-[12px] text-faint">{column.type}</span>
 							{#if editor.sort?.column === column.name}
 								{#if editor.sort.direction === 'asc'}
-									<ArrowUp size={10} class="shrink-0 text-accent" />
+									<ArrowUp size={11} class="shrink-0 text-accent" />
 								{:else}
-									<ArrowDown size={10} class="shrink-0 text-accent" />
+									<ArrowDown size={11} class="shrink-0 text-accent" />
 								{/if}
+							{:else}
+								<ArrowUpDown
+									size={11}
+									class="ml-auto shrink-0 text-faint opacity-30 transition-opacity group-hover:opacity-70"
+								/>
 							{/if}
-							<span class="ml-auto shrink-0 font-mono text-[9.5px] text-faint">{column.type}</span>
 						</button>
 						<div
 							class="resizer"
@@ -457,7 +482,18 @@
 
 			{#each rows as row, r (row.__key)}
 				<div class="grid-row" role="row" style="grid-template-columns: {template}">
-					<div class="rownum">{rowOffset + r + 1}</div>
+					<div class="rownum">
+						<input
+							type="checkbox"
+							class="row-check"
+							checked={editor.isRowSelected(row.__key)}
+							title="Select row"
+							onmousedown={(event) => event.stopPropagation()}
+							onclick={(event) => event.stopPropagation()}
+							onchange={() => editor.toggleRowSelection(row.__key)}
+						/>
+						<span>{row.__draft ? 'new' : rowOffset + r - draftCount + 1}</span>
+					</div>
 					{#each table.columns as column, c (column.name)}
 						{@const edited = editor.hasEdit(row.__key, column.name)}
 						{@const value = edited ? editor.getEdit(row.__key, column.name) : row[column.name]}
@@ -525,17 +561,17 @@
 									/>
 								{/if}
 							{:else if value === null || value === undefined}
-								<span class="text-[11.5px] text-faint italic">NULL</span>
+								<span class="text-[13px] text-fg opacity-50">NULL</span>
 							{:else if column.kind === 'boolean'}
-								<span class={value ? 'text-accent' : 'text-faint'}>{value ? 'true' : 'false'}</span>
+								<span class={value ? 'text-accent' : 'text-muted'}>{value ? 'TRUE' : 'FALSE'}</span>
 							{:else if column.kind === 'number'}
-								<span class="tabular-nums text-info/90">{displayValue(value, column)}</span>
+								<span class="tabular-nums">{displayValue(value, column)}</span>
 							{:else if column.kind === 'json' || column.kind === 'array'}
-								<span class="truncate font-mono text-[11px] text-muted">{displayValue(value, column)}</span>
+								<span class="truncate text-[12.5px] text-muted">{displayValue(value, column)}</span>
 							{:else if column.kind === 'timestamp'}
-								<span class="font-mono text-[11px] text-muted">{displayValue(value, column)}</span>
+								<span class="font-mono text-[12px]">{displayValue(value, column)}</span>
 							{:else if column.kind === 'uuid'}
-								<span class="truncate font-mono text-[11px]">{displayValue(value, column)}</span>
+								<span class="truncate font-mono text-[12px]">{displayValue(value, column)}</span>
 							{:else}
 								<span class="truncate">{displayValue(value, column)}</span>
 							{/if}
@@ -565,7 +601,7 @@
 		top: 0;
 		z-index: 20;
 		display: grid;
-		height: 42px;
+		height: 35px;
 		background: var(--color-panel);
 		border-bottom: 1px solid var(--color-line-strong);
 	}
@@ -582,12 +618,20 @@
 	.header-rownum {
 		display: flex;
 		align-items: center;
-		justify-content: flex-end;
-		padding-right: 10px;
+		gap: 8px;
+		padding: 0 8px;
 		font-family: var(--font-mono);
 		font-size: 10px;
 		color: var(--color-faint);
 		border-right: 1px solid var(--color-line);
+	}
+
+	.row-check {
+		width: 13px;
+		height: 13px;
+		flex-shrink: 0;
+		accent-color: var(--color-accent);
+		cursor: pointer;
 	}
 
 	.resizer {
@@ -606,7 +650,7 @@
 
 	.grid-row {
 		display: grid;
-		height: 30px;
+		height: 35px;
 		background: var(--color-surface);
 	}
 
@@ -620,8 +664,8 @@
 		z-index: 10;
 		display: flex;
 		align-items: center;
-		justify-content: flex-end;
-		padding-right: 10px;
+		gap: 8px;
+		padding: 0 8px;
 		font-family: var(--font-mono);
 		font-size: 10px;
 		color: var(--color-faint);
@@ -643,12 +687,17 @@
 		border-bottom: none;
 	}
 
+	.rownum span {
+		margin-left: auto;
+	}
+
 	.cell {
 		position: relative;
 		display: flex;
 		min-width: 0;
 		align-items: center;
 		padding: 0 8px;
+		font-size: 13px;
 		border-right: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
 		border-bottom: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
 		white-space: nowrap;
@@ -692,7 +741,7 @@
 		padding: 0 7px;
 		border: none;
 		background: var(--color-elevated);
-		font-size: 12px;
+		font-size: 13px;
 		outline: 1px solid var(--color-accent);
 		outline-offset: -1px;
 	}

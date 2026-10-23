@@ -16,7 +16,14 @@ export interface Column {
 	defaultValue: string | null;
 	enumValues?: string[];
 	comment?: string | null;
-	foreignKey?: { schema: string; table: string; column: string };
+	foreignKey?: {
+		schema: string;
+		table: string;
+		column: string;
+		/** Ordered source/target tuples for this constraint, including this column. */
+		columns: string[];
+		referencedColumns: string[];
+	};
 }
 
 export interface Table {
@@ -83,6 +90,7 @@ export interface RowsArgs extends TableTarget {
 	pageSize: number;
 	sort: Sort | null;
 	search: string;
+	filter?: Values;
 }
 
 export interface SaveArgs extends TableTarget {

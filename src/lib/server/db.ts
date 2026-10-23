@@ -53,6 +53,8 @@ type ForeignKeyRow = {
 	target_schema: string;
 	target_table: string;
 	target_column: string;
+	source_columns: string[];
+	target_columns: string[];
 };
 
 const SYSTEM_SCHEMAS = `('pg_catalog', 'information_schema', 'pg_toast')`;
@@ -98,20 +100,28 @@ async function loadMetadata(
 	const foreignKeys = await db.query<ForeignKeyRow>(
 			`select con.conrelid::text as table_id, a.attname as column_name,
 			        fn.nspname as target_schema, fc.relname as target_table,
-			        fa.attname as target_column
+			        fa.attname as target_column,
+			        array_agg(a.attname::text) over fk as source_columns,
+			        array_agg(fa.attname::text) over fk as target_columns
 			 from pg_constraint con
 			 join pg_class c on c.oid = con.conrelid
 			 join pg_namespace n on n.oid = c.relnamespace
-			 cross join lateral unnest(con.conkey, con.confkey) as k(src, tgt)
+			 cross join lateral unnest(con.conkey, con.confkey) with ordinality as k(src, tgt, pos)
 			 join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.src
 			 join pg_class fc on fc.oid = con.confrelid
 			 join pg_namespace fn on fn.oid = fc.relnamespace
 			 join pg_attribute fa on fa.attrelid = con.confrelid and fa.attnum = k.tgt
-			 where con.contype = 'f' and ${visible}`, params
+			 where con.contype = 'f' and ${visible}
+			 window fk as (partition by con.oid order by k.pos rows between unbounded preceding and unbounded following)
+			 order by con.conname, con.oid, k.pos`, params
 		);
 
 	const fkByColumn = new Map<string, ForeignKeyRow>();
-	for (const fk of foreignKeys.rows) fkByColumn.set(JSON.stringify([fk.table_id, fk.column_name]), fk);
+	// One FK per column: choose the first constraint by name/OID until multi-FK browsing is needed.
+	for (const fk of foreignKeys.rows) {
+		const key = JSON.stringify([fk.table_id, fk.column_name]);
+		if (!fkByColumn.has(key)) fkByColumn.set(key, fk);
+	}
 	const columnsByTable = new Map<string, Column[]>();
 	for (const row of columns.rows) {
 		const fk = fkByColumn.get(JSON.stringify([row.table_id, row.name]));
@@ -126,7 +136,10 @@ async function loadMetadata(
 			enumValues: row.enum_values ?? undefined,
 			defaultValue: row.default_value,
 			comment: row.comment,
-			foreignKey: fk ? { schema: fk.target_schema, table: fk.target_table, column: fk.target_column } : undefined
+			foreignKey: fk ? {
+				schema: fk.target_schema, table: fk.target_table, column: fk.target_column,
+				columns: fk.source_columns, referencedColumns: fk.target_columns
+			} : undefined
 		};
 		const list = columnsByTable.get(row.table_id) ?? [];
 		list.push(column);
@@ -192,9 +205,19 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 	const pkColumns = primaryKey(table);
 	const search = table.columns.length ? args.search.trim() : '';
 	const values: (string | number)[] = search ? [`%${search}%`] : [];
-	const filter = search && table.columns.length
-		? `where (${table.columns.map((column) => `t.${ident(column.name)}::text ilike $1`).join(' or ')})`
-		: '';
+	const clauses = search
+		? [`(${table.columns.map((column) => `t.${ident(column.name)}::text ilike $1`).join(' or ')})`]
+		: [];
+	for (const [name, value] of Object.entries(args.filter ?? {})) {
+		if (!table.columns.some((column) => column.name === name)) throw new Error(`Unknown column: ${name}`);
+		if (value !== null && typeof value !== 'string') throw new Error(`Expected PostgreSQL text or null for ${name}`);
+		if (value === null) clauses.push(`t.${ident(name)} is null`);
+		else {
+			values.push(value);
+			clauses.push(`t.${ident(name)} = $${values.length}`);
+		}
+	}
+	const filter = clauses.length ? `where ${clauses.join(' and ')}` : '';
 	const order = args.sort ? [`t.${ident(args.sort.column)} ${args.sort.direction} nulls last`] : [];
 	for (const column of pkColumns) {
 		if (column !== args.sort?.column) order.push(`t.${ident(column)} asc`);

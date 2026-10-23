@@ -56,6 +56,15 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 			insert into "${schema}".keyless values ('a'), ('a');
 			create table "${schema}".changing (id integer primary key, old text);
 			create table "${schema}".included (id integer, extra text, primary key (id) include (extra));
+			create table "${schema}".reference_target (a text, b bigint, primary key (b, a));
+			create table "${schema}".reference_source (
+				id integer primary key, x text, y bigint, z text,
+				constraint z_other foreign key (y, z) references "${schema}".reference_target (b, a),
+				constraint a_first foreign key (y, x) references "${schema}".reference_target (b, a)
+			);
+			create table "${schema}".filters (
+				id bigint primary key, amount numeric(40,10), "odd""name" text, nullable text
+			);
 		`);
 		await listTables(pool);
 	});
@@ -108,8 +117,46 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		expect(column('defaults', 'id').identity).toBe('always');
 		expect(column('defaults', 'doubled').generated).toBe(true);
 		expect(column('by_default', 'id').identity).toBe('by-default');
-		expect(column('by_default', 'parent').foreignKey).toEqual({ schema, table: 'defaults', column: 'id' });
+		expect(column('by_default', 'parent').foreignKey).toEqual({
+			schema, table: 'defaults', column: 'id', columns: ['parent'], referencedColumns: ['id']
+		});
 		expect(column('included', 'extra').primaryKey).toBe(false);
+	});
+
+	test('composite foreign keys preserve constraint order, pairing and deterministic overlap', async () => {
+		const { tables } = await listTables(pool);
+		const columns = tables.find((table) => table.schema === schema && table.name === 'reference_source')!.columns;
+		for (const [name, targetColumn, sourceColumns] of [
+			['x', 'a', ['y', 'x']], ['y', 'b', ['y', 'x']], ['z', 'a', ['y', 'z']]
+		] as const) {
+			expect(columns.find((column) => column.name === name)!.foreignKey).toEqual({
+				schema, table: 'reference_target', column: targetColumn,
+				columns: [...sourceColumns], referencedColumns: ['b', 'a']
+			});
+		}
+	});
+
+	test('exact filters bind native values, preserve precision, quote names and combine with search', async () => {
+		const literal = "needle %_\\' OR true --";
+		await insert('filters', [
+			{ id: '9007199254740993', amount: '123456789012345678901234567890.1234567890', 'odd"name': literal, nullable: null },
+			{ id: '9007199254740992', amount: '123456789012345678901234567890.1234567891', 'odd"name': literal, nullable: '' },
+			{ id: '9007199254740994', amount: '1', 'odd"name': 'other', nullable: null }
+		]);
+		const ids = async (filter: Values, search = '') =>
+			(await rows('filters', { filter, search })).rows.map((row) => row.values.id);
+		expect(await ids({ id: '9007199254740993' })).toEqual(['9007199254740993']);
+		expect(await ids({ amount: '123456789012345678901234567890.1234567891' })).toEqual(['9007199254740992']);
+		// Native numeric equality, not equality of text representations.
+		expect(await ids({ amount: '1.000' })).toEqual(['9007199254740994']);
+		expect(await ids({ 'odd"name': literal, nullable: null })).toEqual(['9007199254740993']);
+		expect(await ids({ nullable: '' })).toEqual(['9007199254740992']);
+		expect(await ids({ nullable: null }, 'needle')).toEqual(['9007199254740993']);
+		expect(await ids({ nullable: '' }, 'other')).toEqual([]);
+		expect(await ids({ 'odd"name': "%' OR true --" })).toEqual([]);
+		expect(await ids({})).toHaveLength(3);
+		await expect(ids({ 'missing" OR true --': 'x' })).rejects.toThrow('Unknown column');
+		await expect(ids({ constructor: 'x' })).rejects.toThrow('Unknown column');
 	});
 
 	test('omissions use defaults; rejects generated, always identity, unknown and non-text inputs', async () => {

@@ -98,6 +98,62 @@ test('table/page loads clear stale rows and reject out-of-order responses', asyn
 	assert.equal(s.hasMore, false);
 });
 
+test('sorting retains displayed rows, blocks edits and ignores superseded results', async () => {
+	const { editor: s, deferRead, row, tables } = await fixture();
+	await s.setPage(1);
+	const old = s.rows[0];
+	const slow = deferred<{ rows: Row[]; hasMore: boolean }>();
+	deferRead(() => slow.promise);
+	const sorting = s.toggleSort('value');
+	assert.equal(s.rows[0].key, old.key);
+	assert.equal(s.rowsPage, 1);
+	assert.equal(s.loading, true);
+	assert.equal(s.editCells(old, { value: 'ignored' }), false);
+	s.editCell(old, tables[0].columns[1], 'also ignored');
+	assert.equal(s.hasChanges, false);
+	deferRead(async () => ({ rows: [row('replacement')], hasMore: false }));
+	await s.selectTable('public', 'b');
+	slow.resolve({ rows: [row('old-sort')], hasMore: true });
+	await sorting;
+	assert.equal(s.rows[0].key, 'replacement');
+	assert.equal(s.rowsPage, 0);
+	assert.equal(s.loading, false);
+});
+
+test('failed sort resets the displayed page so new drafts remain visible', async () => {
+	const { editor: s, deferRead } = await fixture();
+	await s.setPage(1);
+	deferRead(async () => { throw new Error('Sort failed'); });
+	await s.toggleSort('value');
+	assert.equal(s.error, 'Sort failed');
+	assert.equal(s.loading, false);
+	assert.equal(s.rowsPage, 0);
+	s.insertRow();
+	assert.equal(s.pageRows.length, 1);
+	assert.equal(s.pageRows[0].draft, true);
+});
+
+test('composite reference changes are atomic and navigation uses exact current values', async () => {
+	const { editor: s, tables, deferRead } = await fixture();
+	const fk = { schema: 'public', table: 'b', column: 'id', columns: ['id', 'value'], referencedColumns: ['id', 'value'] };
+	tables[0].columns[0].foreignKey = fk;
+	const row = s.rows[0];
+	assert.equal(s.editCells(row, { id: '42', missing: 'invalid' }), false);
+	assert.equal(s.hasChanges, false);
+	assert.equal(s.editCells(row, { id: null, value: 'invalid' }), false);
+	assert.equal(s.hasChanges, false);
+	assert.equal(s.editCells(row, { id: '42', value: 'exact %_ value' }), true);
+	let args: any;
+	deferRead(async (value) => { args = value; return { rows: [], hasMore: false }; });
+	await s.followReference(row, tables[0].columns[0]);
+	assert.equal(s.activeTableName, 'b');
+	assert.deepEqual(args.filter, { id: '42', value: 'exact %_ value' });
+	assert.equal(s.editCells(row, { value: 'stale panel' }), false);
+	await s.selectTable('public', 'b');
+	assert.equal(s.filter, null);
+	assert.equal(args.filter, undefined);
+});
+
 test('draft defaults, explicit null/empty, and arbitrary column names stay distinct', async () => {
 	const { editor: s, calls, tables } = await fixture();
 	s.insertRow();

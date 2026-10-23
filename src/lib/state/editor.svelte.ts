@@ -15,9 +15,12 @@ export class EditorState {
 	activeSchema = $state('');
 	activeTableName = $state('');
 	page = $state(0);
+	/** Page belonging to displayed rows, which can lag behind a pending sort. */
+	rowsPage = $state(0);
 	pageSize = $state(100);
 	sort = $state<Sort | null>(null);
 	search = $state('');
+	filter = $state<Values | null>(null);
 	rows = $state<Row[]>([]);
 	hasMore = $state(false);
 	loading = $state(false);
@@ -38,7 +41,7 @@ export class EditorState {
 	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
 	draftsForTable = $derived(this.drafts[this.tableKey] ?? []);
-	pageRows = $derived(this.page === 0 ? [...this.draftsForTable, ...this.rows] : this.rows);
+	pageRows = $derived(this.rowsPage === 0 ? [...this.draftsForTable, ...this.rows] : this.rows);
 
 	get draftCount() { return this.draftsForTable.length; }
 	get dirtyCount() {
@@ -88,6 +91,7 @@ export class EditorState {
 				this.activeTableName = first?.name ?? '';
 				this.sort = null;
 				this.search = '';
+				this.filter = null;
 			}
 			this.page = 0;
 			await this.fetch();
@@ -98,9 +102,12 @@ export class EditorState {
 		}
 	}
 
-	async fetch(): Promise<void> {
+	async fetch(retainRows = false): Promise<void> {
 		const request = ++this.#request;
-		this.rows = [];
+		if (!retainRows) {
+			this.rows = [];
+			this.rowsPage = this.page;
+		}
 		this.hasMore = false;
 		this.error = null;
 		if (!this.activeTableName) { this.loading = false; return; }
@@ -108,7 +115,8 @@ export class EditorState {
 		try {
 			const resource = tableRows({
 				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search
+				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search,
+				...(this.filter ? { filter: this.filter } : {})
 			});
 			await resource.refresh();
 			if (request !== this.#request) return;
@@ -120,23 +128,44 @@ export class EditorState {
 				return this.fetch();
 			}
 			this.rows = result.rows;
+			this.rowsPage = this.page;
 			this.hasMore = result.hasMore;
 		} catch (error) {
-			if (request === this.#request) this.error = message(error);
+			if (request === this.#request) {
+				this.rows = [];
+				this.rowsPage = this.page;
+				this.error = message(error);
+			}
 		} finally {
 			if (request === this.#request) this.loading = false;
 		}
 	}
 
-	async selectTable(schema: string, name: string) {
-		if (this.busy || (schema === this.activeSchema && name === this.activeTableName)) return;
+	async selectTable(schema: string, name: string, filter: Values | null = null) {
+		if (this.busy || (!filter && !this.filter && schema === this.activeSchema && name === this.activeTableName)) return;
 		this.activeSchema = schema;
 		this.activeTableName = name;
 		this.page = 0;
 		this.sort = null;
 		this.search = '';
+		this.filter = filter;
 		this.savedAt = null;
 		await this.fetch();
+	}
+	async clearFilter() {
+		if (this.busy) return;
+		this.filter = null;
+		this.page = 0;
+		await this.fetch();
+	}
+	async followReference(row: Row, column: Column) {
+		const fk = column.foreignKey;
+		if (this.busy || this.loading || !fk) return;
+		const values = fk.columns.map((name) => this.getValue(row, name));
+		if (values.some((value) => value == null)) return;
+		await this.selectTable(fk.schema, fk.table, Object.fromEntries(
+			fk.referencedColumns.map((name, i) => [name, values[i] as string])
+		));
 	}
 	async setSchema(schema: string) {
 		const first = this.tables.find((table) => table.schema === schema);
@@ -163,19 +192,19 @@ export class EditorState {
 		if (this.busy) return;
 		this.sort = this.sort?.column !== column ? { column, direction: 'asc' } : this.sort.direction === 'asc' ? { column, direction: 'desc' } : null;
 		this.page = 0;
-		await this.fetch();
+		await this.fetch(true);
 	}
 	async setSort(column: string) {
 		if (this.busy) return;
 		this.sort = column ? { column, direction: 'asc' } : null;
 		this.page = 0;
-		await this.fetch();
+		await this.fetch(true);
 	}
 	async toggleSortDirection() {
 		if (this.busy || !this.sort) return;
 		this.sort = { ...this.sort, direction: this.sort.direction === 'asc' ? 'desc' : 'asc' };
 		this.page = 0;
-		await this.fetch();
+		await this.fetch(true);
 	}
 
 	getValue(row: Row, column: string): CellValue | undefined {
@@ -185,6 +214,18 @@ export class EditorState {
 	}
 	hasEdit(key: string, column: string) {
 		return Object.hasOwn(this.edits[this.tableKey]?.[key]?.changes ?? {}, column);
+	}
+
+	/** Validate a whole reference tuple before applying any of its cells. */
+	editCells(row: Row, values: Record<string, CellValue | undefined>): boolean {
+		if (this.busy || this.loading || !this.tableEditable) return false;
+		const current = this.pageRows.find((candidate) => candidate.key === row.key);
+		if (!current || current.identity?.version !== row.identity?.version) return false;
+		const changes = Object.entries(values).map(([name, value]) => ({ column: this.table.columns.find((column) => column.name === name), value }));
+		if (changes.some(({ column, value }) => !column || !writable(column) ||
+			(value === undefined && !row.draft) || (value === null && !column.nullable))) return false;
+		for (const { column, value } of changes) this.editCell(current, column!, value);
+		return true;
 	}
 
 	editCell(row: Row, column: Column, value: CellValue | undefined) {

@@ -54,7 +54,8 @@ SvelteKit's origin/CSRF validation remains enabled. `bun run start` loads option
 and `deleteRows(pool,args)`.
 
 Catalog introspection includes exact formatted types, PK columns (excluding INCLUDE columns),
-enums, FKs, defaults, identity and generated columns. A WeakMap caches metadata per pool for
+enums, FKs, defaults, identity and generated columns. FK metadata preserves ordered source
+and target tuples per constraint; a column in multiple FKs exposes the first by name/OID. A WeakMap caches metadata per pool for
 30 seconds; `listTables` explicitly refreshes it. Each mutation acquires a transaction-local
 ROW EXCLUSIVE table lock before reading fresh metadata, preventing column/key DDL races.
 Unknown/non-writable columns are rejected, never silently discarded.
@@ -66,7 +67,9 @@ no automatic retry, silent overwrite, or automatic merging of concurrent changes
 Pages use OFFSET/LIMIT with a complete PK tie-break and physical relation/tuple ordering.
 Fetching one extra row gives `hasMore`; there is no mandatory exact COUNT. `rowCount` is a
 catalog estimate. Search is debounced on the client but still uses text-cast ILIKE across
-columns, so broad searches can scan large tables. Refresh reloads metadata and rows.
+columns, so broad searches can scan large tables. Optional exact filters bind native typed
+equality (or IS NULL), enabling indexed reference navigation rather than approximate text
+search. Filter identifiers are checked against metadata. Refresh reloads metadata and rows.
 
 ## Connection lifecycle
 
@@ -95,15 +98,33 @@ inheritance are rejected. Environment URLs are trusted and retain pg's parsing b
 
 `EditorState` stores the active query separately from pending edits/drafts/selections per
 table. Each edit owns the original values and row identity; selected rows retain identities
-across pages. Fetches clear stale rows immediately and use a request counter to discard
-out-of-order responses. Mutations capture an immutable batch and target, block user changes
+across pages. Sort fetches retain the displayed rows and their page offset, with a spinner
+and editing disabled; other fetches clear stale rows immediately. A request counter discards
+out-of-order responses. Reference arrows navigate with a complete exact-key filter;
+selecting a table or Show all rows removes it. Multi-cell reference edits validate the whole
+tuple against the captured row before applying any value.
+Mutations capture an immutable batch and target, block user changes
 until completion, and clear only acknowledged work. Failure preserves pending edits.
 Changing connection generations cannot carry pending edits into another database.
 
-`DataGrid.svelte` keeps only positional focus/range and one active editor. Edits capture row
-identity/column, never a later array index. Replacing rows cancels positional selection and
-editing. Bounds and full paste rectangles are validated before local mutation. Native child
-controls own their keyboard events; the grid exposes active-cell focus through ARIA.
+`DataGrid.svelte` keeps positional focus/range and a captured row/column/anchor for its editor,
+never a mutable array index as an edit target. Replacing rows cancels positional selection
+and editing. Bounds and full paste rectangles are validated before local mutation. Native
+child controls own their keyboard events; the grid exposes active-cell focus through ARIA.
+
+`CellEditor.svelte` owns one exact text/NULL/DEFAULT buffer shared between a bits-ui popover
+and a shadcn dialog styled as a resizable right panel. Apply stages changes, Escape cancels;
+compact outside-click also applies. A transparent overlay consumes that click so sorting or
+navigation cannot run before dismissal applies the buffer. Opening an editor cancels any
+queued toolbar search for the same reason. Expansion preserves the buffer and text selection.
+Set to options depend on nullability, type and draft status. Temporal Now uses PostgreSQL's
+`now` literal rather than JS date conversion; PostgreSQL resolves it when the batch is saved.
+Read-only cells can still be inspected and expanded.
+
+`ReferencePicker.svelte` queries 25 target records per page with debounced search and
+superseded-response cancellation. It fills all source columns atomically, not just the clicked
+cell. NULL-containing target tuples cannot be selected as references. The same resizable
+panel hosts the picker; a raw-value editor remains available.
 
 The grid uses fixed 35px rows/header and 100/250/500-row pages, without virtualization.
 Widths use runed PersistedState keyed by connection/table. Resizing works with pointer or

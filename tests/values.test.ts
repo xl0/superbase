@@ -33,6 +33,18 @@ test('remote command errors show the message, not a serialized HTTP error', () =
 describe('remote validation', () => {
 	const target = { connection: 'generation', schema: 'public', table: 'users' };
 	const identity = { pk: { id: '9007199254740993' }, version: '123', relation: '456' };
+	test('optional row filters preserve exact values and reject malformed payloads', () => {
+		const input = { ...target, page: 0, pageSize: 100, sort: null, search: '' };
+		expect(rowsSchema['~standard'].validate(input)).toEqual({ value: input });
+		const filter = JSON.parse('{"__proto__":"literal","id":"9007199254740993","nullable":null,"empty":""}');
+		const result = rowsSchema['~standard'].validate({ ...input, filter });
+		expect(result).toEqual({ value: { ...input, filter } });
+		if ('value' in result) expect(Object.hasOwn(result.value.filter!, '__proto__')).toBe(true);
+		expect(rowsSchema['~standard'].validate({ ...input, filter: {} })).toEqual({ value: { ...input, filter: {} } });
+		for (const filter of [undefined, null, [], 'id = 1', { id: 42 }, { id: true }, { id: {} }, { id: 'a\0b' }]) {
+			expect(rowsSchema['~standard'].validate({ ...input, filter })).toHaveProperty('issues');
+		}
+	});
 	test('rejects malformed, oversized and non-text mutation inputs', () => {
 		for (const input of [null, {}, { ...target, updates: [], inserts: [{ id: 42 }] }, { ...target, updates: [], inserts: Array(501).fill({}) }]) {
 			expect(saveSchema['~standard'].validate(input)).toHaveProperty('issues');

@@ -17,8 +17,8 @@
 	const blocked = $derived(editor.busy || editor.loading);
 
 	$effect(() => {
-		// Cancel a pending filter whenever its navigation context changes.
-		void [editor.tableKey, editor.page, editor.pageSize, editor.sort, editor.busy, tab];
+		// A queued search must not replace rows underneath an open cell editor.
+		void [editor.tableKey, editor.page, editor.pageSize, editor.sort, editor.filter, editor.busy, editor.editing, tab];
 		clearTimeout(timer);
 		search = editor.search;
 	});
@@ -46,7 +46,7 @@
 			<span class="text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
 			<span class="truncate font-medium">{editor.table.name}</span>
 		</div>
-		{#if !editor.search && editor.table.rowCount >= 0}
+		{#if !editor.search && !editor.filter && editor.table.rowCount >= 0}
 			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground">~{editor.table.rowCount.toLocaleString()} rows</Badge>
 		{/if}
 		{#if editor.draftCount > 0}<Badge variant="secondary" class="text-[10px]">{editor.draftCount} new</Badge>{/if}
@@ -92,6 +92,13 @@
 				<Button bind:ref={refreshButton} variant="outline" size="icon-sm" disabled={blocked} aria-label="Refresh database" onclick={() => { clearTimeout(timer); search = editor.search; void editor.reload(); }}><RotateCw class={editor.loading ? 'animate-spin' : ''} /></Button>
 			</div>
 		</div>
+		{#if editor.filter}
+			<div class="flex items-center gap-2 border-t px-3 py-2 text-xs">
+				<span class="shrink-0 text-muted-foreground">Referenced record:</span>
+				<span class="min-w-0 truncate font-mono">{Object.entries(editor.filter).map(([name, value]) => `${name} = ${value ?? 'NULL'}`).join(' · ')}</span>
+				<Button variant="outline" size="xs" class="ml-auto shrink-0" disabled={blocked} onclick={() => void editor.clearFilter()}>Show all rows</Button>
+			</div>
+		{/if}
 	{/if}
 </header>
 

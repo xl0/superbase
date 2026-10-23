@@ -25,6 +25,14 @@ State, value, validation, connection, PostgreSQL, and production-HTTP regression
 place. Browser checks cover layouts, keyboard editing, CRUD/defaults, connection switching,
 stale-tab rejection, and operation without an environment default.
 
+## [x] Rich cell editing and reference navigation
+
+Sorting retains rows behind a spinner. Cell editors support long text/JSON, type-aware
+Set to options and a resizable side panel. Foreign keys have searchable, paginated pickers,
+atomic composite-key selection and exact-record navigation. Mouse/touch outside-click races,
+queued searches, failed sorts, keyboard/focus behavior and PostgreSQL value persistence are
+covered by regression tests and isolated browser checks.
+
 ## Later
 
 - [ ] Schema editing and column-specific filters.

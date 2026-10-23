@@ -67,17 +67,29 @@ The database role determines what the editor can read and write; prefer a least-
 - Values use PostgreSQL's exact text format. Big integers, decimals, timestamps, JSON, and
   arrays are not converted through JavaScript numbers/dates. Enter JSON as JSON and arrays
   as PostgreSQL array literals, e.g. `{"a,b","",NULL}`.
-- New rows start with **DEFAULT** (omitted column). **Set NULL**, **Empty text**, and
-  **Use default** are distinct actions. Generated/always-identity columns are read-only.
+- Double-click a cell or press Enter/F2 to open its editor. Long text/JSON stays lossless;
+  **Expand** moves the same buffer to a side panel. Drag its left edge or use the focused
+  separator's arrow keys to resize it.
+- **Set to…** offers NULL for nullable fields, Now for dates/times, empty text for text fields,
+  and DEFAULT for new rows. Now uses PostgreSQL's `now` literal, resolved when saving in the
+  database session's timezone. Generated/always-identity fields can be inspected but not edited.
 - Edits and row selections survive pagination and table switching. Save affects the current
   table, including its off-page edits. Navigation/editing are blocked while a mutation runs.
 - Concurrent changes produce a conflict, not a silent overwrite. A failed batch rolls back
   completely and keeps pending edits. Revert and refresh to start from the latest data.
 - Tables without a primary key are read-only. Physical row addresses are never used as a
   substitute primary key for writes.
-- Arrow keys navigate; Enter/F2 edits; Escape cancels; Shift+Enter adds a newline.
-  Tab finishes an edit, then moves through controls. Shift+Space selects a row.
-  Shift-click/arrows extend a range; Ctrl/Cmd+A selects the loaded page's cells.
+- In the grid, arrow keys navigate, Shift+Space selects a row, Shift-click/arrows extend a
+  range, and Ctrl/Cmd+A selects the loaded page's cells. In the editor, Enter adds a newline,
+  Ctrl/Cmd+Enter applies, Escape cancels, and Tab moves through controls. Apply stages changes;
+  Save writes them to PostgreSQL. Clicking outside a compact editor applies its value without
+  activating the control underneath; click again to navigate.
+- Click a foreign-key cell to browse/search referenced records. Selecting one fills the whole
+  foreign-key tuple, including composite keys. Its arrow navigates to the exact referenced
+  record; **Show all rows** removes that filter. If a column belongs to multiple foreign keys,
+  the first constraint by name is used.
+- Sorting keeps the old rows visible with a spinner until the replacement arrives. Editing
+  is blocked during the fetch; switching tables clears rows immediately.
 - Clipboard data is quoted TSV: tabs/newlines/quotes round-trip. Unquoted `\N` means SQL
   NULL and `\D` means DEFAULT; literal marker strings are quoted. Paste never silently
   truncates data outside the loaded grid.

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Database } from '@lucide/svelte';
+	import { Database, LoaderCircle } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionStatus } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -73,9 +73,9 @@
 				{#if tab === 'data'}
 					<div class="relative min-h-0 flex-1" aria-busy={editor.loading || editor.busy}>
 						{#key editor.tableKey}
-							<DataGrid table={editor.table} rows={editor.pageRows} rowOffset={editor.page * editor.pageSize} draftCount={editor.page === 0 ? editor.draftCount : 0} />
+							<DataGrid table={editor.table} rows={editor.pageRows} rowOffset={editor.rowsPage * editor.pageSize} draftCount={editor.rowsPage === 0 ? editor.draftCount : 0} />
 						{/key}
-						{#if editor.loading}<div role="status" aria-label="Loading rows" class="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"></div>{/if}
+						{#if editor.loading}<div role="status" class="pointer-events-none absolute top-12 right-4 z-30 flex items-center gap-2 rounded-md border bg-popover px-3 py-2 text-xs shadow-md"><LoaderCircle class="size-4 animate-spin text-primary" />Loading rows…</div>{/if}
 					</div>
 					<GridFooter />
 				{:else}

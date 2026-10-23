@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onDestroy, untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, KeyRound, Link2 } from '@lucide/svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
+	import { ArrowDown, ArrowUp, ArrowUpRight, KeyRound, Link2, Pencil } from '@lucide/svelte';
 	import { PersistedState } from 'runed';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
-	import { Textarea } from '#lib/components/ui/textarea/index.js';
+	import CellEditor from './CellEditor.svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
@@ -15,14 +15,13 @@
 	const ROW_HEIGHT = 35;
 	const GUTTER = 64;
 	type Cell = { r: number; c: number };
-	type Edit = { row: Row; column: Column; original: CellValue | undefined; typed: boolean; changed: boolean };
+	type Edit = { row: Row; column: Column; anchor: HTMLElement; initial?: string };
 	let viewport: HTMLDivElement;
-	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let focus = $state<Cell | null>(null);
 	let anchor = $state<Cell | null>(null);
 	let head = $state<Cell | null>(null);
 	let editing = $state<Edit | null>(null);
-	let editValue = $state('');
+
 	let resizeCleanup: (() => void) | undefined;
 	const widths = new PersistedState<Record<string, number>>(
 		untrack(() => `superbase:widths:${editor.connection}:${JSON.stringify([table.schema, table.name])}`), {}
@@ -33,7 +32,7 @@
 	const disabled = $derived(editor.busy || editor.loading);
 	const focusedRow = $derived(focus ? rows[focus.r] : undefined);
 	const focusedColumn = $derived(focus ? table.columns[focus.c] : undefined);
-	const canEdit = $derived(!disabled && editor.tableEditable && !!focusedRow && !!focusedColumn && writable(focusedColumn));
+	const canOpen = $derived(!disabled && !!focusedRow && !!focusedColumn);
 	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
 	const someSelected = $derived(rows.some((row) => editor.isRowSelected(row.key)));
 
@@ -62,54 +61,16 @@
 
 	function startEdit(r: number, c: number, initial?: string) {
 		const row = rows[r], column = table.columns[c];
-		if (disabled || !editor.tableEditable || !row || !column || !writable(column)) return;
+		if (disabled || !row || !column) return;
 		setFocus(r, c);
-		const original = editor.getValue(row, column.name);
-		editing = { row, column, original, typed: initial !== undefined, changed: initial !== undefined };
-		editValue = initial ?? original ?? '';
+		const anchor = document.getElementById(`${id}-${r}-${c}`);
+		if (anchor) editing = { row, column, anchor, initial };
 	}
 
-	function commitEdit(returnFocus = false) {
-		const edit = editing;
+	async function closeEditor() {
 		editing = null;
-		if (!edit) return;
-		const row = rows.find((row) => row.key === edit.row.key);
-		// A refresh may replace or change the row while an editor is open. Never retarget it.
-		if (row && row.identity?.version === edit.row.identity?.version && edit.changed) editor.editCell(row, edit.column, editValue);
-		if (returnFocus) viewport?.focus();
-	}
-
-	function endEdit(event: KeyboardEvent) {
-		event.stopPropagation();
-		if (event.isComposing) return;
-		if (event.key === 'Escape') {
-			event.preventDefault(); editing = null; viewport.focus();
-		} else if (event.key === 'Enter' && !event.shiftKey) {
-			event.preventDefault(); commitEdit(true);
-			if (focus) setFocus(focus.r + 1, focus.c);
-		} else if (event.key === 'Tab') {
-			// Finish editing; the next Tab exits the grid rather than trapping keyboard users.
-			event.preventDefault(); commitEdit(true);
-		}
-	}
-
-	function options(column: Column): string[] {
-		return column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? [];
-	}
-
-	function focusInput(node: HTMLTextAreaElement | HTMLSelectElement) {
-		node.focus();
-		if (node instanceof HTMLTextAreaElement) {
-			if (editing?.typed) node.setSelectionRange(node.value.length, node.value.length);
-			else node.select();
-		}
-	}
-
-	function setSpecial(value: null | undefined | '') {
-		if (!canEdit || !focusedRow || !focusedColumn) return;
-		editing = null;
-		editor.editCell(focusedRow, focusedColumn, value);
-		viewport.focus();
+		await tick();
+		viewport?.focus();
 	}
 
 	function clearSelection() {
@@ -196,17 +157,15 @@
 		rows.map((row) => [row.key, row.identity?.version]);
 		untrack(() => { focus = anchor = head = null; editing = null; });
 	});
+	$effect(() => { if (editor.loading || editor.busy) editing = null; });
 	$effect(() => { editor.editing = editing !== null; });
-	$effect(() => { const node = textarea; if (node) untrack(() => focusInput(node)); });
 	onDestroy(() => { resizeCleanup?.(); editor.editing = false; });
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-background">
 	<div class="flex h-8 shrink-0 items-center gap-1 border-b px-2 text-xs text-muted-foreground">
 		<span class="mr-auto truncate">{focusedColumn ? `${focusedColumn.name} · ${focusedColumn.type}` : 'Enter to edit · Tab for controls · Shift+Space selects a row'}</span>
-		<Button variant="ghost" size="xs" disabled={!canEdit || !focusedColumn?.nullable} onclick={() => setSpecial(null)}>Set NULL</Button>
-		<Button variant="ghost" size="xs" disabled={!canEdit || focusedColumn?.kind !== 'text'} onclick={() => setSpecial('')}>Empty text</Button>
-		<Button variant="ghost" size="xs" disabled={!canEdit || !focusedRow?.draft} onclick={() => setSpecial(undefined)}>Use default</Button>
+		<Button variant="ghost" size="xs" disabled={!canOpen} onclick={() => { if (focus) startEdit(focus.r, focus.c); }}><Pencil />Open cell</Button>
 	</div>
 	<div bind:this={viewport} role="grid" tabindex="0" aria-label={`${table.schema}.${table.name} data`}
 		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 1}
@@ -255,28 +214,18 @@
 						{@const dirty = row.draft ? Object.hasOwn(row.values, column.name) : editor.hasEdit(row.key, column.name)}
 						<div id={`${id}-${r}-${c}`} class="cell" class:focused={active} class:selected class:dirty role="gridcell" tabindex="-1" aria-colindex={c + 2}
 							aria-selected={selected} aria-readonly={!editor.tableEditable || !writable(column)} data-cell={`${r}:${c}`}
-							onmousedown={(event) => { if (event.button !== 0) return; event.preventDefault(); commitEdit(); viewport.focus(); setFocus(r, c, event.shiftKey); }}
+							onmousedown={(event) => { if (event.button !== 0) return; event.preventDefault(); viewport.focus(); setFocus(r, c, event.shiftKey); }}
 							ondblclick={() => startEdit(r, c)}>
-							{#if editing?.row.key === row.key && editing.column.name === column.name}
-								{#if column.kind === 'boolean' || column.kind === 'enum'}
-									<select class="cell-input" aria-label={`Edit ${column.name}`}
-										value={editing.original == null && !editing.changed ? '' : String(options(column).indexOf(editValue))}
-										use:focusInput onmousedown={(event) => event.stopPropagation()}
-										onkeydown={endEdit} onblur={() => commitEdit()}
-										onchange={(event) => {
-											editValue = options(column)[Number(event.currentTarget.value)];
-											if (editing) editing.changed = true;
-											commitEdit(true);
-										}}>
-										{#if editing.original == null}<option value="" disabled>{editing.original === null ? 'NULL' : 'DEFAULT'}</option>{/if}
-										{#each options(column) as option, i (option)}
-											<option value={String(i)}>{column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)'}</option>
-										{/each}
-									</select>
-								{:else}
-									<Textarea bind:ref={textarea} class="absolute inset-0 size-full min-h-0 resize-none rounded-none border-0 bg-popover px-2 py-1.5 text-xs shadow-none focus-visible:ring-1" rows={1} aria-label={`Edit ${column.name}`} bind:value={editValue} spellcheck={false}
-										oninput={() => { if (editing) editing.changed = true; }} onmousedown={(event) => event.stopPropagation()} onkeydown={endEdit} onblur={() => commitEdit()} />
-								{/if}
+							{#if column.foreignKey}
+								<button class="h-full min-w-0 flex-1 truncate text-left hover:underline" class:text-muted-foreground={value == null}
+									tabindex={active ? 0 : -1} disabled={disabled} aria-label={`Choose reference for ${column.name}, row ${r + 1}`}
+									title={displayValue(value, column)} onmousedown={(event) => event.stopPropagation()} onclick={() => startEdit(r, c)}>
+									{displayValue(value, column)}
+								</button>
+								<Button variant="ghost" size="icon-xs" class="ml-1 shrink-0" tabindex={active ? 0 : -1}
+									aria-label={`Go to referenced record for ${column.name}, row ${r + 1}`}
+									disabled={disabled || column.foreignKey.columns.some((name) => editor.getValue(row, name) == null)}
+									onmousedown={(event) => event.stopPropagation()} onclick={() => void editor.followReference(row, column)}><ArrowUpRight /></Button>
 							{:else}
 								<span class="truncate" class:text-muted-foreground={value == null} class:italic={value == null} title={displayValue(value, column)}>{value === undefined && !writable(column) ? 'GENERATED' : displayValue(value, column)}</span>
 							{/if}
@@ -288,6 +237,17 @@
 		{#if !rows.length}<p class="p-12 text-center text-sm text-muted-foreground">{editor.loading ? 'Loading rows…' : 'No rows match this view.'}</p>{/if}
 	</div>
 </div>
+
+{#if editing}
+	{@const edit = editing}
+	{#key edit}
+		<CellEditor {...edit} onclose={closeEditor} onapply={(values) => {
+			if (!editor.editCells(edit.row, values)) return false;
+			void closeEditor();
+			return true;
+		}} />
+	{/key}
+{/if}
 
 <style>
 	.grid-header, .grid-row { display: grid; height: 35px; }
@@ -302,5 +262,4 @@
 	.cell.focused { outline: 1px solid var(--primary); outline-offset: -1px; z-index: 1; }
 	.cell.dirty { background: color-mix(in srgb, #e8b04b 12%, transparent); }
 	.cell.dirty::after { content: ''; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: #e8b04b; }
-	.cell-input { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 7px; background: var(--popover); color: var(--foreground); font: inherit; line-height: 20px; outline: 1px solid var(--primary); outline-offset: -1px; }
 </style>

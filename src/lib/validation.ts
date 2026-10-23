@@ -89,12 +89,13 @@ export const switchSchema = schema((input) => {
 });
 
 export const rowsSchema = schema<RowsArgs>((input) => {
-	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search']);
+	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search', 'filter']);
 	const sort = value.sort === null ? null : object(value.sort, ['column', 'direction']);
 	if (sort && sort.direction !== 'asc' && sort.direction !== 'desc') throw new Error('Invalid sort direction');
 	return {
 		...target(value), page: integer(value.page, 0, 1_000_000), pageSize: integer(value.pageSize, 1, 500),
 		search: text(value.search, 1024, true),
+		...(Object.hasOwn(value, 'filter') ? { filter: values(value.filter) } : {}),
 		sort: sort ? { column: text(sort.column), direction: sort.direction as 'asc' | 'desc' } : null
 	};
 });

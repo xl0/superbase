@@ -1,4 +1,5 @@
 <script lang="ts">
+	import * as Table from '#lib/components/ui/table/index.js';
 	import { LoaderCircle, Search, ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { tableRows } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
@@ -60,29 +61,29 @@
 	{#if disabled}<p class="text-xs text-muted-foreground">This reference is read-only.</p>{/if}
 	<div class="min-h-0 flex-1 overflow-auto rounded-md border" data-reference-results>
 		{#if table}
-			<table class="w-full text-left text-xs">
-				<caption class="sr-only">Available records in {foreignKey.schema}.{foreignKey.table}</caption>
-				<thead class="sticky top-0 z-10 bg-card"><tr>
-					<th class="border-b p-2" scope="col">Select</th>
-					{#each table.columns as column (column.name)}<th class="border-b p-2 font-mono font-medium whitespace-nowrap" scope="col">{column.name}</th>{/each}
-				</tr></thead>
-				<tbody>
+			<Table.Root containerClass="overflow-visible" class="w-full text-left text-xs">
+				<Table.Caption class="sr-only mt-0">Available records in {foreignKey.schema}.{foreignKey.table}</Table.Caption>
+				<Table.Header class="sticky top-0 z-10 bg-card [&_tr]:border-0"><Table.Row class="border-0 hover:bg-transparent transition-none">
+					<Table.Head class="h-auto border-b p-2 font-bold text-inherit" scope="col">Select</Table.Head>
+					{#each table.columns as column (column.name)}<Table.Head class="h-auto border-b p-2 font-mono font-medium whitespace-nowrap text-inherit" scope="col">{column.name}</Table.Head>{/each}
+				</Table.Row></Table.Header>
+				<Table.Body>
 					{#each rows as row (row.key)}
 						{@const selected = foreignKey.referencedColumns.every((name, i) => row.values[name] != null && row.values[name] === current[foreignKey.columns[i]])}
-						<tr class={selected ? 'bg-primary/10' : 'hover:bg-muted/50'}>
-							<td class="border-b p-2">
+						<Table.Row class={selected ? 'border-0 bg-primary/10 hover:bg-primary/10 transition-none' : 'border-0 hover:bg-muted/50 transition-none'}>
+							<Table.Cell class="border-b p-2">
 								<Button variant={selected ? 'secondary' : 'outline'} size="xs" disabled={disabled || loading || foreignKey.referencedColumns.some((name) => row.values[name] == null)}
 									onclick={() => onselect(row)} aria-label={`Select referenced record ${foreignKey.referencedColumns.map((name) => row.values[name]).join(', ')}`}>
 									{selected ? 'Current' : 'Select'}
 								</Button>
-							</td>
+							</Table.Cell>
 							{#each table.columns as column (column.name)}
-								<td class="max-w-64 truncate border-b p-2 font-mono" title={displayValue(row.values[column.name], column)}>{displayValue(row.values[column.name], column)}</td>
+								<Table.Cell class="max-w-64 truncate border-b p-2 font-mono" title={displayValue(row.values[column.name], column)}>{displayValue(row.values[column.name], column)}</Table.Cell>
 							{/each}
-						</tr>
+						</Table.Row>
 					{/each}
-				</tbody>
-			</table>
+				</Table.Body>
+			</Table.Root>
 		{:else}<p class="p-4 text-xs text-muted-foreground">Referenced table metadata is unavailable. Refresh the database.</p>{/if}
 		{#if !loading && !error && !rows.length}<p class="p-6 text-center text-xs text-muted-foreground">No matching records.</p>{/if}
 	</div>

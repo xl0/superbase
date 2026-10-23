@@ -26,6 +26,11 @@ export class EditorState {
 	loading = $state(false);
 	busy = $state(false);
 	editing = $state(false);
+	cellSelected = $state(false);
+	live = $state(false);
+	polling = $state(false);
+	externalChange = $state(false);
+	liveError = $state<string | null>(null);
 	error = $state<string | null>(null);
 	savedAt = $state<number | null>(null);
 
@@ -34,6 +39,7 @@ export class EditorState {
 	drafts = $state<Record<string, Row[]>>({});
 	rowSelection = $state<Record<string, Record<string, Row>>>({});
 	#request = 0;
+	#liveGeneration = 0;
 
 	tableKey = $derived(tableKey(this.activeSchema, this.activeTableName));
 	table = $derived(this.tables.find((table) => table.schema === this.activeSchema && table.name === this.activeTableName) ?? EMPTY_TABLE);
@@ -76,6 +82,8 @@ export class EditorState {
 		this.loading = true;
 		this.rows = [];
 		this.error = null;
+		this.liveError = null;
+		this.externalChange = false;
 		try {
 			const resource = database({ connection: this.connection });
 			await resource.refresh();
@@ -110,6 +118,8 @@ export class EditorState {
 		}
 		this.hasMore = false;
 		this.error = null;
+		this.liveError = null;
+		this.externalChange = false;
 		if (!this.activeTableName) { this.loading = false; return; }
 		this.loading = true;
 		try {
@@ -138,6 +148,51 @@ export class EditorState {
 			}
 		} finally {
 			if (request === this.#request) this.loading = false;
+		}
+	}
+
+	setLive(enabled: boolean) {
+		this.live = enabled;
+		this.#liveGeneration++;
+		this.liveError = null;
+	}
+
+	async poll(isActive: () => boolean = () => true) {
+		const eligible = () => this.live && this.ready && !!this.activeTableName &&
+			!this.loading && !this.busy && !this.error && isActive();
+		if (this.polling || !eligible()) return;
+		const request = this.#request;
+		const generation = this.#liveGeneration;
+		const current = () => request === this.#request && generation === this.#liveGeneration && eligible();
+		this.polling = true;
+		try {
+			const resource = tableRows({
+				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
+				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search,
+				...(this.filter ? { filter: this.filter } : {})
+			});
+			await resource.refresh();
+			if (!current()) return;
+			if (resource.error) throw resource.error;
+			const result = resource.current;
+			if (!result) throw new Error('No response from the database');
+			this.liveError = null;
+			if (JSON.stringify(result.rows) === JSON.stringify(this.rows) && result.hasMore === this.hasMore) {
+				this.externalChange = false;
+				return;
+			}
+			if (this.hasChanges || this.selectedCount || this.editing || this.cellSelected) {
+				this.externalChange = true;
+				return;
+			}
+			this.rows = result.rows;
+			this.rowsPage = this.page;
+			this.hasMore = result.hasMore;
+			this.externalChange = false;
+		} catch (error) {
+			if (current()) this.liveError = message(error);
+		} finally {
+			this.polling = false;
 		}
 	}
 
@@ -265,6 +320,7 @@ export class EditorState {
 			updates: Object.values(this.edits[key] ?? {}).map((row) => ({ identity: $state.snapshot(row.identity), changes: { ...row.changes } })),
 			inserts: this.draftsForTable.map((row) => ({ ...row.values }))
 		};
+		this.#liveGeneration++;
 		this.busy = true;
 		this.error = null;
 		try {
@@ -315,6 +371,7 @@ export class EditorState {
 			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
 			identities: rows.flatMap((row) => row.identity ? [$state.snapshot(row.identity)] : [])
 		};
+		this.#liveGeneration++;
 		this.busy = true;
 		this.error = null;
 		try {

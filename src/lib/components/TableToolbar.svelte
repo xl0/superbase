@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { ArrowDown, ArrowUp, Check, Plus, RotateCw, Search, Trash2, X } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, Check, Plus, Radio, RotateCw, Search, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
-	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 
 	let { tab = $bindable('data') }: { tab: 'data' | 'definition' } = $props();
@@ -75,15 +75,22 @@
 						onclick={() => { clearTimeout(timer); search = ''; void editor.setSearch(''); }}><X /></Button>
 				{/if}
 			</div>
-			<NativeSelect.Root size="sm" aria-label="Sort by column" value={editor.sort?.column ?? ''} disabled={blocked}
-				onchange={(event) => void editor.setSort(event.currentTarget.value)}>
-				<NativeSelect.Option value="">Sort by…</NativeSelect.Option>
-				{#each editor.table.columns as column (column.name)}<NativeSelect.Option value={column.name}>{column.name}</NativeSelect.Option>{/each}
-			</NativeSelect.Root>
+			<Select.Root type="single" value={editor.sort ? `column:${editor.sort.column}` : 'none'} disabled={blocked} allowDeselect={false}
+				onValueChange={(value) => { if (value) void editor.setSort(value === 'none' ? '' : value.slice(7)); }}>
+				<Select.Trigger size="sm" aria-label="Sort by column" class="text-xs">{editor.sort?.column ?? 'Sort by…'}</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="none" label="No sorting" />
+					{#each editor.table.columns as column (column.name)}<Select.Item value={`column:${column.name}`} label={column.name} />{/each}
+				</Select.Content>
+			</Select.Root>
 			<Button variant="outline" size="icon-sm" disabled={blocked || !editor.sort} aria-label={editor.sort?.direction === 'asc' ? 'Sort descending' : 'Sort ascending'} onclick={() => void editor.toggleSortDirection()}>
 				{#if editor.sort?.direction === 'desc'}<ArrowDown />{:else}<ArrowUp />{/if}
 			</Button>
 			<div class="ml-auto flex items-center gap-2">
+				<Button variant={editor.live ? 'secondary' : 'outline'} size="sm" class="text-xs" aria-label="Live updates" aria-pressed={editor.live}
+					title="Check for changes every 5 seconds while this tab is visible" onclick={() => editor.setLive(!editor.live)}>
+					<Radio class={editor.live ? 'text-primary' : ''} />Live
+				</Button>
 				<Button variant="outline" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => editor.insertRow()}><Plus />Insert row</Button>
 				{#if editor.selectedCount > 0}
 					<Button variant="ghost" size="icon-sm" disabled={editor.busy} aria-label="Clear row selection" onclick={() => editor.clearRowSelection()}><X /></Button>

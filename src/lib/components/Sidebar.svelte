@@ -5,7 +5,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import * as Select from '#lib/components/ui/select/index.js';
 
 	let { connection, onconnect }: { connection: ConnectionInfo; onconnect: () => void } = $props();
 	let tableSearch = $state('');
@@ -30,10 +30,13 @@
 	<div class="space-y-3 p-3">
 		<div class="space-y-1.5">
 			<Label for={`${id}-schema`} class="text-[10px] tracking-wider text-muted-foreground uppercase">Schema</Label>
-			<NativeSelect.Root id={`${id}-schema`} size="sm" class="w-full font-mono" value={editor.activeSchema} disabled={editor.busy || !editor.schemas.length}
-				onchange={(event) => void editor.setSchema(event.currentTarget.value)}>
-				{#each editor.schemas as schema (schema)}<NativeSelect.Option value={schema}>{schema}</NativeSelect.Option>{/each}
-			</NativeSelect.Root>
+			<Select.Root type="single" value={editor.activeSchema} disabled={editor.busy || !editor.schemas.length}
+				onValueChange={(value) => { if (value) void editor.setSchema(value); }} allowDeselect={false}>
+				<Select.Trigger id={`${id}-schema`} size="sm" class="w-full font-mono text-xs">{editor.activeSchema || 'Choose schema'}</Select.Trigger>
+				<Select.Content>
+					{#each editor.schemas as schema (schema)}<Select.Item value={schema} label={schema} />{/each}
+				</Select.Content>
+			</Select.Root>
 		</div>
 		<div class="relative">
 			<Search class="pointer-events-none absolute top-2 left-2.5 size-3.5 text-muted-foreground" />

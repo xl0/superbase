@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
 import { compileModule } from 'svelte/compiler';
-import type { Row, Table } from '../src/lib/types.ts';
+import type { Row, RowsPage, Table } from '../src/lib/types.ts';
 
 // Compile the actual runes class, substituting only its remote I/O boundary.
 let serial = 0;
@@ -195,4 +195,240 @@ test('failed saves preserve pending changes and exact originals; editing back re
 	assert.equal(s.busy, false);
 	s.editCell(original, tables[0].columns[1], 'original');
 	assert.equal(s.hasAnyChanges, false);
+});
+
+test('live polls refresh current query, preserve unchanged arrays and update idle pages', async () => {
+	const { editor: s, deferRead, row, tables } = await fixture();
+	assert.equal(s.live, false);
+	assert.equal(s.polling, false);
+	assert.equal(s.externalChange, false);
+	assert.equal(s.liveError, null);
+	assert.equal(s.cellSelected, false);
+	// Work in another table does not prevent refreshing the active table.
+	s.editCell(s.rows[0], tables[0].columns[1], 'local');
+	await s.selectTable('public', 'b', { id: 'exact' });
+	await s.setSearch('query');
+	await s.setSort('value');
+	await s.setPageSize(250);
+	await s.setPage(1);
+	const original = s.rows;
+	const calls: any[] = [];
+	let result: RowsPage = { rows: [row('2')], hasMore: true };
+	deferRead(async (args) => { calls.push(args); return result; });
+	s.setLive(true);
+	assert.equal(calls.length, 0);
+	await s.poll();
+	assert.equal(s.rows, original);
+	assert.deepEqual(calls[0], {
+		connection: 'connection-1', schema: 'public', table: 'b', page: 1, pageSize: 250,
+		sort: { column: 'value', direction: 'asc' }, search: 'query', filter: { id: 'exact' }
+	});
+	result = { rows: [row('updated')], hasMore: false };
+	await s.poll();
+	assert.equal(calls.length, 2);
+	assert.equal(s.rows[0].key, 'updated');
+	assert.equal(s.rowsPage, 1);
+	assert.equal(s.hasMore, false);
+	assert.equal(s.hasAnyChanges, true);
+	// An emptied page is applied as returned, without a foreground page-zero fetch.
+	result = { rows: [], hasMore: false };
+	await s.poll();
+	assert.equal(s.page, 1);
+	assert.equal(s.rows.length, 0);
+	assert.equal(calls.length, 3);
+});
+
+for (const protection of ['draft', 'edit', 'row selection', 'editor', 'cell selection']) {
+	test(`live updates preserve ${protection}, including work begun in flight`, async () => {
+		const { editor: s, deferRead, row, tables } = await fixture();
+		s.setLive(true);
+		const original = s.rows;
+		const slow = deferred<RowsPage>();
+		deferRead(() => slow.promise);
+		const polling = s.poll();
+		if (protection === 'draft') {
+			s.insertRow();
+			s.editCell(s.draftsForTable[0], tables[0].columns[1], 'draft buffer');
+		} else if (protection === 'edit') s.editCell(s.rows[0], tables[0].columns[1], 'edit buffer');
+		else if (protection === 'row selection') s.toggleRowSelection(s.rows[0]);
+		else if (protection === 'editor') s.editing = true;
+		else s.cellSelected = true;
+		const local = () => JSON.stringify({
+			edits: s.edits, drafts: s.drafts, selection: s.rowSelection,
+			editing: s.editing, cellSelected: s.cellSelected, page: s.page, rowsPage: s.rowsPage
+		});
+		const before = local();
+		slow.resolve({ rows: [row('external')], hasMore: false });
+		await polling;
+		assert.equal(s.rows, original);
+		assert.equal(s.hasMore, true);
+		assert.equal(s.externalChange, true);
+		assert.equal(local(), before);
+		// Already-present work is protected on subsequent polls too.
+		await s.poll();
+		assert.equal(s.rows, original);
+		assert.equal(local(), before);
+		s.revert();
+		s.editing = false;
+		s.cellSelected = false;
+		await s.poll();
+		assert.equal(s.rows[0].key, 'external');
+		assert.equal(s.externalChange, false);
+	});
+}
+
+test('live polls skip ineligible states and never overlap, even across off/on', async () => {
+	const { editor: s, deferRead, row } = await fixture();
+	let reads = 0;
+	const slow = deferred<RowsPage>();
+	deferRead(() => { reads++; return slow.promise; });
+	await s.poll();
+	s.setLive(true);
+	for (const [field, value] of [
+		['ready', false], ['activeTableName', ''], ['loading', true], ['busy', true], ['error', 'foreground failure']
+	] as const) {
+		const original = s[field];
+		s[field] = value;
+		await s.poll();
+		s[field] = original;
+	}
+	await s.poll(() => false);
+	assert.equal(reads, 0);
+	const original = s.rows;
+	const polling = s.poll();
+	assert.equal(s.polling, true);
+	await s.poll();
+	s.setLive(false);
+	s.setLive(true);
+	await s.poll();
+	assert.equal(reads, 1);
+	slow.resolve({ rows: [row('obsolete')], hasMore: false });
+	await polling;
+	assert.equal(s.polling, false);
+	assert.equal(s.rows, original);
+	await s.poll();
+	assert.equal(reads, 2);
+	assert.equal(s.rows[0].key, 'obsolete');
+});
+
+test('foreground reads supersede polls without being superseded by them', async () => {
+	const { editor: s, deferRead, row } = await fixture();
+	s.setLive(true);
+	for (const navigate of [
+		() => s.selectTable('public', s.activeTableName === 'a' ? 'b' : 'a'),
+		() => s.fetch(), () => s.reload(), () => s.initialize(s.connection + '-next')
+	]) {
+		for (const staleFirst of [true, false]) {
+			const stale = deferred<RowsPage>();
+			deferRead(() => stale.promise);
+			const polling = s.poll();
+			const fresh = deferred<RowsPage>();
+			deferRead(() => fresh.promise);
+			const reading = navigate();
+			// Let reload's metadata request reach its rows request.
+			await Promise.resolve();
+			await s.poll();
+			if (staleFirst) {
+				stale.resolve({ rows: [row('stale')], hasMore: false });
+				await polling;
+				assert.equal(s.loading, true);
+			}
+			fresh.resolve({ rows: [row('foreground')], hasMore: true });
+			await reading;
+			const foreground = s.rows;
+			if (!staleFirst) {
+				stale.resolve({ rows: [row('stale')], hasMore: false });
+				await polling;
+			}
+			assert.equal(s.rows, foreground);
+			assert.equal(s.rows[0].key, 'foreground');
+			assert.equal(s.hasMore, true);
+			assert.equal(s.loading, false);
+		}
+	}
+});
+
+test('poll completions are ignored when inactive or busy, including stale errors', async () => {
+	const { editor: s, deferRead, row } = await fixture();
+	s.setLive(true);
+	const original = s.rows;
+	for (const guard of ['inactive', 'busy', 'error', 'not ready']) {
+		for (const fail of [false, true]) {
+			let active = true;
+			const slow = deferred();
+			deferRead(async () => {
+				await slow.promise;
+				if (fail) throw new Error('obsolete failure');
+				return { rows: [row('obsolete')], hasMore: false };
+			});
+			const polling = s.poll(() => active);
+			if (guard === 'inactive') active = false;
+			else if (guard === 'busy') s.busy = true;
+			else if (guard === 'error') s.error = 'foreground failure';
+			else s.ready = false;
+			slow.resolve();
+			await polling;
+			assert.equal(s.rows, original);
+			assert.equal(s.liveError, null);
+			assert.equal(s.externalChange, false);
+			s.busy = false;
+			s.error = null;
+			s.ready = true;
+		}
+	}
+});
+
+test('a save invalidates an older poll even after the save finishes', async () => {
+	const { editor: s, deferRead, deferSave, tables, row } = await fixture();
+	s.setLive(true);
+	const slow = deferred<RowsPage>();
+	deferRead(() => slow.promise);
+	const polling = s.poll();
+	s.editCell(s.rows[0], tables[0].columns[1], 'local');
+	deferSave(async () => { throw new Error('save failure'); });
+	await s.save();
+	// Remove the foreground error to isolate the mutation-generation guard.
+	s.error = null;
+	s.revert();
+	const original = s.rows;
+	slow.resolve({ rows: [row('before-save')], hasMore: false });
+	await polling;
+	assert.equal(s.rows, original);
+	assert.equal(s.externalChange, false);
+});
+
+test('live errors preserve local work, recover, and clear on explicit view transitions', async () => {
+	const { editor: s, deferRead, row, tables } = await fixture();
+	s.setLive(true);
+	s.editCell(s.rows[0], tables[0].columns[1], 'local');
+	const original = s.rows;
+	deferRead(async () => { throw new Error('offline'); });
+	await s.poll();
+	assert.equal(s.liveError, 'offline');
+	assert.equal(s.error, null);
+	assert.equal(s.rows, original);
+	assert.equal(s.getValue(s.rows[0], 'value'), 'local');
+	assert.equal(s.polling, false);
+	deferRead(async () => ({ rows: [row('changed')], hasMore: false }));
+	await s.poll();
+	assert.equal(s.liveError, null);
+	assert.equal(s.externalChange, true);
+	assert.equal(s.rows, original);
+	deferRead(async () => { throw new Error('offline again'); });
+	await s.poll();
+	s.setLive(false);
+	assert.equal(s.liveError, null);
+	assert.equal(s.externalChange, true);
+	for (const transition of [() => s.fetch(), () => s.reload()]) {
+		s.liveError = 'previous live error';
+		s.externalChange = true;
+		const slow = deferred<RowsPage>();
+		deferRead(() => slow.promise);
+		const reading = transition();
+		assert.equal(s.liveError, null);
+		assert.equal(s.externalChange, false);
+		slow.resolve({ rows: [row('explicit')], hasMore: true });
+		await reading;
+		assert.equal(s.hasChanges, true);
+	}
 });

@@ -159,7 +159,8 @@
 	});
 	$effect(() => { if (editor.loading || editor.busy) editing = null; });
 	$effect(() => { editor.editing = editing !== null; });
-	onDestroy(() => { resizeCleanup?.(); editor.editing = false; });
+	$effect(() => { editor.cellSelected = focus !== null; });
+	onDestroy(() => { resizeCleanup?.(); editor.editing = false; editor.cellSelected = false; });
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-background">

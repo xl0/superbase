@@ -2,40 +2,53 @@
 
 ## Intent
 
-A small, standalone Postgres table editor. SvelteKit + direct `pg`, no Supabase services.
-The server owns SQL. The grid must never silently change a value or mutation target.
+Build a small, local-only Postgres table editor with the useful parts of Supabase Studio's
+UX, without its platform dependencies. Keep SvelteKit, direct server-owned SQL, and a custom
+spreadsheet grid. Reuse shadcn-svelte for standard UI instead of maintaining equivalents.
 
-## [x] Safe editor and browser connections
+Preserve PostgreSQL values exactly. Navigation, background refreshes, and connection changes
+must never silently discard edits or send them to a different target. Favor simple, readable
+solutions; add infrastructure only when a concrete feature needs it.
 
-Lossless text cells, isolated row metadata, optimistic transactional writes, immutable pending
-batches, and connection generations replace the prototype's unsafe mutation assumptions.
-Keyless tables are read-only. Runtime-validated remotes have no arbitrary-SQL endpoint.
+## TODO
 
-Browser connect/change/disconnect/default flows are complete, with server-memory credentials,
-fail-closed sessions, masked URLs, and unsaved-work protection. Both development and production
-are loopback-only. Production HTTP retains CSRF checks. Browser TLS verification is opt-in
-through a URL-backed checkbox; explicit plaintext connections remain supported.
+Finish and verify the active item before starting the next. Queue new feature requests here
+rather than interrupting work already underway.
 
-shadcn-svelte is initialized and used for standard controls/dialogs; the custom grid shares
-its Studio-inspired theme. Keyboard editing, exact clipboard round-trips, selection bounds,
-and cross-page edits/selections are covered. Metadata is cached with deliberate refresh;
-pagination avoids full-table counts and filtering is debounced.
+- [x] Browser connections, lossless transactional editing, cross-page pending changes,
+  retained rows during sorting, rich/resizable cell editors, and composite foreign-key
+  selection/navigation. Regression tests and isolated browser checks cover the foundation.
 
-State, value, validation, connection, PostgreSQL, and production-HTTP regression tests are in
-place. Browser checks cover layouts, keyboard editing, CRUD/defaults, connection switching,
-stale-tab rejection, and operation without an environment default.
+- [x] Shadcn Select, DropdownMenu, Popover, Sheet and display tables replace native/custom
+  standard controls. Single Set to actions are footer buttons; multiple actions use a menu.
+  The resizable sheet leaves the table unblurred. Nested-menu Escape and focus are verified.
 
-## [x] Rich cell editing and reference navigation
+[x] JSON/JSONB uses CodeMirror with lossless indentation and highlighting in both editor
+modes. Semantic undo/redo preserves SQL NULL, DEFAULT and literal text across expansion.
+Precision, readonly behavior, keyboard handling and compact-editor bounds are verified.
 
-Sorting retains rows behind a spinner. Cell editors support long text/JSON, type-aware
-Set to options and a resizable side panel. Foreign keys have searchable, paginated pickers,
-atomic composite-key selection and exact-record navigation. Mouse/touch outside-click races,
-queued searches, failed sorts, keyboard/focus behavior and PostgreSQL value persistence are
-covered by regression tests and isolated browser checks.
+[x] Optional live refresh polls the visible data view every five seconds. Idle results update;
+local edits, drafts and selections instead receive a changed-data notice. Visibility/modal
+pausing, race guards, failure recovery and actual database updates are verified.
+
+[x] README covers running, connecting, editing and limits for users. Development setup,
+test commands and architecture live in CODE.md.
+
+### [ ] Validate cell values before Apply stages them
+
+Use PostgreSQL's actual type rules, nullability and foreign-key checks for all cell types.
+Reject invalid values inline without closing the editor or losing its buffer. Cover every
+apply path, including outside-click dismissal. Do not use trial writes and rollback for
+validation. Save remains authoritative for full constraints and concurrent changes.
+
+For these items, completion includes focused regression tests and browser checks, not just
+rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 
 ## Later
 
-- [ ] Schema editing and column-specific filters.
+- [ ] Schema editing and user-defined column filters.
 - [ ] SQL editor with an explicit connection lifecycle.
-- [ ] Docker packaging that preserves the local-only boundary.
-- [ ] Virtualization only if larger pages justify it.
+- [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
+  and opens the browser. Bundle production assets and verify the Bun launch path.
+
+Consider virtualization only if larger pages demonstrate a need.

@@ -15,8 +15,14 @@
 	let tab = $state<'data' | 'definition'>('data');
 	let connectOpen = $state(false);
 
+	const liveActive = () => document.visibilityState === 'visible' && tab === 'data' && !connectOpen;
+
 	onMount(() => {
 		if (status.connection) void editor.initialize(status.connection.id);
+		const poll = () => { void editor.poll(liveActive); };
+		const timer = window.setInterval(poll, 5_000);
+		document.addEventListener('visibilitychange', poll);
+		return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
 	});
 
 	function beforeUnload(event: BeforeUnloadEvent) {
@@ -65,6 +71,20 @@
 					<div role="alert" class="flex shrink-0 items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 						<span class="min-w-0 break-words">{editor.error}</span>
 						<Button variant="outline" size="xs" class="ml-auto" disabled={editor.busy || editor.loading} onclick={() => void editor.fetch()}>Retry rows</Button>
+					</div>
+				{/if}
+				{#if editor.externalChange}
+					<div role="status" class="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/50 px-3 py-2 text-xs">
+						<span>Database changed — refresh available.</span>
+						{#if editor.hasChanges || editor.selectedCount || editor.editing}<span class="text-muted-foreground">Finish or revert edits and clear row selections to refresh.</span>{/if}
+						<Button variant="outline" size="xs" class="ml-auto" disabled={editor.busy || editor.loading || editor.hasChanges || !!editor.selectedCount || editor.editing}
+							onclick={() => void editor.fetch(true)}>Refresh rows</Button>
+					</div>
+				{/if}
+				{#if editor.live && editor.liveError}
+					<div role="status" class="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs text-destructive">
+						<span class="min-w-0 break-words">Live update failed: {editor.liveError}</span>
+						<Button variant="outline" size="xs" class="ml-auto" disabled={editor.polling || editor.busy || editor.loading} onclick={() => void editor.poll(liveActive)}>Retry</Button>
 					</div>
 				{/if}
 				{#if !editor.tableEditable}

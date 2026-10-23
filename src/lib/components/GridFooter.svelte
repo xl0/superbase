@@ -2,7 +2,7 @@
 	import { ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import * as Select from '#lib/components/ui/select/index.js';
 
 	const start = $derived(editor.rows.length ? editor.rowsPage * editor.pageSize + 1 : 0);
 	const end = $derived(editor.rows.length ? editor.rowsPage * editor.pageSize + editor.rows.length : 0);
@@ -14,12 +14,13 @@
 	{#if editor.rowsPage === 0 && editor.draftCount > 0}<span class="text-[11px]">+ {editor.draftCount} unsaved drafts</span>{/if}
 	{#if editor.search || editor.filter}<span class="text-[10px]">filtered</span>{/if}
 	<div class="ml-auto flex items-center gap-2">
-		<NativeSelect.Root size="sm" value={editor.pageSize} aria-label="Rows per page" disabled={blocked}
-			onchange={(event) => void editor.setPageSize(Number(event.currentTarget.value))}>
-			<NativeSelect.Option value={100}>100 rows</NativeSelect.Option>
-			<NativeSelect.Option value={250}>250 rows</NativeSelect.Option>
-			<NativeSelect.Option value={500}>500 rows</NativeSelect.Option>
-		</NativeSelect.Root>
+		<Select.Root type="single" value={String(editor.pageSize)} disabled={blocked} allowDeselect={false}
+			onValueChange={(value) => { if (value) void editor.setPageSize(Number(value)); }}>
+			<Select.Trigger size="sm" aria-label="Rows per page" class="text-xs">{editor.pageSize} rows</Select.Trigger>
+			<Select.Content>
+				{#each [100, 250, 500] as size}<Select.Item value={String(size)} label={`${size} rows`} />{/each}
+			</Select.Content>
+		</Select.Root>
 		<Button variant="outline" size="icon-sm" disabled={blocked || editor.page === 0} aria-label="Previous page" onclick={() => void editor.setPage(editor.page - 1)}><ChevronLeft /></Button>
 		<span class="px-1 font-mono text-[11px]">Page {editor.page + 1}</span>
 		<Button variant="outline" size="icon-sm" disabled={blocked || !editor.hasMore} aria-label="Next page" onclick={() => void editor.setPage(editor.page + 1)}><ChevronRight /></Button>

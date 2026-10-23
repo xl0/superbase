@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
-	import { Popover } from 'bits-ui';
-	import { Maximize2, Minimize2, X } from '@lucide/svelte';
+	import { Popover as PopoverPrimitive } from 'bits-ui';
+	import { ChevronDown, Maximize2, Minimize2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { writable, type CellValue, type Column, type Row } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
-	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import * as Select from '#lib/components/ui/select/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import * as Popover from '#lib/components/ui/popover/index.js';
+	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import ReferencePicker from './ReferencePicker.svelte';
+	import JsonEditor from './JsonEditor.svelte';
+	import type { EditorState } from '@codemirror/state';
+	import type { EditorView } from '@codemirror/view';
 
 	let { row, column, anchor, initial, onapply, onclose }: {
 		row: Row;
@@ -27,12 +32,21 @@
 	let width = $state(640);
 	let windowWidth = $state(1024);
 	let field = $state<HTMLTextAreaElement | null>(null);
+	let jsonView = $state.raw<EditorView | null>(null);
+	let jsonState = $state.raw<EditorState | null>(null);
 	let panel = $state<HTMLDivElement | null>(null);
 	let error = $state<string | null>(null);
 	let resize: { x: number; width: number } | null = null;
 	let selection: { start: number; end: number } | null = null;
 	const temporal = $derived(/^(date|timestamp|time)(?:\(|\s|$)/.test(column.type));
 	const options = $derived(column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? []);
+	const specialOptions = $derived(readOnly ? [] : [
+		...(column.nullable ? [{ action: 'null', label: 'Set to NULL' }] : []),
+		...(temporal ? [{ action: 'now', label: 'Set to Now' }] : []),
+		...(row.draft ? [{ action: 'default', label: 'Use DEFAULT' }] : []),
+		...(column.kind === 'text' ? [{ action: 'empty', label: 'Empty text' }] : [])
+	]);
+	const optionLabel = (option: string) => column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)';
 	const panelWidth = $derived(Math.min(windowWidth, Math.max(320, width)));
 	const current = $derived(Object.fromEntries((column.foreignKey?.columns ?? []).map((name) => [name, editor.getValue(row, name) ?? null])));
 	const referenceReadOnly = $derived(readOnly || column.foreignKey?.columns.some((name) => {
@@ -62,6 +76,12 @@
 		event.preventDefault();
 		await tick();
 		if (picking) { panel?.querySelector<HTMLInputElement>('[data-reference-search]')?.focus(); return; }
+		if (jsonView) {
+			jsonView.focus();
+			jsonView.dispatch({ selection: selection ? { anchor: selection.start, head: selection.end }
+				: { anchor: initial === undefined ? 0 : jsonView.state.doc.length, head: jsonView.state.doc.length } });
+			return;
+		}
 		field?.focus();
 		if (selection) field?.setSelectionRange(selection.start, selection.end);
 		else if (initial === undefined) field?.select();
@@ -69,11 +89,9 @@
 	}
 
 	function keydown(event: KeyboardEvent) {
-		event.stopPropagation();
-		if (!event.isComposing && event.key === 'Escape') {
-			event.preventDefault(); onclose();
-		} else if (!event.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !picking) {
-			event.preventDefault(); apply();
+		// Let Bits UI dismiss the innermost menu on Escape before the editor itself.
+		if (!event.defaultPrevented && !event.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !picking) {
+			event.preventDefault(); event.stopPropagation(); apply();
 		}
 	}
 
@@ -95,7 +113,8 @@
 		</div>
 		<Button variant="ghost" size="icon-sm" aria-label={expanded ? 'Collapse cell editor' : 'Expand cell editor'}
 			onclick={() => {
-				selection = field ? { start: field.selectionStart, end: field.selectionEnd } : null;
+				selection = jsonView ? { start: jsonView.state.selection.main.anchor, end: jsonView.state.selection.main.head }
+					: field ? { start: field.selectionStart, end: field.selectionEnd } : null;
 				picking = false; expanded = !expanded;
 			}}>
 			{#if expanded}<Minimize2 />{:else}<Maximize2 />{/if}
@@ -114,32 +133,48 @@
 		<ReferencePicker foreignKey={column.foreignKey} {current} disabled={referenceReadOnly} onselect={selectReference} />
 	{:else}
 		<div class="flex shrink-0 flex-wrap items-center gap-2">
-			{#if !readOnly && (column.nullable || temporal || row.draft || column.kind === 'text')}
-				<NativeSelect.Root size="sm" aria-label="Set cell to" value="" onchange={(event) => { special(event.currentTarget.value); event.currentTarget.value = ''; }}>
-					<NativeSelect.Option value="" disabled>Set to…</NativeSelect.Option>
-					{#if column.nullable}<NativeSelect.Option value="null">NULL</NativeSelect.Option>{/if}
-					{#if temporal}<NativeSelect.Option value="now">Now</NativeSelect.Option>{/if}
-					{#if row.draft}<NativeSelect.Option value="default">DEFAULT</NativeSelect.Option>{/if}
-					{#if column.kind === 'text'}<NativeSelect.Option value="empty">Empty text</NativeSelect.Option>{/if}
-				</NativeSelect.Root>
-			{/if}
 			{#if options.length && !readOnly}
-				<NativeSelect.Root size="sm" aria-label={`Choose ${column.name} value`} value={value == null ? -1 : options.indexOf(value)}
-					onchange={(event) => value = options[Number(event.currentTarget.value)]}>
-					<NativeSelect.Option value={-1} disabled>Choose value…</NativeSelect.Option>
-					{#each options as option, i}<NativeSelect.Option value={i}>{column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)'}</NativeSelect.Option>{/each}
-				</NativeSelect.Root>
+				<Select.Root type="single" value={value == null || !options.includes(value) ? '' : String(options.indexOf(value))} allowDeselect={false}
+					onValueChange={(selected) => { if (selected) value = options[Number(selected)]; }}>
+					<Select.Trigger size="sm" aria-label={`Choose ${column.name} value`} class="text-xs">{value == null || !options.includes(value) ? 'Choose value…' : optionLabel(value)}</Select.Trigger>
+					<Select.Content>
+						{#each options as option, i}<Select.Item value={String(i)} label={optionLabel(option)} />{/each}
+					</Select.Content>
+				</Select.Root>
 			{/if}
 			<span class="text-xs text-muted-foreground" aria-live="polite">{value === null ? 'SQL NULL' : value === undefined ? 'DEFAULT' : value === '' ? 'Empty text' : ''}</span>
 		</div>
-		<Textarea bind:ref={field} aria-label={`Edit ${column.name}`} readonly={readOnly} value={value ?? ''}
-			oninput={(event) => value = event.currentTarget.value} spellcheck={false}
-			placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
-			class={expanded ? 'min-h-24 flex-1 resize-none font-mono text-xs' : 'min-h-48 max-h-[50dvh] resize-y font-mono text-xs'} />
-		<div class="flex shrink-0 items-center gap-2">
-			<p class="mr-auto text-[11px] text-muted-foreground">{temporal && value === 'now' ? 'Now is resolved by PostgreSQL when you save.' : 'Ctrl/⌘+Enter to apply · Esc to cancel'}</p>
-			<Button variant="outline" size="sm" onclick={onclose}>{readOnly ? 'Close' : 'Cancel'}</Button>
-			{#if !readOnly}<Button size="sm" onclick={apply}>Apply</Button>{/if}
+		{#if column.kind === 'json'}
+			<JsonEditor bind:ref={jsonView} bind:state={jsonState} label={`Edit ${column.name}`} readonly={readOnly}
+				{value} onchange={(next) => value = next}
+				placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
+				class={expanded ? 'min-h-24 flex-1' : 'h-64 max-h-[50dvh]'} />
+		{:else}
+			<Textarea bind:ref={field} aria-label={`Edit ${column.name}`} readonly={readOnly} value={value ?? ''}
+				oninput={(event) => value = event.currentTarget.value} spellcheck={false}
+				placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
+				class={expanded ? 'min-h-24 flex-1 resize-none font-mono text-xs' : 'min-h-48 max-h-[50dvh] resize-y font-mono text-xs'} />
+		{/if}
+		<div class="flex shrink-0 items-start justify-between gap-3 border-t pt-3">
+			<div class="space-y-2">
+				<p class="text-[11px] text-muted-foreground">{temporal && value === 'now' ? 'Now is resolved by PostgreSQL when you save.' : 'Ctrl/⌘+Enter to apply · Esc to cancel'}</p>
+				<div class="flex gap-2">
+					<Button variant="outline" size="xs" onclick={onclose}>{readOnly ? 'Close' : 'Cancel'}</Button>
+					{#if !readOnly}<Button size="xs" onclick={apply}>Apply</Button>{/if}
+				</div>
+			</div>
+			{#if specialOptions.length === 1}
+				<Button variant="outline" size="xs" class="shrink-0" onclick={() => special(specialOptions[0].action)}>{specialOptions[0].label}</Button>
+			{:else if specialOptions.length > 1}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}<Button {...props} variant="outline" size="xs" class="shrink-0" aria-label="Set cell to">Set to…<ChevronDown /></Button>{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content align="end" class="min-w-40">
+						{#each specialOptions as option}<DropdownMenu.Item onSelect={() => special(option.action)}>{option.label}</DropdownMenu.Item>{/each}
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{/if}
 		</div>
 	{/if}
 {/snippet}
@@ -147,20 +182,20 @@
 <Popover.Root open={!expanded} onOpenChange={(open) => { if (!open && !expanded) apply(); }}>
 	<Popover.Portal>
 		<!-- Consume the outside click: dismissal must apply before any navigation can run. -->
-		<Popover.Overlay class="fixed inset-0 z-40" />
+		<PopoverPrimitive.Overlay class="fixed inset-0 z-40" />
+	</Popover.Portal>
 		<Popover.Content customAnchor={anchor} side="bottom" align="start" sideOffset={4} collisionPadding={12}
 			role="dialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} aria-modal="true"
-			class="z-50 flex w-[420px] max-w-[calc(100vw-24px)] flex-col gap-3 rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl outline-none"
+			class="z-50 flex max-h-[min(var(--bits-popover-content-available-height),calc(100dvh-24px))] w-[420px] max-w-[calc(100vw-24px)] flex-col gap-3 overflow-y-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl outline-none"
 			onOpenAutoFocus={focusField} onCloseAutoFocus={(event) => event.preventDefault()}
 			onEscapeKeydown={(event) => { event.preventDefault(); onclose(); }} onkeydown={keydown}>
 			{@render contents()}
 		</Popover.Content>
-	</Popover.Portal>
 </Popover.Root>
 
-<Dialog.Root open={expanded} onOpenChange={(open) => { if (!open) onclose(); }}>
-	<Dialog.Content bind:ref={panel} showCloseButton={false} aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
-		class="gap-3 rounded-none p-5" style={`top:0;left:auto;right:0;transform:none;translate:none;width:${panelWidth}px;max-width:100vw;height:100dvh;display:flex;flex-direction:column;`}
+<Sheet.Root open={expanded} onOpenChange={(open) => { if (!open) onclose(); }}>
+	<Sheet.Content bind:ref={panel} side="right" showCloseButton={false} aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
+		class="gap-3 p-5" style={`width:${panelWidth}px;max-width:100vw;height:100dvh;`}
 		onInteractOutside={(event) => event.preventDefault()} onOpenAutoFocus={focusField}
 		onCloseAutoFocus={(event) => event.preventDefault()} onkeydown={keydown}>
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
@@ -172,5 +207,5 @@
 			onpointermove={(event) => { if (resize) width = Math.min(windowWidth, Math.max(320, resize.width + resize.x - event.clientX)); }}
 			onpointerup={() => resize = null} onlostpointercapture={() => resize = null}></div>
 		{@render contents()}
-	</Dialog.Content>
-</Dialog.Root>
+	</Sheet.Content>
+</Sheet.Root>

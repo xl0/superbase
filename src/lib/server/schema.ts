@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import pg from 'pg';
 
-import type { ColumnDefault, ColumnSpec, SchemaCatalog, SchemaChangeArgs, SchemaColumn, SchemaDefinition, SchemaType } from '../schema.js';
+import type { ColumnDefault, ColumnSpec, SchemaCatalog, SchemaChangeArgs, SchemaColumn, SchemaDefinition, SchemaExport, SchemaType } from '../schema.js';
 import type { TableTarget } from '../types.js';
 import { schemaChangeSchema, schemaTargetSchema } from '../schema-validation.js';
 import { columnOptionsError, elementType } from '../schema-options.js';
 import { ident, invalidateMetadata, qualify } from './db.js';
+import { actionMetadata, duplicateTable, ownedSequencesSql, schemaSql } from './table-actions.js';
 
 // Both introspection and writes deparse expressions with the same, trusted search path.
 async function transaction<T>(pool: pg.Pool, run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -75,6 +76,8 @@ async function definition(client: pg.PoolClient, target: TableTarget): Promise<S
 			'oid', c.oid::text, 'schema', n.nspname, 'table', c.relname,
 			'kind', c.relkind, 'partition', c.relispartition,
 			'persistence', c.relpersistence, 'options', c.reloptions,
+			'rls', c.relrowsecurity, 'forceRls', c.relforcerowsecurity,
+			'sequences', ${ownedSequencesSql},
 			'replicaIdentity', c.relreplident, 'comment', obj_description(c.oid, 'pg_class'),
 			'inheritance', coalesce((select jsonb_agg(jsonb_build_array(i.inhrelid::text, i.inhparent::text, i.inhseqno)
 				order by i.inhrelid, i.inhseqno) from pg_inherits i
@@ -145,6 +148,47 @@ export async function getSchemaDefinition(pool: pg.Pool, target: TableTarget): P
 	return transaction(pool, (client) => definition(client, validated.value));
 }
 
+// Names used by read/clone actions include existing types, not only explicitly selected types.
+async function sourceCatalogVersion(client: pg.PoolClient, target: TableTarget): Promise<string> {
+	return JSON.stringify((await client.query(`
+		with recursive selected(oid) as (
+			select a.atttypid from pg_attribute a join pg_class c on c.oid = a.attrelid
+			join pg_namespace n on n.oid = c.relnamespace
+			where n.nspname = $1 and c.relname = $2 and a.attnum > 0 and not a.attisdropped
+			union
+			select dep.oid from selected s join pg_type t on t.oid = s.oid
+			cross join lateral (select t.typelem as oid where t.typelem <> 0
+				union select t.typbasetype where t.typbasetype <> 0) dep
+		)
+		select 'namespace' as kind, oid::text as oid, xmin::text as version from pg_namespace
+		where nspname = $1 or oid in (select typnamespace from pg_type where oid in (select oid from selected))
+		union all
+		select 'type', oid::text, xmin::text from pg_type where oid in (select oid from selected)
+		order by kind, oid`, [target.schema, target.table])).rows);
+}
+
+export async function exportSchema(pool: pg.Pool, target: TableTarget): Promise<SchemaExport> {
+	const validated = schemaTargetSchema['~standard'].validate(target);
+	if ('issues' in validated) throw new Error(validated.issues[0].message);
+	target = validated.value;
+	return transaction(pool, async (client) => {
+		const before = await sourceCatalogVersion(client, target);
+		const initial = await definition(client, target);
+		if (!initial.editable) throw new Error(initial.reason!);
+		await client.query(`lock table only ${qualify(target.schema, target.table)} in access share mode`);
+		const locked = await definition(client, target);
+		if (locked.version !== initial.version) throw new Error('Table schema changed; reload its definition before exporting');
+		const metadata = await actionMetadata(client, locked.oid);
+		const result = schemaSql(metadata);
+		if (await sourceCatalogVersion(client, target) !== before
+			|| (await definition(client, target)).version !== locked.version
+			|| JSON.stringify(await actionMetadata(client, locked.oid)) !== JSON.stringify(metadata)) {
+			throw new Error('Table, namespace or type catalog changed; reopen the schema editor before exporting');
+		}
+		return result;
+	});
+}
+
 function defaultSql(value: ColumnDefault, type: SchemaType | undefined): string {
 	switch (value.kind) {
 		case 'literal': return pg.escapeLiteral(value.value);
@@ -181,10 +225,11 @@ export async function changeSchema(pool: pg.Pool, args: SchemaChangeArgs): Promi
 			select 'type', oid::text, xmin::text from pg_type where oid in (select oid from selected)
 			order by kind, oid`, [args.schema, typeOids])).rows);
 		const before = await catalogVersion();
+		const sourceBefore = op.kind === 'duplicateTable' ? await sourceCatalogVersion(client, args) : null;
 		let current: SchemaDefinition | undefined;
 		if (op.kind !== 'createTable') {
 			// ONLY avoids locking descendants before we reject inherited/partitioned tables.
-			await client.query(`lock table only ${table} in access exclusive mode`);
+			await client.query(`lock table only ${table} in ${op.kind === 'duplicateTable' ? 'access share' : 'access exclusive'} mode`);
 			current = await definition(client, args);
 			if (current.version !== args.expected) throw new Error('Table schema changed; reload its definition before applying');
 			if (!current.editable) throw new Error(current.reason!);
@@ -229,7 +274,15 @@ export async function changeSchema(pool: pg.Pool, args: SchemaChangeArgs): Promi
 			if (current!.primaryKey.length) throw new Error('An existing primary key cannot be replaced');
 			await client.query(`alter table ${table} add primary key (${columns.map(ident).join(', ')})`);
 		};
+		let createdOid: string | undefined;
 		switch (op.kind) {
+			case 'duplicateTable':
+				createdOid = await duplicateTable(client, args, current!.oid, op.name, op.includeRows);
+				if ((await definition(client, args)).version !== current!.version
+					|| await sourceCatalogVersion(client, args) !== sourceBefore) {
+					throw new Error('Source table or type catalog changed; reopen the schema editor before applying');
+				}
+				break;
 			case 'createTable': {
 				const columns = op.columns.map(newColumn);
 				const pk = op.columns.filter((column) => column.primaryKey).map((column) => ident(column.name));
@@ -292,8 +345,8 @@ export async function changeSchema(pool: pg.Pool, args: SchemaChangeArgs): Promi
 				select c.oid::text as oid, a.attname as name, a.atttypid::text as "typeOid"
 				from pg_class c join pg_namespace n on n.oid = c.relnamespace
 				left join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
-				where n.nspname = $1 and c.relname = $2`, [args.schema, op.kind === 'renameTable' ? op.name : args.table]);
-			targetChanged = !after.rows[0] || (!!current && after.rows[0].oid !== current.oid)
+				where n.nspname = $1 and c.relname = $2`, [args.schema, op.kind === 'renameTable' || op.kind === 'duplicateTable' ? op.name : args.table]);
+			targetChanged = !after.rows[0] || (createdOid !== undefined ? after.rows[0].oid !== createdOid : (!!current && after.rows[0].oid !== current.oid))
 				|| changedColumns.some((column) => column.typeOid !== null
 					&& after.rows.find((row) => row.name === column.name)?.typeOid !== column.typeOid);
 		}

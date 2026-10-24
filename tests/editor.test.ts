@@ -244,6 +244,19 @@ test('sidebar DDL targets inactive tables without switching away on an unrelated
 	assert.equal(s.activeTableName, 'b');
 });
 
+test('duplicating an inactive table selects the new table without renaming the source', async () => {
+	const { editor: s, calls, tables, deferSchema } = await fixture();
+	s.schemaEditing = true;
+	deferSchema(async (args) => { tables.push({ ...tables[1], name: args.operation.name }); });
+	await s.applySchemaChange({ connection: 'connection-1', schema: 'public', table: 'b', expected: 'fingerprint',
+		operation: { kind: 'duplicateTable', name: 'b_copy', includeRows: false } });
+	assert.equal(calls[0].args.table, 'b');
+	assert.equal(calls[0].args.operation.includeRows, false);
+	assert.equal(tables[1].name, 'b');
+	assert.equal(s.activeTableName, 'b_copy');
+	assert.equal(typeof s.savedAt, 'number');
+});
+
 test('dropping the last column retains the table through DDL and manual refresh', async () => {
 	const { editor: s, tables, deferSchema } = await fixture();
 	await s.selectTable('public', 'b');

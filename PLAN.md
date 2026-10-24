@@ -113,6 +113,11 @@ round-trips, lossless defaults, custom types, keyboard flows and narrow layouts 
 inactive-table actions safe; Cancel and unrelated deletion preserve the current table.
 Browser checks verify native writes, confirmations, guards, narrow menus and restored focus.
 
+[x] Sidebar actions copy exact names/schema SQL, duplicate structure with optional rows and
+independent owned sequences, and stream full-table CSV. Scope/permission warnings are explicit.
+SQL round-trips, RLS, sequence safety, catalog races, stream cleanup and browser clipboard/download
+flows are verified, including exact values across pages and narrow panels. SQL editor is next.
+
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 

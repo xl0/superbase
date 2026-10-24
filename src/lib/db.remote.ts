@@ -17,4 +17,5 @@ export const saveTable = command(saveSchema, (args) => db.saveTable(connections.
 export const deleteRows = command(deleteSchema, (args) => db.deleteRows(connections.activePool(args.connection), args));
 export const schemaCatalog = query(connectionSchema, ({ connection }) => schemaDb.listSchemaCatalog(connections.activePool(connection)));
 export const schemaDefinition = query(schemaTargetSchema, (args) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
+export const tableSchema = query(schemaTargetSchema, (args) => schemaDb.exportSchema(connections.activePool(args.connection), args));
 export const changeSchema = command(schemaChangeSchema, (args) => schemaDb.changeSchema(connections.activePool(args.connection), args));

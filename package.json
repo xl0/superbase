@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev --host 127.0.0.1",
 		"start": "node --env-file-if-exists=.env server.mjs",
-		"test": "node --test tests/connections.test.ts tests/editor.test.ts && bun test tests/values.test.ts tests/json.test.ts tests/remembered-connection.test.ts tests/db.test.ts tests/schema.test.ts",
+		"test": "node --test tests/connections.test.ts tests/editor.test.ts && bun test tests/values.test.ts tests/json.test.ts tests/remembered-connection.test.ts tests/db.test.ts tests/schema.test.ts tests/export.test.ts",
 		"test:production": "bun run build && node --test tests/server.test.mjs",
 		"build": "vite build",
 		"preview": "vite preview",

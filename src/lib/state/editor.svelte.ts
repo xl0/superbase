@@ -280,7 +280,8 @@ export class EditorState {
 			// Deleting another sidebar table should not switch the current table.
 			if (submitted.operation.kind !== 'dropTable') {
 				this.activeSchema = submitted.schema;
-				this.activeTableName = submitted.operation.kind === 'renameTable' ? submitted.operation.name : submitted.table;
+				this.activeTableName = submitted.operation.kind === 'renameTable' || submitted.operation.kind === 'duplicateTable'
+					? submitted.operation.name : submitted.table;
 			}
 			// An acknowledged DDL write stays successful even if metadata refresh fails.
 			await this.#reload();

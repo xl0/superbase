@@ -86,6 +86,9 @@ function operation(input: unknown): SchemaOperation {
 		case 'renameTable':
 			exact(value, ['kind', 'name']);
 			return { kind: value.kind, name: name(value.name) };
+		case 'duplicateTable':
+			exact(value, ['kind', 'name', 'includeRows']);
+			return { kind: value.kind, name: name(value.name), includeRows: flag(value.includeRows) };
 		case 'dropTable':
 			exact(value, ['kind']);
 			return { kind: value.kind };

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
-	import { Plus, Trash2, X } from '@lucide/svelte';
-	import { schemaCatalog, schemaDefinition } from '#lib/db.remote.js';
+	import { Copy, Plus, Trash2, X } from '@lucide/svelte';
+	import { schemaCatalog, schemaDefinition, tableSchema } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import type { ColumnSpec, SchemaCatalog, SchemaDefinition, SchemaEditMode, SchemaOperation } from '#lib/schema.js';
+	import { DUPLICATE_NOTICE, type ColumnSpec, type SchemaCatalog, type SchemaDefinition, type SchemaEditMode, type SchemaExport, type SchemaOperation } from '#lib/schema.js';
 	import type { TableTarget } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { columnOptionsError } from '#lib/schema-options.js';
@@ -15,6 +15,7 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import SchemaColumnFields from './SchemaColumnFields.svelte';
+	import TextEditor from './TextEditor.svelte';
 
 	let { mode, target: initialTarget, onclose, returnFocus }: {
 		mode: SchemaEditMode; target: TableTarget; onclose: () => void; returnFocus?: HTMLElement | null;
@@ -25,11 +26,19 @@
 	const anchor = untrack(() => returnFocus);
 	const id = $props.id();
 	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: 'Delete table',
-		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key' }[intent.kind];
+		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key',
+		duplicateTable: 'Duplicate table', copySchema: 'Copy table schema', exportCsv: 'Export CSV' }[intent.kind];
+	const copying = intent.kind === 'copySchema';
+	const exporting = intent.kind === 'exportCsv';
+	const exportUrl = `/export?${new URLSearchParams({ ...target })}`;
+	let exported = $state<SchemaExport | null>(null);
+	let copied = $state(false);
+	let includeRows = $state(false);
+	let duplicateApproved = $state(false);
 	let catalog = $state<SchemaCatalog | null>(null);
 	let definition = $state<SchemaDefinition | null>(null);
 	let schema = $state(target.schema);
-	let name = $state(intent.kind === 'createTable' ? '' : target.table);
+	let name = $state(intent.kind === 'createTable' || intent.kind === 'duplicateTable' ? '' : target.table);
 	let columns = $state<ColumnSpec[]>([]);
 	let keys = $state<string[]>([]);
 	let confirmation = $state('');
@@ -48,9 +57,10 @@
 	const confirmationName = intent.kind === 'dropColumn' ? intent.column : target.table;
 	const typeChanged = $derived(intent.kind === 'alterColumn' && columns.length > 0 && columns[0].typeOid !== null);
 	const readOnly = $derived(intent.kind !== 'createTable' && !definition?.editable);
-	const snapshot = () => JSON.stringify({ schema, name, columns, keys });
+	const snapshot = () => JSON.stringify({ schema, name, columns, keys, includeRows });
 	const dirty = $derived(!!baseline && snapshot() !== baseline);
 	const valid = $derived(intent.kind === 'createTable' ? !!schema && !!name && columns.length > 0 && columns.every((column) => !!column.name && !!column.typeOid)
+		: intent.kind === 'duplicateTable' ? !!name && name !== target.table && duplicateApproved
 		: intent.kind === 'renameTable' ? !!name && name !== target.table
 		: intent.kind === 'addColumn' ? !!columns[0]?.name && !!columns[0]?.typeOid
 		: intent.kind === 'alterColumn' ? !!columns[0]?.name && dirty
@@ -70,6 +80,16 @@
 		let cancelled = false;
 		void (async () => {
 			try {
+				if (exporting) return;
+				if (copying) {
+					const result = tableSchema(target);
+					await result.refresh();
+					if (cancelled) return;
+					if (result.error) throw result.error;
+					if (!result.current) throw new Error('No schema response from the database');
+					exported = result.current;
+					return;
+				}
 				const choices = schemaCatalog({ connection: target.connection });
 				const details = intent.kind === 'createTable' ? null : schemaDefinition(target);
 				await Promise.all([choices.refresh(), details?.refresh()]);
@@ -104,11 +124,20 @@
 		onclose();
 	}
 
+	async function copySQL() {
+		if (!exported || saving) return;
+		saving = true; copied = false; error = null;
+		try { await navigator.clipboard.writeText(exported.sql); copied = true; }
+		catch (cause) { error = message(cause); }
+		finally { saving = false; }
+	}
+
 	async function apply() {
-		if (!canApply) return;
+		if (!canApply || intent.kind === 'copySchema' || intent.kind === 'exportCsv') return;
 		let operation: SchemaOperation;
 		switch (intent.kind) {
 			case 'createTable': operation = { kind: intent.kind, columns }; break;
+			case 'duplicateTable': operation = { kind: intent.kind, name, includeRows }; break;
 			case 'renameTable': operation = { kind: intent.kind, name }; break;
 			case 'dropTable': operation = { kind: intent.kind }; break;
 			case 'addColumn': operation = { kind: intent.kind, column: columns[0] }; break;
@@ -129,12 +158,13 @@
 	async function focusField(event?: Event) {
 		event?.preventDefault();
 		await tick();
-		panel?.querySelector<HTMLElement>('[data-schema-fields] input:not(:disabled), [data-schema-fields] button:not(:disabled)')?.focus();
+		(panel?.querySelector<HTMLElement>('[data-schema-fields] input:not(:disabled), [data-schema-fields] button:not(:disabled), [data-copy-schema]:not(:disabled), [data-export-csv]')
+			?? panel?.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
 	}
 
 	function keydown(event: KeyboardEvent) {
 		if (!event.defaultPrevented && !event.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-			event.preventDefault(); event.stopPropagation(); void apply();
+			event.preventDefault(); event.stopPropagation(); void (copying ? copySQL() : apply());
 		}
 	}
 
@@ -177,9 +207,19 @@
 		<div data-schema-fields class="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6" aria-busy={loading || saving}>
 			{#if loading}
 				<div role="status" class="space-y-4"><span class="sr-only">Loading schema…</span><Skeleton class="h-8 w-2/3" /><Skeleton class="h-32 w-full" /><Skeleton class="h-32 w-full" /></div>
+			{:else if exporting}
+				<p class="text-sm">Download all rows visible to your database role, not just the current page or filtered results.</p>
+				<p class="text-xs text-muted-foreground">CSV preserves PostgreSQL text values. NULL is an unquoted empty field; empty text is quoted. Large exports stream directly to your browser.</p>
+				<p class="text-xs text-muted-foreground">Raw values may contain spreadsheet formulas. Import untrusted data as text rather than opening it as an executable spreadsheet.</p>
+				<p class="text-xs text-muted-foreground">The download opens in a new tab. Any initial database error appears there instead of a CSV file.</p>
+			{:else if copying && exported}
+				<ul class="list-disc space-y-2 pl-4 text-xs text-muted-foreground">
+					{#each exported.warnings as warning}<li>{warning}</li>{/each}
+				</ul>
+				<TextEditor value={exported.sql} language="text" readonly label="Table schema SQL" onchange={() => {}} class="h-[50dvh]" />
 			{:else if catalog}
 				{#if readOnly}<p role="status" class="text-sm text-muted-foreground">{definition?.reason ?? 'This definition is not available for editing.'}</p>{/if}
-				{#if intent.kind === 'createTable' || intent.kind === 'renameTable'}
+				{#if intent.kind === 'createTable' || intent.kind === 'renameTable' || intent.kind === 'duplicateTable'}
 					<div class="grid gap-4 @min-[540px]:grid-cols-2">
 						{#if intent.kind === 'createTable'}
 							<div class="space-y-2">
@@ -191,6 +231,18 @@
 							</div>
 						{/if}
 						<div class="space-y-2"><Label for={`${id}-table`}>Table name</Label><Input id={`${id}-table`} bind:value={name} disabled={saving || readOnly} autocomplete="off" spellcheck={false} class="font-mono text-xs" /></div>
+					</div>
+				{/if}
+				{#if intent.kind === 'duplicateTable'}
+					<p class="text-xs leading-relaxed text-muted-foreground">{DUPLICATE_NOTICE}</p>
+					<div class="flex items-center gap-2">
+						<Checkbox id={`${id}-rows`} bind:checked={includeRows} disabled={saving || readOnly} />
+						<Label for={`${id}-rows`} class="text-xs">Include rows</Label>
+					</div>
+					<p class="text-xs text-muted-foreground">Copies every row visible to your database role, not just the current page or filters. PostgreSQL recomputes generated values and evaluates checks; shared functions may have side effects.</p>
+					<div class="flex items-start gap-2 rounded-md border p-3">
+						<Checkbox id={`${id}-duplicate`} bind:checked={duplicateApproved} disabled={saving || readOnly} class="mt-0.5" />
+						<Label for={`${id}-duplicate`} class="text-xs leading-relaxed">I understand the copy scope and destination permissions.</Label>
 					</div>
 				{/if}
 				{#each columns as column, i (column)}
@@ -238,8 +290,14 @@
 		<div class="shrink-0 space-y-3 border-t px-5 py-4">
 			{#if error}<p role="alert" class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-destructive">{error}</p>{/if}
 			<div class="flex justify-end gap-2">
-				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>Cancel</Button>
-				<Button variant={destructive ? 'destructive' : 'default'} size="sm" disabled={!canApply} onclick={apply}>{saving ? 'Applying…' : 'Apply'}</Button>
+				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>{copying || exporting ? 'Close' : 'Cancel'}</Button>
+				{#if exporting}
+					<Button data-export-csv href={exportUrl} target="_blank" rel="noopener noreferrer" size="sm">Download CSV</Button>
+				{:else if copying}
+					<Button data-copy-schema size="sm" disabled={loading || saving || !exported} onclick={copySQL}><Copy /><span aria-live="polite">{saving ? 'Copying…' : copied ? 'Copied' : 'Copy SQL'}</span></Button>
+				{:else}
+					<Button variant={destructive ? 'destructive' : 'default'} size="sm" disabled={!canApply} onclick={apply}>{saving ? 'Applying…' : 'Apply'}</Button>
+				{/if}
 			</div>
 		</div>
 	</Sheet.Content>

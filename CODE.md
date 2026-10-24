@@ -130,7 +130,8 @@ can remove its own indexes/constraints; external dependencies block restricted d
 
 `SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
 serves create/add/alter forms. The sidebar creates tables; each table row's `TableMenu` exposes
-rename, delete and keyless-table PK creation. Breadcrumbs are display-only. Opening a menu/form
+copy name/schema, duplicate, CSV export, rename, delete and keyless-table PK creation.
+Breadcrumbs are display-only. Opening a menu/form
 captures its own table target without changing the active grid; cancelling preserves that view.
 Deleting another table leaves the current table selected. Grid header menus expose column edit/delete, and a trailing
 sticky + header adds columns, including to zero-column tables. There is no separate Definition view.
@@ -142,6 +143,42 @@ navigation, row writes and polling. Successful DDL invalidates metadata and clea
 conditions/selections before reloading the created/renamed/current table. A table with its last
 column removed remains selected, with its add-column header and table menu available. A read failure after
 acknowledgement never turns a successful DDL command into a retryable write failure.
+
+## Table copying and CSV export
+
+Schema SQL is a read-only server-generated preview, copied only by an explicit browser gesture.
+Its scope warnings travel with the copied SQL; it is not a full database backup. Duplication
+uses a new name in the source schema, defaults to no rows, and requires acknowledging the copy
+scope. `server/table-actions.ts` builds the catalog snapshot and native LIKE clone, with
+independent owned sequences. Direct nextval defaults (including cross-column references) are
+rebound without SQL text substitution; complex owned-sequence expressions, including dynamic
+builtin sequence calls in CHECK trees, are rejected before creating the clone.
+Sequence options/ownership and RLS flags participate in fingerprints, but live sequence values
+do not. New sequence positions use PostgreSQL numeric/int8 arithmetic past copied extrema;
+exhaustion fails explicitly. External types/functions/unowned sequences remain shared.
+Generated values are recomputed when rows are included. RLS flags remain but policies,
+foreign keys, triggers, rules, grants and ownership are not copied; PostgreSQL default privileges
+apply to the destination. Copy/duplicate use ACCESS SHARE locks and source/destination catalog
+identity checks. Schema SQL includes exact types/collations/defaults, owned sequences,
+constraints/FKs, non-constraint indexes and comments, with unsupported physical/security settings
+listed as omissions. Non-FK constraints and indexes precede FKs, so self-references backed by
+standalone unique indexes restore correctly. No arbitrary SQL is accepted from the client for
+either action.
+
+`server/export.ts` streams exact CSV with a read-only SQL cursor in 256-row batches; one value
+can still be large. Non-null values (including empty strings and headers) are quoted; SQL NULL
+is an unquoted empty field. Per-query text parsing and array-mode rows preserve precision and
+hostile column names. An ACCESS SHARE lock, namespace tuple-version fences and cursor field
+relation OIDs verify the bound target before response headers. The cursor supplies a consistent
+snapshot without OFFSET pagination and respects the role's RLS visibility. Zero-column and
+non-standalone tables are rejected explicitly. Abort/cancellation destroys only the leased
+client; successful/error completion rolls back the read-only transaction before reuse.
+
+`/export` accepts only connection/schema/table GET parameters and captures one generation-checked
+pool. Loopback/session guards still apply; cross-origin requests are rejected. Native attachment
+downloads avoid buffering the whole file in browser JavaScript. The export panel warns about
+raw spreadsheet formulas and links to a new tab so initial errors remain readable, not bogus
+CSV attachments. Responses are no-store/nosniff/same-origin; filenames are safely encoded.
 
 ## Connection lifecycle
 
@@ -349,6 +386,11 @@ and metadata invalidation. Isolated schema browser checks exercise all DDL flows
 recovery, stale definitions, protected drafts, keyboard handling and narrow/resizable panels.
 Type-option browser checks verify exact existing settings, retained incompatible drafts,
 contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted definitions.
+Table-action regressions cover SQL round-trips, independent/cross-column sequence defaults,
+sequence exhaustion, dynamic CHECK rejection, self-FK ordering, RLS and unchanged sources.
+CSV tests cover exact bytes, multiple batches, snapshot visibility, permissions, catalog races,
+abort/error cleanup and route security. Browser checks verify actual clipboard contents and
+native full-table downloads (including filtered grids), error tabs, focus and narrow panels.
 Browser filter checks cover keyboard focus, same-column ranges,
 NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
 empty-page/table/no-match/error states.

@@ -4,7 +4,7 @@ import pg from 'pg';
 import { schemaChangeSchema, schemaTargetSchema } from '../src/lib/schema-validation.js';
 import type { ColumnDefault, ColumnSpec, SchemaCatalog, SchemaColumn, SchemaOperation, SchemaType } from '../src/lib/schema.js';
 import { columnOptionsError, defaultOptions, elementType, typeOptionsError } from '../src/lib/schema-options.js';
-import { changeSchema, getSchemaDefinition, listSchemaCatalog } from '../src/lib/server/schema.js';
+import { changeSchema, exportSchema, getSchemaDefinition, listSchemaCatalog } from '../src/lib/server/schema.js';
 import { ident, listRows, listTables, qualify } from '../src/lib/server/db.js';
 
 const namespace = `sb_ddl_${process.pid}_${crypto.randomUUID().replaceAll('-', '')}`;
@@ -49,6 +49,16 @@ describe('structured schema validation', () => {
 		expect(validate(valid({ kind: 'createTable', columns: [missing as ColumnSpec] }))).toHaveProperty('issues');
 		expect(validate(valid({ kind: 'alterColumn', column: 'x', changes: column('x', null, { typeModifiers: [4] }) }, 'a'.repeat(64)))).toHaveProperty('issues');
 		expect(validate(valid({ kind: 'createTable', columns: [column('x', '1700', { typeModifiers: [5, -2] })] }))).toHaveProperty('value');
+	});
+
+	test('duplication requires an exact boolean, bounded destination and source fingerprint', () => {
+		const op = { kind: 'duplicateTable', name: 'copy', includeRows: false } as const;
+		expect(validate(valid(op, 'a'.repeat(64)))).toHaveProperty('value');
+		for (const operation of [
+			{ ...op, includeRows: 'false' }, { ...op, name: 'é'.repeat(32) },
+			{ ...op, name: '' }, { kind: op.kind, name: op.name }, { ...op, sql: 'select 1' }
+		]) expect(validate({ ...valid(op, 'a'.repeat(64)), operation })).toHaveProperty('issues');
+		expect(validate(valid(op))).toHaveProperty('issues');
 	});
 });
 
@@ -582,5 +592,321 @@ const change = async (table: string, operation: SchemaOperation) => changeSchema
 		expect(result.rows[0].values.new).toBe('fresh');
 		await expect(changeSchema(pool, { ...target('cache'), expected: null, operation: { kind: 'dropTable' } })).rejects.toThrow('fingerprint');
 		await expect(getSchemaDefinition(pool, { ...target('cache'), schema: 'pg_catalog' })).rejects.toThrow('System');
+	});
+
+	test('duplicates exact structure and rows with independent serial/identity sequences, including shared defaults', async () => {
+		const source = 'clone_source', copy = 'clone";\n--copy';
+		await pool.query(`create table ${tableSql(source)} (
+			id bigserial primary key, second bigint,
+			identity_id bigint generated always as identity (start 100 increment 7 cache 3),
+			amount numeric(40,15) default 9007199254740993.000000000000001,
+			payload json default '{"n":9007199254740993,"n":1}',
+			g numeric generated always as (amount * 2) stored,
+			label text collate "C" default 'exact' check (amount > 0));
+			alter sequence ${tableSql(`${source}_id_seq`)} start 10 increment 3 cache 2;
+			alter table ${tableSql(source)} alter column second set default nextval(${pg.escapeLiteral(tableSql(`${source}_id_seq`))}::regclass);
+			create index on ${tableSql(source)} (label);
+			comment on table ${tableSql(source)} is 'table comment';
+			comment on column ${tableSql(source)}.amount is 'column comment';
+			insert into ${tableSql(source)} (id, second, identity_id) overriding system value values
+				(9007199254740993, 9007199254740994, 121), (20, 23, 114)`);
+		const serial = tableSql(`${source}_id_seq`), identity = tableSql(`${source}_identity_id_seq`);
+		const state = async (name: string) => (await pool.query(`select last_value::text, is_called from ${name}`)).rows;
+		const beforeSerial = await state(serial), beforeIdentity = await state(identity);
+		const fingerprint = (await definition(source)).version;
+		await change(source, { kind: 'duplicateTable', name: copy, includeRows: true });
+		expect((await definition(source)).version).toBe(fingerprint);
+		expect(await state(serial)).toEqual(beforeSerial);
+		expect(await state(identity)).toEqual(beforeIdentity);
+		const copied = await pool.query(`select id::text, second::text, identity_id::text, amount::text, payload::text, g::text from ${tableSql(copy)} order by id`);
+		const original = await pool.query(`select id::text, second::text, identity_id::text, amount::text, payload::text, g::text from ${tableSql(source)} order by id`);
+		expect(copied.rows).toEqual(original.rows);
+		const next = (await pool.query(`insert into ${tableSql(copy)} default values returning id::text, second::text, identity_id::text`)).rows[0];
+		expect(next).toEqual({ id: '9007199254740997', second: '9007199254741000', identity_id: '128' });
+		const sequenceNames = (await pool.query(`select pg_get_serial_sequence($1, 'id') as serial, pg_get_serial_sequence($1, 'identity_id') as identity`, [tableSql(copy)])).rows[0];
+		expect(sequenceNames.serial).not.toBe(serial);
+		expect(sequenceNames.identity).not.toBe(identity);
+		expect((await definition(copy)).columns.find((item) => item.name === 'amount')?.comment).toBe('column comment');
+		expect((await pool.query('select obj_description($1::regclass) as comment', [tableSql(copy)])).rows[0].comment).toBe('table comment');
+		await change(source, { kind: 'duplicateTable', name: 'clone_empty', includeRows: false });
+		expect((await pool.query(`select count(*)::int as n from ${tableSql('clone_empty')}`)).rows[0].n).toBe(0);
+		expect((await pool.query(`insert into ${tableSql('clone_empty')} default values returning id::text, second::text, identity_id::text`)).rows[0])
+			.toEqual({ id: '10', second: '13', identity_id: '100' });
+		await expect(change(source, { kind: 'duplicateTable', name: copy, includeRows: false })).rejects.toThrow('already exists');
+	});
+
+	test('negative sequence increments, exhaustion and unsupported owned dependencies never alter source state', async () => {
+		await pool.query(`create table ${tableSql('descending')} (id bigint generated always as identity
+			(start -10 increment -3 minvalue -100 maxvalue -1));
+			insert into ${tableSql('descending')} overriding system value values (-20), (-30)`);
+		await change('descending', { kind: 'duplicateTable', name: 'descending_copy', includeRows: true });
+		expect((await pool.query(`insert into ${tableSql('descending_copy')} default values returning id::text`)).rows[0].id).toBe('-31');
+		await pool.query(`create table ${tableSql('exhausted')} (id bigint generated by default as identity (maxvalue 10 cycle));
+			insert into ${tableSql('exhausted')} values (10);
+			create table ${tableSql('complex_sequence')} (id serial, extra bigint);
+			alter table ${tableSql('complex_sequence')} alter column extra set default nextval(${pg.escapeLiteral(tableSql('complex_sequence_id_seq'))}::regclass) + 1`);
+		for (const [source, error] of [['exhausted', 'exhaust'], ['complex_sequence', 'complex owned-sequence']]) {
+			const seq = (await pool.query("select pg_get_serial_sequence($1, 'id') as name", [tableSql(source)])).rows[0].name;
+			const before = (await pool.query(`select last_value::text, is_called from ${seq}`)).rows;
+			await expect(change(source, { kind: 'duplicateTable', name: `${source}_copy`, includeRows: true })).rejects.toThrow(error);
+			expect((await pool.query('select to_regclass($1) as name', [tableSql(`${source}_copy`)])).rows[0].name).toBeNull();
+			expect((await pool.query(`select last_value::text, is_called from ${seq}`)).rows).toEqual(before);
+		}
+		await pool.query(`create sequence ${tableSql('external_seq')};
+			create table ${tableSql('external_sequence')} (id bigint default nextval(${pg.escapeLiteral(tableSql('external_seq'))}::regclass))`);
+		await change('external_sequence', { kind: 'duplicateTable', name: 'external_sequence_copy', includeRows: false });
+		expect((await definition('external_sequence_copy')).columns[0].defaultValue).toBe((await definition('external_sequence')).columns[0].defaultValue);
+		await pool.query(`create table ${tableSql('dynamic_sequence')} (id serial, second bigint, literal text default 'nextval(');
+			alter table ${tableSql('dynamic_sequence')} alter column second set default
+				nextval((${pg.escapeLiteral(tableSql('dynamic_sequence_id_seq'))}::text)::regclass)`);
+		await expect(change('dynamic_sequence', { kind: 'duplicateTable', name: 'dynamic_sequence_copy', includeRows: false })).rejects.toThrow('complex owned-sequence');
+		await pool.query(`alter table ${tableSql('dynamic_sequence')} alter column second drop default`);
+		await change('dynamic_sequence', { kind: 'duplicateTable', name: 'dynamic_sequence_copy', includeRows: false });
+		await pool.query(`create table ${tableSql('wide_identity')} (id integer generated always as identity);
+			alter sequence ${tableSql('wide_identity_id_seq')} as bigint maxvalue 9223372036854775807;
+			alter sequence ${tableSql('wide_identity_id_seq')} set unlogged`);
+		await change('wide_identity', { kind: 'duplicateTable', name: 'wide_identity_copy', includeRows: false });
+		const exported = await exportSchema(pool, target('wide_identity'));
+		await pool.query(`drop table ${tableSql('wide_identity')}`);
+		await pool.query(exported.sql);
+		for (const table of ['wide_identity', 'wide_identity_copy']) {
+			const sequence = (await pool.query("select pg_get_serial_sequence($1, 'id') as name", [tableSql(table)])).rows[0].name;
+			expect((await pool.query(`select q.seqtypid::regtype::text as type, q.seqmax::text as max, c.relpersistence as persistence
+				from pg_sequence q join pg_class c on c.oid = q.seqrelid where q.seqrelid = $1::regclass`, [sequence])).rows[0])
+				.toEqual({ type: 'bigint', max: '9223372036854775807', persistence: 'u' });
+		}
+	});
+
+	test('zero/all-generated tables duplicate structure or rows and round-trip SQL', async () => {
+		await pool.query(`create table ${tableSql('zero_clone')} ();
+			create table ${tableSql('generated_only')} (x int generated always as (7) stored)`);
+		for (const table of ['zero_clone', 'generated_only']) {
+			await pool.query(`insert into ${tableSql(table)} overriding system value select from generate_series(1, 3)`);
+			await change(table, { kind: 'duplicateTable', name: `${table}_copy`, includeRows: false });
+			expect((await pool.query(`select count(*)::int as n from ${tableSql(`${table}_copy`)}`)).rows[0].n).toBe(0);
+			await change(table, { kind: 'duplicateTable', name: `${table}_rows`, includeRows: true });
+			expect((await pool.query(`select count(*)::int as n from ${tableSql(`${table}_rows`)}`)).rows[0].n).toBe(3);
+			if (table === 'generated_only') {
+				expect((await pool.query(`select x from ${tableSql(`${table}_rows`)}`)).rows).toEqual([{ x: 7 }, { x: 7 }, { x: 7 }]);
+			}
+			const before = await definition(table);
+			const exported = await exportSchema(pool, target(table));
+			await pool.query(`drop table ${tableSql(table)}`);
+			await pool.query(exported.sql);
+			expect((await definition(table)).columns).toEqual(before.columns);
+			expect((await pool.query(`select count(*)::int as n from ${tableSql(table)}`)).rows[0].n).toBe(0);
+			await pool.query(`insert into ${tableSql(table)} default values`);
+			expect((await pool.query(`select * from ${tableSql(table)}`)).rows).toEqual(table === 'zero_clone' ? [{}] : [{ x: 7 }]);
+		}
+	});
+
+	test('dynamic sequence calls in copied CHECKs reject before DDL without advancing source sequences', async () => {
+		const table = 'check_sequence', sequence = tableSql(`${table}_id_seq`);
+		await pool.query(`create table ${tableSql(table)} (id serial);
+			insert into ${tableSql(table)} (id) values (42);
+			alter table ${tableSql(table)} add constraint dynamic_sequence_check
+				check (nextval((${pg.escapeLiteral(sequence)}::text)::regclass) > 0)`);
+		const before = (await pool.query(`select last_value::text, is_called from ${sequence}`)).rows;
+		expect(before).toEqual([{ last_value: '1', is_called: true }]);
+		let attemptedCreate = false;
+		const wrapped = interleaved(async (sql) => { if (sql.startsWith('create table')) attemptedCreate = true; });
+		for (const includeRows of [false, true]) {
+			const name = `${table}_${includeRows}`;
+			await expect(changeSchema(wrapped, { ...target(table), expected: (await definition(table)).version,
+				operation: { kind: 'duplicateTable', name, includeRows } })).rejects.toThrow('complex owned-sequence');
+			expect(attemptedCreate).toBe(false);
+			expect((await pool.query('select to_regclass($1) as name', [tableSql(name)])).rows[0].name).toBeNull();
+			expect((await pool.query(`select last_value::text, is_called from ${sequence}`)).rows).toEqual(before);
+		}
+	});
+
+	test('sequence options/ownership and RLS affect fingerprints, live sequence/data changes do not', async () => {
+		await pool.query(`create table ${tableSql('sequence_fingerprint')} (id serial)`);
+		let before = await definition('sequence_fingerprint');
+		await pool.query(`insert into ${tableSql('sequence_fingerprint')} default values`);
+		expect((await definition('sequence_fingerprint')).version).toBe(before.version);
+		for (const sql of [
+			`alter sequence ${tableSql('sequence_fingerprint_id_seq')} increment 2`,
+			`alter table ${tableSql('sequence_fingerprint')} enable row level security`,
+			`alter table ${tableSql('sequence_fingerprint')} force row level security`,
+			`alter sequence ${tableSql('sequence_fingerprint_id_seq')} owned by none`
+		]) {
+			await pool.query(sql);
+			const after = await definition('sequence_fingerprint');
+			expect(after.version).not.toBe(before.version);
+			await expect(changeSchema(pool, { ...target('sequence_fingerprint'), expected: before.version,
+				operation: { kind: 'duplicateTable', name: 'stale_clone', includeRows: false } })).rejects.toThrow('schema changed');
+			before = after;
+		}
+	});
+
+	test('SELECT-only source access respects RLS and retains flags before default-granted copies become visible', async () => {
+		const role = `${namespace}_reader`;
+		await pool.query(`create role ${ident(role)}; grant usage, create on schema ${ident(namespace)} to ${ident(role)}`);
+		const restricted = { connect: async () => {
+			const client = await pool.connect();
+			await client.query(`set role ${ident(role)}`);
+			return {
+				query: async (sql: string, values?: unknown[]) => {
+					const result = await client.query(sql, values);
+					if (sql === 'commit' || sql === 'rollback') await client.query('reset role');
+					return result;
+				},
+				release: () => client.release()
+			};
+		} } as unknown as pg.Pool;
+		try {
+			await pool.query(`create table ${tableSql('rls_source')} (id serial);
+				insert into ${tableSql('rls_source')} values (1), (2);
+				grant select on ${tableSql('rls_source')} to ${ident(role)};
+				alter table ${tableSql('rls_source')} enable row level security;
+				alter table ${tableSql('rls_source')} force row level security;
+				create policy visible on ${tableSql('rls_source')} for select to ${ident(role)} using (id = 1);
+				alter default privileges for role ${ident(role)} in schema ${ident(namespace)} grant select on tables to public`);
+			const before = await getSchemaDefinition(restricted, target('rls_source'));
+			await changeSchema(restricted, { ...target('rls_source'), expected: before.version,
+				operation: { kind: 'duplicateTable', name: 'rls_copy', includeRows: true } });
+			expect((await pool.query(`select * from ${tableSql('rls_copy')}`)).rows).toEqual([{ id: 1 }]);
+			expect((await pool.query('select relrowsecurity, relforcerowsecurity from pg_class where oid = $1::regclass', [tableSql('rls_copy')])).rows[0])
+				.toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+			const client = await pool.connect();
+			try {
+				await client.query(`set role ${ident(role)}`);
+				expect((await client.query(`select * from ${tableSql('rls_copy')}`)).rows).toEqual([]);
+			} finally { await client.query('reset role'); client.release(); }
+			expect((await exportSchema(restricted, target('rls_source'))).sql).toContain('FORCE ROW LEVEL SECURITY');
+		} finally {
+			await pool.query(`drop owned by ${ident(role)}; drop role ${ident(role)}`);
+		}
+	});
+
+	test('standalone SQL round-trips hostile names, exact types/defaults, sequences, constraints, indexes, comments and RLS', async () => {
+		const table = 'export";\n--table', columnName = 'a";\n--col', typeName = 'export_type';
+		const comment = "quote'\\\nCOMMIT; DROP SCHEMA public CASCADE; --";
+		await pool.query(`create type ${tableSql(typeName)} as enum ('one', 'two');
+			create table ${tableSql('export_reference')} (id int primary key);
+			create table ${tableSql(table)} (
+				id bigserial primary key, iid bigint generated always as identity (start 20 increment 4 minvalue 2 maxvalue 200 cache 5 cycle),
+				${ident(columnName)} numeric(40,15) default 9007199254740993.000000000000001 not null,
+				j json default '{"n":9007199254740993,"n":1}', label text collate "C" default 'one',
+				g numeric generated always as (${ident(columnName)} * 2) stored,
+				e ${tableSql(typeName)} default 'two', a numeric(5,2)[][], interval_value interval day to second(2),
+				ref int references ${tableSql('export_reference')}(id), unique(label), check (${ident(columnName)} > 0));
+			alter sequence ${tableSql('export";\n--table_id_seq')} start 11 increment 3 cache 2;
+			create index ${ident('export";\n--index')} on ${tableSql(table)} (lower(label)) where ref is not null;
+			comment on table ${tableSql(table)} is ${pg.escapeLiteral(comment)};
+			comment on column ${tableSql(table)}.${ident(columnName)} is ${pg.escapeLiteral(comment)};
+			alter table ${tableSql(table)} enable row level security;
+			alter table ${tableSql(table)} force row level security`);
+		const before = await definition(table);
+		const semantic = async () => ({
+			constraints: (await pool.query(`select conname, pg_get_constraintdef(oid) as def from pg_constraint
+				where conrelid = $1::regclass and contype <> 'n' order by conname`, [tableSql(table)])).rows,
+			indexes: (await pool.query(`select pg_get_indexdef(indexrelid) as def from pg_index where indrelid = $1::regclass order by def`, [tableSql(table)])).rows,
+			columns: (await pool.query(`select attname, attndims, attcollation::regcollation::text from pg_attribute
+				where attrelid = $1::regclass and attnum > 0 order by attnum`, [tableSql(table)])).rows,
+			sequences: (await pool.query(`select a.attname, q.seqtypid::regtype::text, q.seqstart::text, q.seqincrement::text,
+				q.seqmin::text, q.seqmax::text, q.seqcache::text, q.seqcycle, d.deptype
+				from pg_depend d join pg_sequence q on q.seqrelid = d.objid
+				join pg_attribute a on a.attrelid = d.refobjid and a.attnum = d.refobjsubid
+				where d.classid = 'pg_class'::regclass and d.refclassid = 'pg_class'::regclass
+				and d.refobjid = $1::regclass and d.deptype in ('a', 'i') order by a.attname`, [tableSql(table)])).rows
+		});
+		const original = await semantic();
+		const exported = await exportSchema(pool, target(table));
+		expect(exported.sql).not.toContain('LIKE ');
+		expect(exported.warnings.join(' ')).toContain('not a full pg_dump');
+		expect(exported.warnings.join(' ')).toContain('policies');
+		for (const warning of exported.warnings) expect(exported.sql).toContain(`-- ${warning}\n`);
+		await pool.query(`drop table ${tableSql(table)}`);
+		await pool.query(exported.sql);
+		expect((await definition(table)).columns).toEqual(before.columns);
+		expect(await semantic()).toEqual(original);
+		const row = (await pool.query(`insert into ${tableSql(table)} default values returning id::text, iid::text,
+			${ident(columnName)}::text as n, j::text, g::text, e::text`)).rows[0];
+		expect(row).toEqual({ id: '11', iid: '20', n: '9007199254740993.000000000000001',
+			j: '{"n":9007199254740993,"n":1}', g: '18014398509481986.000000000000002', e: 'two' });
+		expect((await pool.query('select obj_description($1::regclass) as comment', [tableSql(table)])).rows[0].comment).toBe(comment);
+	});
+
+	test('SQL export restores standalone unique indexes before self-referencing foreign keys, retaining comments', async () => {
+		const table = 'export_self_reference', index = 'export_self_unique', foreignKey = 'self_fk';
+		const comment = "quoted' comment\n--still a comment";
+		await pool.query(`create table ${tableSql(table)} (id int not null, parent_id int, check (id > 0));
+			create unique index ${ident(index)} on ${tableSql(table)} (id);
+			alter table ${tableSql(table)} add constraint ${ident(foreignKey)}
+				foreign key (parent_id) references ${tableSql(table)} (id) deferrable initially deferred;
+			comment on index ${tableSql(index)} is ${pg.escapeLiteral(comment)};
+			comment on constraint ${ident(foreignKey)} on ${tableSql(table)} is ${pg.escapeLiteral(comment)}`);
+		const constraints = async () => (await pool.query(`select conname, contype, pg_get_constraintdef(oid) as definition,
+			obj_description(oid, 'pg_constraint') as comment from pg_constraint
+			where conrelid = $1::regclass and contype <> 'n' order by conname`, [tableSql(table)])).rows;
+		const before = await constraints();
+		const exported = await exportSchema(pool, target(table));
+		await pool.query(`drop table ${tableSql(table)}`);
+		await pool.query(exported.sql);
+		expect(await constraints()).toEqual(before);
+		expect((await pool.query('select obj_description($1::regclass) as comment', [tableSql(index)])).rows[0].comment).toBe(comment);
+		await pool.query(`insert into ${tableSql(table)} values (1, null), (2, 1)`);
+		await expect(pool.query(`insert into ${tableSql(table)} values (3, 999)`)).rejects.toMatchObject({ code: '23503' });
+	});
+
+	test('read/clone actions reject source type/namespace races and changed sequence options', async () => {
+		await pool.query(`create domain ${tableSql('clone_race_type')} as text;
+			create table ${tableSql('clone_race')} (id serial, value ${tableSql('clone_race_type')})`);
+		let changed = false;
+		const wrapped = interleaved(async (sql) => {
+			if (changed || !sql.startsWith('create table')) return;
+			changed = true;
+			await pool.query(`alter sequence ${tableSql('clone_race_id_seq')} increment 5`);
+		});
+		await expect(changeSchema(wrapped, { ...target('clone_race'), expected: (await definition('clone_race')).version,
+			operation: { kind: 'duplicateTable', name: 'clone_race_failed', includeRows: false } })).rejects.toThrow('changed');
+		expect(changed).toBe(true);
+		expect((await pool.query('select to_regclass($1) as name', [tableSql('clone_race_failed')])).rows[0].name).toBeNull();
+		changed = false;
+		const exportRace = interleaved(async (sql) => {
+			if (changed || !sql.includes("'namespaceOid'")) return;
+			changed = true;
+			await pool.query(`alter domain ${tableSql('clone_race_type')} rename to clone_race_type_old;
+				alter domain ${tableSql('clone_race_type_old')} rename to clone_race_type`);
+		});
+		await expect(exportSchema(exportRace, target('clone_race'))).rejects.toThrow('catalog changed');
+		expect(changed).toBe(true);
+		for (const table of ['parent', 'parts', 'view']) await expect(exportSchema(pool, target(table))).rejects.toThrow('standalone');
+	});
+
+	test('clone/export namespace rename-and-reuse fences prevent replacement retargeting', async () => {
+		const original = `${namespace}_action`, moved = `${namespace}_amoved`;
+		for (const action of ['duplicate', 'export']) {
+			try {
+				await pool.query(`create schema ${ident(original)};
+					create table ${qualify(original, 'source')} (id serial);
+					insert into ${qualify(original, 'source')} default values`);
+				const args = { connection: 'test', schema: original, table: 'source' };
+				const before = await getSchemaDefinition(pool, args);
+				let changed = false;
+				const wrapped = interleaved(async (sql) => {
+					if (changed || !(action === 'duplicate' ? sql.includes('with approved as') : sql.startsWith('lock table'))) return;
+					changed = true;
+					await pool.query(`alter schema ${ident(original)} rename to ${ident(moved)};
+						create schema ${ident(original)};
+						create table ${qualify(original, 'source')} (id serial);
+						insert into ${qualify(original, 'source')} values (100)`);
+				});
+				if (action === 'duplicate') {
+					await expect(changeSchema(wrapped, { ...args, expected: before.version,
+						operation: { kind: 'duplicateTable', name: 'copy', includeRows: true } })).rejects.toThrow('catalog changed');
+				} else await expect(exportSchema(wrapped, args)).rejects.toThrow('changed');
+				expect(changed).toBe(true);
+				for (const schema of [original, moved]) {
+					expect((await pool.query('select to_regclass($1) as name', [qualify(schema, 'copy')])).rows[0].name).toBeNull();
+					expect((await pool.query(`select last_value::text, is_called from ${qualify(schema, 'source_id_seq')}`)).rows[0])
+						.toEqual({ last_value: '1', is_called: schema === moved });
+				}
+			} finally {
+				await pool.query(`drop schema if exists ${ident(original)} cascade; drop schema if exists ${ident(moved)} cascade`);
+			}
+		}
 	});
 });

@@ -54,8 +54,17 @@ export interface ColumnSpec {
 	comment: string;
 	primaryKey: boolean;
 }
+export interface SchemaExport {
+	sql: string;
+	/** Scope/prerequisites also included as SQL comments in the copied text. */
+	warnings: string[];
+}
+
+export const DUPLICATE_NOTICE = 'Copies columns, defaults, generated expressions, checks, indexes and comments, with independent owned sequences. Foreign keys, triggers, rules, policies, grants and ownership are not copied. RLS flags are retained; without policies, access may be denied. External types, functions and unowned sequences remain shared. Destination privileges follow PostgreSQL defaults.';
+
 export type SchemaOperation =
 	| { kind: 'createTable'; columns: ColumnSpec[] }
+	| { kind: 'duplicateTable'; name: string; includeRows: boolean }
 	| { kind: 'renameTable'; name: string }
 	| { kind: 'dropTable' }
 	| { kind: 'addColumn'; column: ColumnSpec }
@@ -68,5 +77,5 @@ export interface SchemaChangeArgs extends TableTarget {
 	operation: SchemaOperation;
 }
 export type SchemaEditMode =
-	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' }
+	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' | 'duplicateTable' | 'copySchema' | 'exportCsv' }
 	| { kind: 'alterColumn' | 'dropColumn'; column: string };

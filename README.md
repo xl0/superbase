@@ -107,7 +107,8 @@ and Live updates; changing tables resets it.
 
 Use **+** in the sidebar to create a table. Open a column header’s chevron menu to **Edit
 column**, **Delete column**, or copy its name. The **+** header adds a column. Each table’s **⋮**
-menu in the sidebar offers rename/delete and adding a primary key to a keyless table.
+menu in the sidebar offers copy name/schema, duplication, CSV export, rename/delete and
+adding a primary key to a keyless table.
 Everything stays in the grid; there is no separate Definition view. New tables start with
 an identity `id` primary key; you can change the columns and select a composite key.
 
@@ -130,6 +131,25 @@ database before retrying an operation.
 Only ordinary standalone tables are supported, not inheritance or partitions. Existing
 generated expressions and identity defaults are preserved. FK/index/unique/check editing,
 enum/namespace management and replacing existing primary keys are not supported.
+
+## Copying and exporting tables
+
+- **Copy name** copies the exact table name. **Copy table schema** previews server-generated
+  SQL before **Copy SQL**; the preview and copied SQL state omissions and prerequisites.
+  This is not a full database backup or `pg_dump` replacement.
+- **Duplicate table** creates a new table in the same schema, empty by default. **Include rows**
+  copies all rows your role can read, regardless of grid filters or pagination. Owned sequences
+  are independent; generated values and checks run in PostgreSQL, so shared functions may have
+  side effects. Review and acknowledge the copy scope:
+  foreign keys, triggers, rules, policies, grants and ownership are not copied. RLS flags remain,
+  so a copy without policies may deny access. PostgreSQL default privileges apply to the new
+  table; external types, functions and unowned sequences remain shared.
+- **Export CSV** downloads all accessible rows from an ordinary standalone table, using one
+  cursor snapshot rather than the displayed page. Large exports stream to the browser.
+  NULL is an unquoted empty field; empty text is quoted. Numbers and other PostgreSQL text
+  values are not converted through JavaScript. Raw spreadsheet formulas are also preserved:
+  import untrusted data as text rather than opening it directly in a spreadsheet.
+  The download opens in a new tab; initial errors appear there instead of becoming CSV files.
 
 ## Live updates and limits
 

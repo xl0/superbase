@@ -59,7 +59,8 @@ first input, Escape, Enter/F2, expansion selections and typing-to-edit.
 
 [x] Complete unfiltered first pages show exact counts; other totals explain their estimates.
 Open cell is removed. Escape and blank grid clicks deselect cells/ranges without changing
-checked rows. Pagination, loading and mouse/keyboard flows are verified.
+checked rows. The permanent usage-hint strip is removed. Pagination, loading and mouse/keyboard
+flows are verified.
 
 [x] Outside-grid clicks clear cell selection without a dedicated button. Clicked controls
 keep focus, checked rows remain selected, and open editors retain their buffers.
@@ -71,12 +72,26 @@ and UUID input preserve existing values; expand/collapse retains deliberate sele
 Scalars stay native. Browser and unit checks cover mixed line endings, long text, semantic
 undo, expansion, insert labels/Create more and JSON precision; content never selects the mode.
 
+[x] Studio-like filter chips suggest columns and comparisons, combine with AND, and support
+editing/removal. Validated native PostgreSQL parameters preserve precision and FK constraints.
+Empty tables, no matches, empty later pages and query errors are distinct. SQL/state and browser
+checks cover keyboard focus, local-work guards, sorting, paging and Live.
+
+[x] PostgreSQL query warnings appear inside the empty-results panel with filter removal,
+without a redundant Retry button; toolbar Refresh remains available.
+Panels fit their content and stay pinned during horizontal scrolling. Browser checks cover
+compact/long messages, narrow viewports, recovery actions and no duplicate top banner.
+
+[x] Multi-column Sort shares the filter row, with local drafts, direction, priority moves,
+removal and Apply. Headers cycle individual rules and show priority. SQL/state and browser
+checks verify typed ordering, NULLs, stable pages, keyboard flows, Live and local-work guards.
+
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 
 ## Later
 
-- [ ] Schema editing and user-defined column filters.
+- [ ] Schema editing.
 - [ ] SQL editor with an explicit connection lifecycle.
 - [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
   and opens the browser. Bundle production assets and verify the Bun launch path.

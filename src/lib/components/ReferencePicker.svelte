@@ -27,7 +27,7 @@
 
 	$effect(() => {
 		const args = { connection: editor.connection, schema: foreignKey.schema, table: foreignKey.table,
-			page, pageSize: 25, sort: null, search };
+			page, pageSize: 25, sort: [], search };
 		void retry;
 		let cancelled = false;
 		loading = true;

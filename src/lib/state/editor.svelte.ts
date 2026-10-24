@@ -1,6 +1,6 @@
 import { database, deleteRows, saveTable, tableRows } from '#lib/db.remote.js';
 import { message } from '#lib/utils.js';
-import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type SaveArgs, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
+import { editable, tableKey, writable, MAX_SORTS, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
 
@@ -19,8 +19,8 @@ export class EditorState {
 	/** Page belonging to displayed rows, which can lag behind a pending sort. */
 	rowsPage = $state(0);
 	pageSize = $state(100);
-	sort = $state<Sort | null>(null);
-	search = $state('');
+	sort = $state<Sort[]>([]);
+	filters = $state<RowFilter[]>([]);
 	filter = $state<Values | null>(null);
 	rows = $state<Row[]>([]);
 	hasMore = $state(false);
@@ -47,6 +47,7 @@ export class EditorState {
 	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
 	get navigationBlocked() { return this.busy || this.editing || this.inserting; }
+	get hasFilters() { return this.filters.length > 0 || this.filter !== null; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
 
 	async initialize(connection: string) {
@@ -86,8 +87,8 @@ export class EditorState {
 				const first = this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
 				this.activeSchema = first?.schema ?? '';
 				this.activeTableName = first?.name ?? '';
-				this.sort = null;
-				this.search = '';
+				this.sort = [];
+				this.filters = [];
 				this.filter = null;
 			}
 			this.page = 0;
@@ -114,7 +115,7 @@ export class EditorState {
 		try {
 			const resource = tableRows({
 				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search,
+				page: this.page, pageSize: this.pageSize, sort: this.sort, search: '', filters: this.filters,
 				...(this.filter ? { filter: this.filter } : {})
 			});
 			await resource.refresh();
@@ -157,7 +158,7 @@ export class EditorState {
 		try {
 			const resource = tableRows({
 				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-				page: this.page, pageSize: this.pageSize, sort: this.sort, search: this.search,
+				page: this.page, pageSize: this.pageSize, sort: this.sort, search: '', filters: this.filters,
 				...(this.filter ? { filter: this.filter } : {})
 			});
 			await resource.refresh();
@@ -190,14 +191,15 @@ export class EditorState {
 		this.activeSchema = schema;
 		this.activeTableName = name;
 		this.page = 0;
-		this.sort = null;
-		this.search = '';
+		this.sort = [];
+		this.filters = [];
 		this.filter = filter;
 		this.savedAt = null;
 		await this.fetch();
 	}
-	async clearFilter() {
+	async clearFilters() {
 		if (this.navigationBlocked) return;
+		this.filters = [];
 		this.filter = null;
 		this.page = 0;
 		await this.fetch();
@@ -226,27 +228,26 @@ export class EditorState {
 		this.page = 0;
 		await this.fetch();
 	}
-	async setSearch(search: string) {
+	async setFilters(filters: RowFilter[]) {
 		if (this.navigationBlocked) return;
-		this.search = search;
+		this.filters = filters.map((filter) => ({ ...filter }));
 		this.page = 0;
 		await this.fetch();
 	}
 	async toggleSort(column: string) {
 		if (this.navigationBlocked) return;
-		this.sort = this.sort?.column !== column ? { column, direction: 'asc' } : this.sort.direction === 'asc' ? { column, direction: 'desc' } : null;
-		this.page = 0;
-		await this.fetch(true);
+		const sort = [...this.sort];
+		const index = sort.findIndex((rule) => rule.column === column);
+		if (index < 0) {
+			if (sort.length >= MAX_SORTS) return;
+			sort.push({ column, direction: 'asc' });
+		} else if (sort[index].direction === 'asc') sort[index] = { column, direction: 'desc' };
+		else sort.splice(index, 1);
+		await this.setSort(sort);
 	}
-	async setSort(column: string) {
+	async setSort(sort: Sort[]) {
 		if (this.navigationBlocked) return;
-		this.sort = column ? { column, direction: 'asc' } : null;
-		this.page = 0;
-		await this.fetch(true);
-	}
-	async toggleSortDirection() {
-		if (this.navigationBlocked || !this.sort) return;
-		this.sort = { ...this.sort, direction: this.sort.direction === 'asc' ? 'desc' : 'asc' };
+		this.sort = sort.map((rule) => ({ ...rule }));
 		this.page = 0;
 		await this.fetch(true);
 	}

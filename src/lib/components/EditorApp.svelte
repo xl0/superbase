@@ -67,7 +67,7 @@
 				</div>
 			{:else}
 				<TableToolbar bind:tab />
-				{#if editor.error}
+				{#if editor.error && (tab !== 'data' || editor.rows.length || editor.loading)}
 					<div role="alert" class="flex shrink-0 items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 						<span class="min-w-0 break-words">{editor.error}</span>
 						<Button variant="outline" size="xs" class="ml-auto" disabled={editor.navigationBlocked || editor.loading} onclick={() => void editor.fetch()}>Retry rows</Button>

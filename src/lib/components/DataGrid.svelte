@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, ArrowUpRight, KeyRound, Link2 } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, ArrowUpRight, Info, KeyRound, Link2, TriangleAlert } from '@lucide/svelte';
 	import { PersistedState } from 'runed';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
@@ -9,7 +9,7 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
-	import { writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
+	import { MAX_SORTS, writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
 	let { table, rows, rowOffset }: { table: Table; rows: Row[]; rowOffset: number } = $props();
 	const id = $props.id();
@@ -37,7 +37,6 @@
 		? Math.max(64, widths.current[column.name]) : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
 	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')}`);
 	const disabled = $derived(editor.busy || editor.loading);
-	const focusedColumn = $derived(focus ? table.columns[focus.c] : undefined);
 	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
 	const someSelected = $derived(rows.some((row) => editor.isRowSelected(row.key)));
 
@@ -181,9 +180,6 @@
 }} />
 
 <div class="flex h-full min-h-0 flex-col bg-background">
-	<div class="flex h-8 shrink-0 items-center gap-1 border-b px-2 text-xs text-muted-foreground">
-		<span class="mr-auto truncate">{focusedColumn ? `${focusedColumn.name} · ${focusedColumn.type}` : 'Double-click or Enter to edit · Shift+Space selects a row'}</span>
-	</div>
 	<div bind:this={viewport} role="grid" tabindex="0" aria-label={`${table.schema}.${table.name} data`}
 		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 1}
 		aria-busy={editor.loading || editor.busy} aria-readonly={!editor.tableEditable}
@@ -204,12 +200,18 @@
 					<span>#</span>
 				</div>
 				{#each table.columns as column (column.name)}
-					<div class="header-cell" role="columnheader" aria-sort={editor.sort?.column === column.name ? editor.sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
-						<button class="flex h-full w-full items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={disabled}
+					{@const sortIndex = editor.sort.findIndex((rule) => rule.column === column.name)}
+					{@const sort = editor.sort[sortIndex]}
+					<div class="header-cell" role="columnheader" aria-sort={sortIndex === 0 ? sort.direction === 'asc' ? 'ascending' : 'descending' : undefined}>
+						<button class="flex h-full w-full items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={disabled || (!sort && editor.sort.length >= MAX_SORTS)}
+							aria-label={sort ? `${column.name} ${column.type}, sort priority ${sortIndex + 1}, ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}
 							onclick={() => editor.toggleSort(column.name)} title={`${column.name} · ${column.type} — sort`}>
 							{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-muted-foreground" />{:else if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" />{/if}
 							<span class="truncate font-semibold">{column.name}</span><span class="truncate text-muted-foreground">{column.type}</span>
-							{#if editor.sort?.column === column.name}{#if editor.sort.direction === 'asc'}<ArrowUp class="size-3 shrink-0 text-primary" />{:else}<ArrowDown class="size-3 shrink-0 text-primary" />{/if}{/if}
+							{#if sort}
+								{#if sort.direction === 'asc'}<ArrowUp class="size-3 shrink-0" />{:else}<ArrowDown class="size-3 shrink-0" />{/if}
+								{#if editor.sort.length > 1}<span class="text-[10px] text-muted-foreground">{sortIndex + 1}</span>{/if}
+							{/if}
 						</button>
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
 						<div class="resizer" role="separator" tabindex="0" aria-label={`Resize ${column.name}`}
@@ -262,7 +264,36 @@
 					<span class="sr-only">Loading rows…</span>
 					<Skeleton class="h-6 w-full" /><Skeleton class="h-6 w-3/4" /><Skeleton class="h-6 w-1/2" />
 				</div>
-			{:else}<p class="p-12 text-center text-sm text-muted-foreground">No rows match this view.</p>{/if}
+			{:else}
+				<div class="sticky left-3 m-3 flex w-fit max-w-[calc(100%_-_1.5rem)] gap-3 rounded-lg border bg-card/30 p-4" role={editor.error ? 'alert' : 'status'}>
+					{#if editor.error}<TriangleAlert class="mt-0.5 size-5 shrink-0 text-amber-500" />
+					{:else}<Info class="mt-0.5 size-5 shrink-0 text-muted-foreground" />{/if}
+					<div class="min-w-0 space-y-2">
+						<h3 class="text-sm font-medium">
+							{#if editor.error}No results — query failed
+							{:else if editor.rowsPage > 0}No rows on this page
+							{:else if editor.hasFilters}No results found — check your filters
+							{:else}This table is empty{/if}
+						</h3>
+						<p class="text-xs whitespace-pre-wrap break-words" class:text-amber-500={!!editor.error} class:text-muted-foreground={!editor.error}>
+							{#if editor.error}{editor.error}
+							{:else if editor.rowsPage > 0}Rows may have changed. Return to the first page to continue.
+							{:else if editor.hasFilters}No rows match all of your conditions. Try updating or removing a filter.
+							{:else}There are no rows in this table yet.{/if}
+						</p>
+						{#if editor.hasFilters || (!editor.error && editor.rowsPage > 0)}
+							<div class="flex flex-wrap gap-2">
+								{#if !editor.error && editor.rowsPage > 0}
+									<Button variant="outline" size="sm" disabled={editor.navigationBlocked || editor.loading} onclick={() => void editor.setPage(0)}>Go to first page</Button>
+								{/if}
+								{#if editor.hasFilters}
+									<Button variant="outline" size="sm" disabled={editor.navigationBlocked || editor.loading} onclick={() => void editor.clearFilters()}>Remove filters</Button>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>

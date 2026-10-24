@@ -164,6 +164,28 @@ test('sorting retains displayed rows, blocks writes and ignores superseded resul
 	assert.equal(s.loading, false);
 });
 
+test('multi-sort snapshots rules and header cycling preserves the other priorities', async () => {
+	const { editor: s } = await fixture();
+	await s.setPage(1);
+	const rules = [{ column: 'value', direction: 'asc' }, { column: 'id', direction: 'desc' }];
+	await s.setSort(rules);
+	rules[0].direction = 'desc';
+	assert.equal(s.sort[0].direction, 'asc');
+	assert.equal(s.page, 0);
+	await s.toggleSort('value');
+	assert.deepEqual(s.sort, [{ column: 'value', direction: 'desc' }, { column: 'id', direction: 'desc' }]);
+	await s.toggleSort('value');
+	assert.deepEqual(s.sort, [{ column: 'id', direction: 'desc' }]);
+	await s.toggleSort('value');
+	assert.deepEqual(s.sort, [{ column: 'id', direction: 'desc' }, { column: 'value', direction: 'asc' }]);
+	await s.setSort([...s.sort].reverse());
+	assert.deepEqual(s.sort, [{ column: 'value', direction: 'asc' }, { column: 'id', direction: 'desc' }]);
+	await s.setFilters([{ column: 'value', operator: 'eq', value: 'original' }]);
+	assert.equal(s.sort.length, 2);
+	await s.selectTable('public', 'b');
+	assert.deepEqual(s.sort, []);
+});
+
 test('failed sort clears stale rows and resets their displayed page', async () => {
 	const { editor: s, deferRead } = await fixture();
 	await s.setPage(1);
@@ -239,7 +261,7 @@ test('open cell and insert forms block navigation, reload and connection changes
 		const { editor: s, deferRead } = await fixture();
 		let reads = 0;
 		deferRead(async () => { reads++; return { rows: [], hasMore: false }; });
-		s.sort = { column: 'value', direction: 'asc' };
+		s.sort = [{ column: 'value', direction: 'asc' }];
 		s.filter = { id: '1' };
 		s[flag] = true;
 		const original = s.rows;
@@ -247,11 +269,11 @@ test('open cell and insert forms block navigation, reload and connection changes
 		await s.setSchema('public');
 		await s.setPage(1);
 		await s.setPageSize(250);
-		await s.setSearch('blocked');
+		await s.setFilters([{ column: 'value', operator: 'eq', value: 'blocked' }]);
 		await s.toggleSort('id');
-		await s.setSort('id');
-		await s.toggleSortDirection();
-		await s.clearFilter();
+		await s.setSort([{ column: 'id', direction: 'asc' }]);
+		await s.setSort([]);
+		await s.clearFilters();
 		await s.reload();
 		await s.initialize('connection-2');
 		assert.equal(reads, 0);
@@ -259,8 +281,8 @@ test('open cell and insert forms block navigation, reload and connection changes
 		assert.equal(s.activeTableName, 'a');
 		assert.equal(s.page, 0);
 		assert.equal(s.pageSize, 100);
-		assert.equal(s.search, '');
-		assert.deepEqual(s.sort, { column: 'value', direction: 'asc' });
+		assert.deepEqual(s.filters, []);
+		assert.deepEqual(s.sort, [{ column: 'value', direction: 'asc' }]);
 		assert.deepEqual(s.filter, { id: '1' });
 		assert.equal(s.connection, 'connection-1');
 		assert.equal(s[flag], true);
@@ -309,6 +331,29 @@ test('post-commit refresh failures resolve the write and never retry it', async 
 	}
 });
 
+test('filters reset pagination, snapshot values, preserve FK constraints and clear on table changes', async () => {
+	const { editor: s, deferRead, row } = await fixture();
+	const calls: any[] = [];
+	deferRead(async (args) => { calls.push(args); return { rows: [row('1')], hasMore: true }; });
+	await s.selectTable('public', 'b', { id: 'exact' });
+	await s.setPage(1);
+	const filters = [{ column: 'value', operator: 'eq', value: 'literal %_ text' }];
+	await s.setFilters(filters);
+	filters[0].value = 'changed after submission';
+	assert.equal(s.page, 0);
+	assert.equal(s.hasFilters, true);
+	assert.deepEqual(calls.at(-1).filter, { id: 'exact' });
+	assert.deepEqual(calls.at(-1).filters, [{ column: 'value', operator: 'eq', value: 'literal %_ text' }]);
+	await s.clearFilters();
+	assert.equal(s.hasFilters, false);
+	assert.equal(calls.at(-1).filter, undefined);
+	assert.deepEqual(calls.at(-1).filters, []);
+	await s.setFilters(filters);
+	await s.selectTable('public', 'a');
+	assert.equal(s.hasFilters, false);
+	assert.deepEqual(s.filters, []);
+});
+
 test('live polls refresh current query, preserve unchanged arrays and update idle pages', async () => {
 	const { editor: s, deferRead, row } = await fixture();
 	assert.equal(s.live, true);
@@ -317,8 +362,8 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(s.liveError, null);
 	assert.equal(s.cellSelected, false);
 	await s.selectTable('public', 'b', { id: 'exact' });
-	await s.setSearch('query');
-	await s.setSort('value');
+	await s.setFilters([{ column: 'value', operator: 'ilike', value: '%query%' }]);
+	await s.setSort([{ column: 'value', direction: 'asc' }, { column: 'id', direction: 'desc' }]);
 	await s.setPageSize(250);
 	await s.setPage(1);
 	const original = s.rows;
@@ -331,7 +376,8 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(s.rows, original);
 	assert.deepEqual(calls[0], {
 		connection: 'connection-1', schema: 'public', table: 'b', page: 1, pageSize: 250,
-		sort: { column: 'value', direction: 'asc' }, search: 'query', filter: { id: 'exact' }
+		sort: [{ column: 'value', direction: 'asc' }, { column: 'id', direction: 'desc' }], search: '', filter: { id: 'exact' },
+		filters: [{ column: 'value', operator: 'ilike', value: '%query%' }]
 	});
 	result = { rows: [row('updated')], hasMore: false };
 	await s.poll();

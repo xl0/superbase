@@ -72,14 +72,23 @@ Saves and deletions are transactional. Updates/deletes match PK + tableoid + xmi
 rowCount; inserts also require one created row. Conflict handling is deliberately explicit:
 no automatic retry, silent overwrite, or automatic merging of concurrent changes.
 
-Pages use OFFSET/LIMIT with a complete PK tie-break and physical relation/tuple ordering.
+`RowsArgs.sort` is an ordered array of at most 20 unique column/direction pairs (empty means
+no explicit sort). Validation rejects duplicate columns, invalid directions and malformed lists;
+metadata validates every column. SQL emits rules in order with NULLS LAST for both directions,
+then appends only missing PK columns and physical relation/tuple tie-breakers.
+Pages use OFFSET/LIMIT with that deterministic ordering.
 Fetching one extra row gives `hasMore`; there is no mandatory exact COUNT. `rowCount` is a
 catalog estimate. The toolbar uses the exact loaded count when a successful, unfiltered
 first page contains the whole table; other totals stay explicitly approximate, with a tooltip
-explaining stale PostgreSQL statistics. Search is debounced but still uses text-cast ILIKE across
-columns, so broad searches can scan large tables. Optional exact filters bind native typed
-equality (or IS NULL), enabling indexed reference navigation rather than approximate text
-search. Filter identifiers are checked against metadata. Refresh reloads metadata and rows.
+explaining stale PostgreSQL statistics. Structured `RowFilter` conditions use a shared operator
+whitelist (comparison, LIKE/ILIKE, NULL checks), native column typing and bound raw strings.
+At most 20 conditions of up to 10,000 characters each combine with AND, including repeated
+columns for ranges. Direct `listRows` calls share remote validation; metadata checks column
+names before quoting. Invalid types/operators remain explicit PostgreSQL errors.
+
+Exact FK constraints (`filter`) and user conditions (`filters`) combine with AND. The reference
+picker retains its separate debounced, text-cast ILIKE search across columns, which can scan
+large tables. Refresh reloads metadata and rows.
 
 ## Connection lifecycle
 
@@ -136,8 +145,10 @@ unrelated selected identities survive.
 Open editors/forms and pending mutations block navigation and connection reinitialization.
 Mutations capture their target and invalidate older polls. Sort fetches retain displayed rows
 and their page offset, with editing disabled; other fetches clear stale rows immediately.
-A request counter discards out-of-order reads. Reference arrows use a complete exact-key
-filter; selecting a table or Show all rows removes it.
+A request counter discards out-of-order reads. User filter changes reset pagination and copy
+the submitted conditions; sorting, page size, polling and refresh preserve them. Reference
+arrows use a separate complete exact-key constraint. Switching tables clears user conditions;
+Show all rows / Remove filters clears both user and FK constraints.
 
 Live mode starts enabled and is scoped to the current result page. EditorApp invokes `poll()` every
 five seconds and on visibility changes, gated by document visibility, data view and connection
@@ -152,6 +163,7 @@ selection independently of its edit buffer. Polling does not refresh schema meta
 never a mutable array index as an edit target. Replacing rows cancels positional selection
 and editing. Bounds and full paste rectangles are validated before local mutation. Native
 child controls own their keyboard events; the grid exposes active-cell focus through ARIA.
+There is no permanent usage-hint/status strip above the column headers.
 Cells open by double-click, Enter or F2. Escape, blank grid clicks and outside-grid clicks
 clear cell/range focus without changing checkbox row selections. Outside clicks never steal
 focus from controls or clear selection underneath an open cell editor.
@@ -160,8 +172,8 @@ focus from controls or clear selection underneath an open cell editor.
 and a resizable Sheet. Apply saves existing rows immediately; Escape cancels the buffer.
 Compact outside-click also saves. The editor stays open on database errors, disables changes
 and dismissal while saving, and closes only after acknowledgement. A transparent overlay consumes that click so sorting or
-navigation cannot run before dismissal applies the buffer. Opening an editor cancels any
-queued toolbar search for the same reason. Opening a cell places a caret rather than selecting
+navigation cannot run before dismissal applies the buffer. Filter changes are likewise blocked
+while cell editors or insert forms are open. Opening a cell places a caret rather than selecting
 all text. Expansion preserves the buffer and deliberate text selection.
 Set to options depend on nullability, type and draft status. Temporal Now uses PostgreSQL's
 `now` literal rather than JS date conversion; PostgreSQL resolves it when the batch is saved.
@@ -189,6 +201,27 @@ Generated/always-identity fields stay omitted. Save performs one insert; errors 
 whole form. Create more resets fields and undo history after acknowledgement. Discarding a
 populated form requires confirmation. Nested cell/text/reference editors only update this
 local form until its Save action.
+
+`FilterBar.svelte` replaces broad table search with searchable column suggestions, grouped
+comparison choices, raw values and editable/removable chips. Bits UI Combobox and shadcn
+Select/Popover provide keyboard navigation and focus handling. Draft conditions stay local
+until Apply (unary NULL checks apply immediately); no AI, SQL expression parser or nested OR.
+The grid distinguishes an empty table, zero filtered matches (with Remove filters), and read
+failures. Failed reads show the PostgreSQL warning inside the empty-results panel, not a
+duplicate top banner; errors with retained rows or in Definition keep the banner. There is no
+panel Retry button: edit/remove invalid filters, or use the toolbar Refresh for transient errors.
+Empty-result panels fit their content, wrap long messages within the viewport, and stay sticky
+at the grid's left edge during horizontal scrolling.
+A type error is never presented as a successful query with no results. If Live empties
+a later page, it says No rows on this page and offers Go to first page without removing filters,
+rather than incorrectly claiming the whole table or filtered result is empty.
+
+`SortMenu.svelte` shares the filter toolbar row. Its local draft supports adding columns,
+toggling direction, moving priorities up/down and removing rules. Apply snapshots all rules
+in one retained-row fetch; closing the popover discards the draft. Grid headers cycle one
+column through ascending/descending/off without replacing other rules, and display priority
+numbers. Only the primary header uses `aria-sort`; other sorted headers have descriptive names.
+Sorting survives filters, paging, refresh and polls, but resets when switching tables.
 
 `ReferencePicker.svelte` queries 25 target records per page with debounced search and
 superseded-response cancellation. Selection saves all source columns atomically for existing
@@ -248,7 +281,11 @@ state with mocked remote I/O, connection lifecycle with mocked sockets/request c
 value/schema regressions, lossless JSON formatting, literal text/line endings and semantic
 CodeMirror history.
 With explicit `TEST_DATABASE_URL`, real PostgreSQL tests cover
-precision, defaults, arbitrary names, inheritance/partitions, conflicts and transaction rollback.
+precision, defaults, arbitrary names, inheritance/partitions, conflicts, transaction rollback,
+typed/parameterized filters, multi-column order/NULL placement and stable page boundaries.
+Browser filter checks cover keyboard focus, same-column ranges,
+NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
+empty-page/table/no-match/error states.
 `bun run test:production` builds and checks actual same-origin HTTP commands and Host/CSRF
 rejection through the production launcher.
 
@@ -256,12 +293,12 @@ rejection through the production launcher.
 
 - `src/lib/types.ts` — shared value, identity, connection and mutation contracts.
 - `src/lib/state/editor.svelte.ts` — workspace, pending changes and polling guards.
-- `src/lib/components/` — shell, custom grid, cell editors and reference picker.
+- `src/lib/components/` — shell, custom grid, filter bar, cell editors and reference picker.
 - `src/lib/components/ui/` — generated MIT shadcn-svelte components.
 - `src/lib/db.remote.ts`, `validation.ts` — validated remote boundary.
 - `src/lib/server/` — connection lifecycle, catalog metadata and transactional SQL.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
-No server-side credential persistence, hosted authentication, multi-process sessions, views, schema
-editing, SQL editor, or column-specific filters. Offset pagination is not a cross-page
+No server-side credential persistence, hosted authentication, multi-process sessions, views,
+schema editing, SQL editor, or nested/OR filter groups. Offset pagination is not a cross-page
 snapshot under concurrent database changes. The app is intentionally a loopback-only tool.

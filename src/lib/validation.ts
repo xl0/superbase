@@ -1,4 +1,5 @@
-import type { DeleteArgs, RowIdentity, RowsArgs, SaveArgs, TableTarget, Values } from './types.js';
+import type { DeleteArgs, FilterOperator, RowIdentity, RowsArgs, SaveArgs, Sort, TableTarget, Values } from './types.js';
+import { FILTER_OPERATORS, MAX_FILTERS, MAX_SORTS } from './types.js';
 
 /** Small Standard Schema adapter for the remote boundary; no validation dependency needed. */
 function schema<T>(parse: (input: unknown) => T): {
@@ -89,14 +90,48 @@ export const switchSchema = schema((input) => {
 });
 
 export const rowsSchema = schema<RowsArgs>((input) => {
-	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search', 'filter']);
-	const sort = value.sort === null ? null : object(value.sort, ['column', 'direction']);
-	if (sort && sort.direction !== 'asc' && sort.direction !== 'desc') throw new Error('Invalid sort direction');
+	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search', 'filter', 'filters']);
+	if (!Array.isArray(value.sort) || value.sort.length > MAX_SORTS) throw new Error(`Expected at most ${MAX_SORTS} sort rules`);
+	const columns = new Set<string>();
+	const sort = Array.from(value.sort, (input): Sort => {
+		const rule = object(input, ['column', 'direction']);
+		if (Reflect.ownKeys(rule).length !== 2 || !Object.hasOwn(rule, 'column') || !Object.hasOwn(rule, 'direction')) {
+			throw new Error('Expected column and direction');
+		}
+		if (rule.direction !== 'asc' && rule.direction !== 'desc') throw new Error('Invalid sort direction');
+		const column = text(rule.column);
+		if (columns.has(column)) throw new Error(`Duplicate sort column: ${column}`);
+		columns.add(column);
+		return { column, direction: rule.direction };
+	});
+	let filters;
+	if (Object.hasOwn(value, 'filters')) {
+		if (!Array.isArray(value.filters) || value.filters.length > MAX_FILTERS) {
+			throw new Error(`Expected at most ${MAX_FILTERS} filters`);
+		}
+		filters = Array.from(value.filters, (input) => {
+			const filter = object(input, ['column', 'operator', 'value']);
+			if (Reflect.ownKeys(filter).length !== 3 ||
+				!['column', 'operator', 'value'].every((key) => Object.hasOwn(filter, key))) {
+				throw new Error('Expected column, operator and value');
+			}
+			if (typeof filter.operator !== 'string' || !Object.hasOwn(FILTER_OPERATORS, filter.operator)) {
+				throw new Error('Invalid filter operator');
+			}
+			const operator = filter.operator as FilterOperator;
+			const raw = text(filter.value, 10_000, true);
+			if (!FILTER_OPERATORS[operator].needsValue && raw !== '') {
+				throw new Error('Null checks require an empty value');
+			}
+			return { column: text(filter.column), operator, value: raw };
+		});
+	}
 	return {
 		...target(value), page: integer(value.page, 0, 1_000_000), pageSize: integer(value.pageSize, 1, 500),
 		search: text(value.search, 1024, true),
 		...(Object.hasOwn(value, 'filter') ? { filter: values(value.filter) } : {}),
-		sort: sort ? { column: text(sort.column), direction: sort.direction as 'asc' | 'desc' } : null
+		...(filters ? { filters } : {}),
+		sort
 	};
 });
 

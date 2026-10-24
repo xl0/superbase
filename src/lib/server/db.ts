@@ -4,7 +4,8 @@ import type {
 	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowsArgs, RowsPage,
 	SaveArgs, ServerInfo, Table, Values
 } from '../types.js';
-import { tableKey, writable } from '../types.js';
+import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
+import { rowsSchema } from '../validation.js';
 
 function ident(name: string): string {
 	if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) {
@@ -195,13 +196,16 @@ export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; serv
 }
 
 export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
-	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
-	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
 	if (!Number.isSafeInteger(args.page) || args.page < 0 ||
 		!Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 500 ||
 		!Number.isSafeInteger(args.page * args.pageSize)) throw new Error('Invalid pagination');
-	if (args.sort && (!table.columns.some((column) => column.name === args.sort!.column) ||
-		!['asc', 'desc'].includes(args.sort.direction))) throw new Error('Invalid sort');
+	// Direct callers must cross the same validation boundary as remote requests.
+	const validated = rowsSchema['~standard'].validate(args);
+	if ('issues' in validated) throw new Error(validated.issues[0].message);
+	args = validated.value;
+	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
+	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
+	if (args.sort.some((rule) => !table.columns.some((column) => column.name === rule.column))) throw new Error('Invalid sort column');
 	const pkColumns = primaryKey(table);
 	const search = table.columns.length ? args.search.trim() : '';
 	const values: (string | number)[] = search ? [`%${search}%`] : [];
@@ -217,10 +221,16 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 			clauses.push(`t.${ident(name)} = $${values.length}`);
 		}
 	}
+	for (const { column, operator, value } of args.filters ?? []) {
+		if (!table.columns.some((entry) => entry.name === column)) throw new Error(`Unknown column: ${column}`);
+		const { sql, needsValue } = FILTER_OPERATORS[operator];
+		if (needsValue) values.push(value);
+		clauses.push(`t.${ident(column)} ${sql}${needsValue ? ` $${values.length}` : ''}`);
+	}
 	const filter = clauses.length ? `where ${clauses.join(' and ')}` : '';
-	const order = args.sort ? [`t.${ident(args.sort.column)} ${args.sort.direction} nulls last`] : [];
+	const order = args.sort.map(({ column, direction }) => `t.${ident(column)} ${direction} nulls last`);
 	for (const column of pkColumns) {
-		if (column !== args.sort?.column) order.push(`t.${ident(column)} asc`);
+		if (!args.sort.some((rule) => rule.column === column)) order.push(`t.${ident(column)} asc`);
 	}
 	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only.
 	order.push('t.tableoid asc', 't.ctid asc');

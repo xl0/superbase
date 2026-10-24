@@ -47,6 +47,32 @@ the exact app address, including its port; `localhost` and `127.0.0.1` are separ
 **Keep the app local.** Do not expose it to the network or a public reverse proxy.
 Use a database role with only the permissions you need.
 
+## Filtering
+
+Focus **Filter by…** to search the table’s columns, choose a comparison, then enter a value
+and press Enter or **Apply filter**. Click a chip to edit it, its × to remove it, or
+**Remove filters** to clear everything. Multiple conditions combine with **AND**; use two
+conditions on the same column for a range.
+
+Comparisons use PostgreSQL’s native types without rounding values. **Like** and **iLike**
+accept `%` for any characters and `_` for one; iLike ignores case. **Is NULL** and
+**Is not NULL** need no value. An empty text value is not SQL NULL.
+
+Filters remain during sorting, paging, refresh and Live updates; changing tables resets them.
+An empty table, no matching rows and invalid filter values have distinct messages.
+PostgreSQL query warnings appear inside the empty-results panel. Edit or remove invalid filters;
+use the toolbar’s Refresh button for transient failures.
+
+## Sorting
+
+**Sort**, beside the filters, accepts multiple columns in priority order. Choose each direction,
+move rules up/down or remove them, then **Apply sorting**. Closing the menu discards unapplied
+changes. NULL values sort last in either direction.
+
+Clicking a column header cycles ascending → descending → off for that column, preserving the
+other rules. Header numbers show priority. Sorting remains during filtering, paging, refresh
+and Live updates; changing tables resets it.
+
 ## Editing
 
 - Double-click a cell or press Enter/F2 to edit. **Expand** opens a resizable side panel.
@@ -88,6 +114,6 @@ is displayed. It reruns the current query, so turn it off for expensive searches
 Tables without a primary key are read-only. Generated fields can be inspected but not edited.
 Row counts are exact when the entire unfiltered table is loaded on the first page; `~` marks
 PostgreSQL estimates that may be stale. Pagination is not a snapshot across concurrent changes.
-Schema editing, a SQL console, views and column-specific filters are not supported.
+Schema editing, a SQL console, views and nested/OR filter groups are not supported.
 
 Development setup, test commands and architecture: [CODE.md](CODE.md).

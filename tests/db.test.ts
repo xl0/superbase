@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import pg from 'pg';
 
 import { deleteRows, listRows, listTables, saveTable } from '../src/lib/server/db.js';
-import type { RowIdentity, RowsArgs, Values } from '../src/lib/types.js';
+import type { RowFilter, RowIdentity, RowsArgs, Values } from '../src/lib/types.js';
+import { MAX_FILTERS, MAX_SORTS } from '../src/lib/types.js';
 
 // Never fall back to DATABASE_URL: integration tests require an explicit disposable test database.
 const url = process.env.TEST_DATABASE_URL;
@@ -11,7 +12,7 @@ let pool: pg.Pool;
 let created = false;
 const target = (table: string) => ({ connection: 'test', schema, table });
 const rows = (table: string, overrides: Partial<RowsArgs> = {}) =>
-	listRows(pool, { ...target(table), page: 0, pageSize: 100, sort: null, search: '', ...overrides });
+	listRows(pool, { ...target(table), page: 0, pageSize: 100, sort: [], search: '', ...overrides });
 const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target(table), updates: [], inserts });
 
 (url ? describe : describe.skip)('PostgreSQL text rows and optimistic transactions', () => {
@@ -65,6 +66,15 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 			create table "${schema}".filters (
 				id bigint primary key, amount numeric(40,10), "odd""name" text, nullable text
 			);
+			create table "${schema}".structured_filters (
+				id bigint primary key, amount numeric(40,10), label text, nullable text
+			);
+			insert into "${schema}".structured_filters values
+				(2, 2, 'Alpha_One', null),
+				(10, 10, 'AlphaXOne', ''),
+				(11, 11, 'alpha%Two', 'x'),
+				(9007199254740992, 123456789012345678901234567890.1234567890, '', null),
+				(9007199254740993, 123456789012345678901234567890.1234567891, null, 'x');
 		`);
 		await listTables(pool);
 	});
@@ -157,6 +167,87 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		expect(await ids({})).toHaveLength(3);
 		await expect(ids({ 'missing" OR true --': 'x' })).rejects.toThrow('Unknown column');
 		await expect(ids({ constructor: 'x' })).rejects.toThrow('Unknown column');
+		expect((await rows('filters', {
+			filters: [{ column: 'odd"name', operator: 'eq', value: literal }],
+			filter: { nullable: null }, search: 'needle'
+		})).rows.map((row) => row.values.id)).toEqual(['9007199254740993']);
+	});
+
+	test('structured comparisons use native numeric ordering, exact precision and same-column AND ranges', async () => {
+		const ids = async (filters: RowFilter[]) =>
+			(await rows('structured_filters', { filters })).rows.map((row) => row.values.id);
+		expect(await ids([
+			{ column: 'id', operator: 'gt', value: '2' },
+			{ column: 'id', operator: 'lt', value: '11' }
+		])).toEqual(['10']);
+		expect(await ids([
+			{ column: 'id', operator: 'gte', value: '9007199254740992' },
+			{ column: 'id', operator: 'lte', value: '9007199254740993' },
+			{ column: 'id', operator: 'neq', value: '9007199254740992' }
+		])).toEqual(['9007199254740993']);
+		expect(await ids([{ column: 'id', operator: 'eq', value: ' 10 ' }])).toEqual(['10']);
+		expect(await ids([{
+			column: 'amount', operator: 'gt', value: '123456789012345678901234567890.1234567890'
+		}])).toEqual(['9007199254740993']);
+		expect(await ids([{ column: 'amount', operator: 'eq', value: '2.000' }])).toEqual(['2']);
+		expect(await ids([])).toHaveLength(5);
+		expect(await ids(Array(MAX_FILTERS).fill({ column: 'id', operator: 'eq', value: '2' }))).toEqual(['2']);
+		for (const filter of [
+			{ column: 'id', operator: 'eq', value: "2 OR true --" },
+			{ column: 'amount', operator: 'gt', value: '' },
+			{ column: 'id', operator: 'like', value: '%' }
+		] satisfies RowFilter[]) {
+			await expect(ids([filter])).rejects.toThrow(/invalid input syntax|operator does not exist/);
+		}
+	});
+
+	test('LIKE/ILIKE retain PostgreSQL wildcards and NULL is distinct from empty text', async () => {
+		const ids = async (filters: RowFilter[], overrides: Partial<RowsArgs> = {}) =>
+			(await rows('structured_filters', { filters, ...overrides })).rows.map((row) => row.values.id);
+		expect(await ids([{ column: 'label', operator: 'like', value: 'Alpha_One' }])).toEqual(['2', '10']);
+		expect(await ids([{ column: 'label', operator: 'like', value: 'Alpha\\_One' }])).toEqual(['2']);
+		expect(await ids([{ column: 'label', operator: 'like', value: 'alpha%' }])).toEqual(['11']);
+		expect(await ids([{ column: 'label', operator: 'ilike', value: 'alpha%' }])).toEqual(['2', '10', '11']);
+		expect(await ids([{ column: 'label', operator: 'like', value: 'alpha\\%Two' }])).toEqual(['11']);
+		expect(await ids([{ column: 'label', operator: 'eq', value: '' }])).toEqual(['9007199254740992']);
+		expect(await ids([{ column: 'label', operator: 'isNull', value: '' }])).toEqual(['9007199254740993']);
+		expect(await ids([{ column: 'label', operator: 'isNotNull', value: '' }])).toEqual(['2', '10', '11', '9007199254740992']);
+		expect(await ids([{ column: 'label', operator: 'neq', value: '' }])).toEqual(['2', '10', '11']);
+		expect(await ids([
+			{ column: 'nullable', operator: 'isNull', value: '' },
+			{ column: 'id', operator: 'gt', value: '10' }
+		])).toEqual(['9007199254740992']);
+		expect(await ids([{ column: 'label', operator: 'eq', value: "' OR true --" }])).toEqual([]);
+		expect(await ids([{ column: 'id', operator: 'gte', value: '2' }], {
+			search: 'Alpha', filter: { nullable: '' }
+		})).toEqual(['10']);
+		expect(await ids([{ column: 'id', operator: 'gt', value: '10' }], {
+			search: 'Alpha', filter: { nullable: '' }
+		})).toEqual([]);
+	});
+
+	test('direct listRows rejects unknown, malformed and oversized filter arguments instead of widening results', async () => {
+		const valid = { column: 'id', operator: 'eq', value: '2' };
+		for (const filters of [
+			undefined, null, {}, 'id = 2', Array(MAX_FILTERS + 1).fill(valid), Array(1),
+			...[null, [], Object.create(valid), { ...valid, extra: true },
+				{ column: 'id', operator: 'eq' },
+				...['missing', '__proto__', 'constructor', 'id" = 2 OR true --', '', 'a\0b', 'x'.repeat(1025)].map((column) => ({ ...valid, column })),
+				...['constructor', '__proto__', 'toString', '= 2 OR true --', null, {}].map((operator) => ({ ...valid, operator })),
+				...[null, 2, true, {}, [], 'a\0b', 'x'.repeat(10_001)].map((value) => ({ ...valid, value })),
+				{ ...valid, operator: 'isNull', value: 'null' },
+				{ ...valid, operator: 'isNotNull', value: ' ' }
+			].map((filter) => [filter])
+		]) {
+			await expect(rows('structured_filters', { filters } as Partial<RowsArgs>)).rejects.toThrow();
+		}
+		for (const overrides of [
+			{ unknown: true }, { search: null }, { search: 'x'.repeat(1025) },
+			{ filter: [] }, { page: 1_000_001 }, { sort: [{ column: 'id', direction: 'asc; select 1' }] }
+		]) {
+			await expect(rows('structured_filters', overrides as Partial<RowsArgs>)).rejects.toThrow();
+		}
+		expect((await rows('structured_filters')).rows).toHaveLength(5);
 	});
 
 	test('omissions use defaults; rejects generated, always identity, unknown and non-text inputs', async () => {
@@ -181,6 +272,10 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		expect(row.values).toEqual(values);
 		expect(Object.hasOwn(row.values, '__proto__')).toBe(true);
 		expect(row.identity!.pk.__proto__).toBe('__proto__ value');
+		expect((await rows('names', { filters: [
+			{ column: '__proto__', operator: 'eq', value: '__proto__ value' },
+			{ column: 'constructor', operator: 'eq', value: 'constructor value' }
+		] })).rows).toEqual([row]);
 		await saveTable(pool, { ...target('names'), updates: [{ identity: row.identity!, changes: JSON.parse('{"__proto__":"new key","__key":"new value"}') }], inserts: [] });
 		const [updated] = (await rows('names')).rows;
 		expect(updated.values.__proto__).toBe('new key');
@@ -188,10 +283,34 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		expect(await deleteRows(pool, { ...target('names'), identities: [updated.identity!] })).toEqual({ deleted: 1 });
 	});
 
+	test('multi-sort preserves rule order, NULLS LAST and native numeric ordering', async () => {
+		const sort: RowsArgs['sort'] = [{ column: 'part', direction: 'desc' }, { column: 'id', direction: 'desc' }];
+		const first = await rows('partitioned', { sort, pageSize: 2 });
+		const second = await rows('partitioned', { sort, pageSize: 2, page: 1 });
+		expect([...first.rows, ...second.rows].map((row) => [row.values.part, row.values.id]))
+			.toEqual([['2', '1'], ['1', '3'], ['1', '2'], ['1', '1']]);
+		expect(first.hasMore).toBe(true);
+		expect(second.hasMore).toBe(false);
+		expect((await rows('partitioned', { sort: [...sort].reverse() })).rows.map((row) => [row.values.part, row.values.id]))
+			.toEqual([['1', '3'], ['1', '2'], ['2', '1'], ['1', '1']]);
+		expect((await rows('structured_filters', { sort: [
+			{ column: 'nullable', direction: 'desc' }, { column: 'id', direction: 'desc' }
+		] })).rows.map((row) => row.values.id)).toEqual(['9007199254740993', '11', '10', '9007199254740992', '2']);
+		for (const sort of [null, {}, Array(1), [{ column: 'missing', direction: 'asc' }],
+			[{ column: 'id" desc; select 1 --', direction: 'asc' }], [{ column: 'id', direction: 'asc; select 1' }],
+			[{ column: 'id', direction: 'asc' }, { column: 'id', direction: 'desc' }],
+			Array.from({ length: MAX_SORTS + 1 }, (_, i) => ({ column: String(i), direction: 'asc' }))]) {
+			await expect(rows('partitioned', { sort } as Partial<RowsArgs>)).rejects.toThrow();
+		}
+		// Arbitrary real column names still work after rejecting SQL fragments above.
+		await rows('names', { sort: [{ column: '__proto__', direction: 'asc' }, { column: 'constructor', direction: 'desc' }] });
+		await rows('filters', { sort: [{ column: 'odd"name', direction: 'asc' }] });
+	});
+
 	test('composite sort keeps remaining PK tie-breakers and paging uses hasMore', async () => {
 		expect((await rows('partitioned', { pageSize: 500 })).rows).toHaveLength(4);
 		await expect(rows('partitioned', { pageSize: 501 })).rejects.toThrow('Invalid pagination');
-		const options = { pageSize: 2, sort: { column: 'part', direction: 'asc' as const } };
+		const options = { pageSize: 2, sort: [{ column: 'part', direction: 'asc' as const }] };
 		const first = await rows('partitioned', options);
 		const second = await rows('partitioned', { ...options, page: 1 });
 		expect(first.rows.map((row) => [row.values.part, row.values.id])).toEqual([['1', '1'], ['1', '2']]);

@@ -74,10 +74,12 @@ export interface ConnectionStatus {
 	error?: string;
 }
 
+/** Ordered, unique column rules; PostgreSQL applies each with NULLS LAST. */
 export interface Sort {
 	column: string;
 	direction: 'asc' | 'desc';
 }
+export const MAX_SORTS = 20;
 
 export interface TableTarget {
 	connection: string;
@@ -85,12 +87,37 @@ export interface TableTarget {
 	table: string;
 }
 
+export const FILTER_OPERATORS = {
+	eq: { label: 'Equals', sql: '=', group: 'Comparison', needsValue: true },
+	neq: { label: 'Not equal', sql: '<>', group: 'Comparison', needsValue: true },
+	gt: { label: 'Greater than', sql: '>', group: 'Comparison', needsValue: true },
+	lt: { label: 'Less than', sql: '<', group: 'Comparison', needsValue: true },
+	gte: { label: 'Greater or equal', sql: '>=', group: 'Comparison', needsValue: true },
+	lte: { label: 'Less or equal', sql: '<=', group: 'Comparison', needsValue: true },
+	like: { label: 'Like', sql: 'LIKE', group: 'Pattern matching', needsValue: true },
+	ilike: { label: 'iLike', sql: 'ILIKE', group: 'Pattern matching', needsValue: true },
+	isNull: { label: 'Is NULL', sql: 'IS NULL', group: 'Null checks', needsValue: false },
+	isNotNull: { label: 'Is not NULL', sql: 'IS NOT NULL', group: 'Null checks', needsValue: false }
+} as const;
+
+export type FilterOperator = keyof typeof FILTER_OPERATORS;
+/** AND-combined conditions. Values are exact PostgreSQL text; unary operators use ''. */
+export interface RowFilter {
+	column: string;
+	operator: FilterOperator;
+	value: string;
+}
+export const MAX_FILTERS = 20;
+
 export interface RowsArgs extends TableTarget {
 	page: number;
 	pageSize: number;
-	sort: Sort | null;
+	sort: Sort[];
+	/** Broad text search remains available to the reference picker. */
 	search: string;
+	/** Exact foreign-key navigation constraints, combined with user filters using AND. */
 	filter?: Values;
+	filters?: RowFilter[];
 }
 
 export interface SaveArgs extends TableTarget {

@@ -2,11 +2,11 @@
 	import { onMount, untrack } from 'svelte';
 	import { Annotation, EditorState, StateEffect } from '@codemirror/state';
 	import { drawSelection, EditorView, highlightSpecialChars, keymap, lineNumbers, placeholder as editorPlaceholder } from '@codemirror/view';
-	import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
+	import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
 	import { HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 	import { json } from '@codemirror/lang-json';
 	import { PostgreSQL, sql } from '@codemirror/lang-sql';
-	import { autocompletion } from '@codemirror/autocomplete';
+	import { acceptCompletion, autocompletion } from '@codemirror/autocomplete';
 	import { tags } from '@lezer/highlight';
 	import { jsonValue, prettyJSON, setJSONValue } from '#lib/json.js';
 	import type { CellValue } from '#lib/types.js';
@@ -60,12 +60,16 @@
 
 	function extensions() {
 		return [
-			language === 'sql' ? [sql({ dialect: PostgreSQL }), autocompletion(), lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting]
+			language === 'sql' ? [
+				sql({ dialect: PostgreSQL }), autocompletion(),
+				keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
+				lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting
+			]
 				: language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],
 			// Split only LF, retaining CR characters even in mixed line endings.
 			EditorState.lineSeparator.of('\n'), highlightSpecialChars({ addSpecialChars: /\r/g }),
 			jsonValue, history(), drawSelection(), theme,
-			// Tab remains native focus navigation; apply/cancel belong to the enclosing cell editor.
+			// Cell editors keep native Tab navigation; apply/cancel belong to their enclosing editor.
 			keymap.of([...defaultKeymap.filter(({ key }) => key !== 'Mod-Enter' && key !== 'Escape'), ...historyKeymap]),
 			EditorState.readOnly.of(readonly),
 			EditorView.contentAttributes.of({ ...(id ? { id } : {}), 'aria-label': label, 'aria-readonly': String(readonly), spellcheck: 'false' }),

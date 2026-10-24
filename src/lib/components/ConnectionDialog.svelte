@@ -5,15 +5,15 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import ConnectForm from './ConnectForm.svelte';
 
-	let { open = $bindable(false), status, sqlProtected = false, sqlBusy = false, onsuccess }: {
-		open?: boolean; status: ConnectionStatus; sqlProtected?: boolean; sqlBusy?: boolean; onsuccess: () => void;
+	let { open = $bindable(false), status, sqlProtected, sqlBusy = false, onsuccess }: {
+		open?: boolean; status: ConnectionStatus; sqlProtected: () => boolean; sqlBusy?: boolean; onsuccess: () => void;
 	} = $props();
 	let pending = $state(false);
 	let returnFocus: HTMLElement | null = null;
 
 	function approve() {
-		return !editor.busy && !sqlBusy && (!(editor.inserting || editor.editing || editor.schemaEditing || sqlProtected) || window.confirm(
-			'Discard open editors and SQL drafts, close SQL sessions (rolling back uncommitted work), and change the database connection?'
+		return !editor.busy && !sqlBusy && (!(editor.inserting || editor.editing || editor.schemaEditing || sqlProtected()) || window.confirm(
+			'Discard unsaved edits and close SQL sessions (rolling back uncommitted work)? Saved SQL drafts will be kept.'
 		));
 	}
 </script>

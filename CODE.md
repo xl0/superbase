@@ -218,10 +218,36 @@ Closed/expired sessions never reconnect transparently. A same-origin JSON `/sql/
 on non-bfcache pagehide releases abandoned sessions; expiry also covers crashes/offline tabs.
 
 `SqlState` is instantiated per mounted workspace. It snapshots submitted SQL/run IDs, retains
-memory-only drafts through errors and resets, and guards duplicate runs/connection changes.
+drafts through errors and resets, and guards duplicate runs/connection changes.
+SQL text autosaves synchronously on actual edits to versioned localStorage keys containing a
+per-tab UUID and exact host/port/database/user tuple, never credentials or connection generations.
+The UUID lives in sessionStorage; a held Web Lock prevents duplicated tabs (which clone that
+storage) from sharing a write slot. A duplicate copies the current target's text into its own slot.
+The editor is read-only during initial restoration/ownership acquisition. Restoration never opens
+a SQL connection or executes text; a nonempty restored draft opens the SQL workspace unless the
+user already chose a workspace. Clearing the buffer removes its saved text.
+
+Pagehide freezes writes before releasing the lock; a lifecycle counter rejects late acquisitions.
+BFCache resume reacquires ownership and compares the saved snapshot before enabling persistence.
+Conflicts preserve both cached text and newer stored text, with autosave paused and an explicit
+warning. Failed initial reads likewise never enable writes to unread storage. Quota/write failures
+retain unsaved text; subsequent edits can retry. Storage events and a synchronous pre-navigation
+check detect cleared/changed data or lost tab identity without recreating deleted records.
+Only safely saved SQL text and idle sessions avoid reload warnings: running/cancelling work,
+open/failed transactions, unknown outcomes and unsaved table forms still warn. Connection changes
+retain a separate session-loss confirmation; successful teardown does not save an artificial empty
+draft. Local SQL is unencrypted; sessions/results/history are never restored, and abandoned tab
+records remain until their editor is cleared or the site's storage is removed.
 `SqlEditor` uses TextEditor's PostgreSQL CodeMirror mode, keyword completion, line numbers,
 selection-or-buffer Run/Ctrl+Enter, a keyboard/pointer resizer and paged read-only result sets.
-Transaction state, errors, messages, truncation and session reset are explicit. The rail shows
+Tab accepts a selected SQL completion or indents; Shift+Tab outdents without leaving the editor.
+CodeMirror's Escape-then-Tab accessibility escape hatch remains available. Cell editors retain
+native Tab navigation.
+Compact status reports idle/open/failed transactions. Commit/Rollback buttons send only their
+literal command through the existing run path, preserving the draft/selection and session;
+Commit is disabled in a failed transaction. There is no transaction wrapper or mode switch.
+Session/preview details live in an info popover rather than permanent explainers. Errors,
+messages, truncation and session reset remain explicit. The rail shows
 Tables, SQL and connection controls only. Table Live polling pauses in SQL; returning preserves
 the table workspace. Schema changes made through SQL require a table Refresh.
 
@@ -443,7 +469,11 @@ Connection and runes-state tests verify generation ownership, draft retention an
 production HTTP checks exercise every SQL command's generation/CSRF boundary and cleanup origin.
 Isolated SQL browser checks cover selection/keyboard execution, preview versus real write counts,
 transactions/cancellation/reset, navigation state, cross-tab isolation, reload/beacon/bfcache
-cleanup, connection-discard confirmations, unsupported protocols and narrow/short layouts. Browser checks verify actual clipboard contents and
+cleanup, connection-discard confirmations, unsupported protocols and narrow/short layouts.
+Draft-persistence checks cover exact restoration without execution, duplicate-tab ownership,
+database/generation isolation, genuine BFCache, real quota exhaustion and cancelled-reload
+recovery, denied storage/locks, external conflicts and unchanged table-edit guards.
+Browser checks verify actual clipboard contents and
 native full-table downloads (including filtered grids), error tabs, focus and narrow panels.
 Browser filter checks cover keyboard focus, same-column ranges,
 NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct

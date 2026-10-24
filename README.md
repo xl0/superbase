@@ -156,15 +156,25 @@ enum/namespace management and replacing existing primary keys are not supported.
 
 Choose **SQL editor** in the navigation rail. **Run** or Ctrl/Cmd+Enter executes the selection,
 or the whole buffer if nothing is selected. PostgreSQL highlighting and keyword completion are
-included. Tables and SQL retain their state when switching views; drafts live only in memory.
+included. Tables and SQL retain their state when switching views. SQL drafts autosave locally,
+separately per database and browser tab, and restore on reload without executing anything.
 Results are read-only and preserve exact values, NULLs and duplicate column names.
+
+Saved SQL is **unencrypted** and may contain sensitive values. Clearing the editor removes its
+saved draft; clearing this site's browser storage removes all drafts, including abandoned tabs.
+A fresh browser tab gets a separate draft. Only text is restored—not results, temporary tables,
+session settings or transactions. Reload warns for active transactions/queries, unsaved table
+edits or SQL text that could not be saved, but not for a safely saved draft or idle SQL session.
+Storage failures appear in the editor; copy your SQL before leaving if autosave is unavailable.
 
 SQL runs with your database role’s permissions, including writes and DDL. Each browser tab gets
 a separate SQL connection: temporary tables, SET and explicit **BEGIN / COMMIT / ROLLBACK**
 persist between runs without affecting the table editor. Buffers follow PostgreSQL’s native
-multi-statement transaction rules. The status bar shows open or failed transactions; **Reset
-session** closes the connection and rolls back uncommitted work while keeping the draft.
-Refresh Tables after SQL schema changes.
+multi-statement transaction rules, without an extra transaction wrapper. The status bar offers
+**Commit / Rollback** while a transaction is open; a failed transaction enables only Rollback.
+These actions keep your SQL draft unchanged. **Reset session** closes the connection and rolls
+back uncommitted work while keeping the draft. The info button contains session and preview
+details. Refresh Tables after SQL schema changes.
 
 **Cancel** interrupts the current query, not earlier committed statements. Previews stop at
 1,000 rows per result, 50 results or 2 MB; these limits do **not** limit SQL execution or writes.

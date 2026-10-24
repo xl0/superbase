@@ -20,10 +20,12 @@
 	let connectOpen = $state(false);
 	let workspace = $state<'tables' | 'sql'>('tables');
 	let sqlOpened = $state(false);
-	const sql = new SqlState(untrack(() => status.connection!.id));
+	const sql = new SqlState(untrack(() => status.connection!));
+	let workspaceChosen = false;
 
 	function switchWorkspace(next: 'tables' | 'sql') {
 		if (editor.navigationBlocked) return;
+		workspaceChosen = true;
 		workspace = next;
 		if (next === 'sql') sqlOpened = true;
 	}
@@ -41,15 +43,19 @@
 	const liveActive = () => document.visibilityState === 'visible' && !connectOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
+		void sql.restoreDraft().then(() => {
+			if (!workspaceChosen && sql.draft) { workspace = 'sql'; sqlOpened = true; }
+		});
 		if (status.connection) void editor.initialize(status.connection.id);
 		const poll = () => { void editor.poll(liveActive); };
 		const timer = window.setInterval(poll, 5_000);
 		document.addEventListener('visibilitychange', poll);
-		return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
+		return () => { sql.pauseDraft(); window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
 	});
 
 	function beforeUnload(event: BeforeUnloadEvent) {
-		if (editor.navigationBlocked || sql.protectedWork) {
+		sql.checkDraft();
+		if (editor.navigationBlocked || sql.reloadBlocked) {
 			event.preventDefault();
 			event.returnValue = '';
 		}
@@ -61,7 +67,9 @@
 	if (!event.persisted && sql.session) navigator.sendBeacon('/sql/close', new Blob([
 		JSON.stringify({ connection: sql.connection, session: sql.session })
 	], { type: 'application/json' }));
-}} />
+	sql.pauseDraft();
+}} onpageshow={(event) => { if (event.persisted) void sql.restoreDraft(true); }}
+onstorage={(event) => sql.checkDraft(event.key)} />
 
 {#if !editor.ready && !editor.error}
 	<LoadingShell />
@@ -149,6 +157,6 @@
 	</div>
 {/if}
 
-<ConnectionDialog bind:open={connectOpen} {status} sqlProtected={sql.protectedWork} sqlBusy={sql.busy || sql.cancelling}
-	onsuccess={() => { sql.draft = ''; sql.session = null; }} />
+<ConnectionDialog bind:open={connectOpen} {status} sqlProtected={() => { sql.checkDraft(); return sql.protectedWork; }} sqlBusy={sql.busy || sql.cancelling}
+	onsuccess={() => sql.prepareReload()} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} target={schemaEdit.target} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}

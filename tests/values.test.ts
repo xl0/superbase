@@ -7,8 +7,18 @@ import { displayValue, fromTSV, toTSV } from '../src/lib/format.js';
 import { connectSchema, deleteSchema, rowsSchema, saveSchema } from '../src/lib/validation.js';
 import type { Column } from '../src/lib/types.js';
 import { FILTER_OPERATORS, MAX_FILTERS, MAX_SORTS } from '../src/lib/types.js';
+import { sqlRunSchema } from '../src/lib/sql-validation.js';
 
 const column: Column = { name: 'value', type: 'numeric', kind: 'number', primaryKey: false, generated: false, identity: null, defaultValue: null, nullable: true };
+
+test('SQL boundary preserves the buffer and rejects malformed/unbounded requests', () => {
+	const input = { connection: 'c', session: 's', run: 'r', sql: "DO $$ BEGIN RAISE NOTICE 'x;y'; END $$; SELECT 1;" };
+	expect(sqlRunSchema['~standard'].validate(input)).toEqual({ value: input });
+	for (const invalid of [{ ...input, sql: '' }, { ...input, sql: '   ' }, { ...input, sql: 'a'.repeat(100_001) },
+		{ ...input, sql: 'SELECT\0' }, { ...input, extra: 1 }, { ...input, session: null }]) {
+		expect(sqlRunSchema['~standard'].validate(invalid)).toHaveProperty('issues');
+	}
+});
 
 describe('lossless display and clipboard', () => {
 	test('preserves exact PostgreSQL text and distinguishes NULL/default/empty', () => {

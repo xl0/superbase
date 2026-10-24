@@ -116,14 +116,21 @@ Browser checks verify native writes, confirmations, guards, narrow menus and res
 [x] Sidebar actions copy exact names/schema SQL, duplicate structure with optional rows and
 independent owned sequences, and stream full-table CSV. Scope/permission warnings are explicit.
 SQL round-trips, RLS, sequence safety, catalog races, stream cleanup and browser clipboard/download
-flows are verified, including exact values across pages and narrow panels. SQL editor is next.
+flows are verified, including exact values across pages and narrow panels.
+
+[x] SQL editor and Tables/SQL/connection rail preserve both workspaces. A memory-only
+PostgreSQL editor runs selections/buffers with bounded exact-text read-only result sets.
+Dedicated per-tab sessions support transactions/temp/SET, guarded cancellation and explicit
+reset; connection replacement, expiry and unload cleanup release them. Automated and isolated
+browser checks verify native semantics, precision, preview/write independence, cancellation
+races, cross-tab/generation isolation, drafts, reload/bfcache cleanup, keyboard and narrow/short
+layouts. UTF8 is required; COPY streams, binary results and psql commands are unsupported.
 
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 
 ## Later
 
-- [ ] SQL editor with an explicit connection lifecycle.
 - [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
   and opens the browser. Bundle production assets and verify the Bun launch path.
 

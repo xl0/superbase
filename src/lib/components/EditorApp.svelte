@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { Database } from '@lucide/svelte';
+	import { onMount, untrack } from 'svelte';
+	import { Database, Settings2, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionStatus, Table, TableTarget } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -12,10 +12,21 @@
 	import Sidebar from './Sidebar.svelte';
 	import TableToolbar from './TableToolbar.svelte';
 	import LoadingShell from './LoadingShell.svelte';
+	import SqlEditor from './SqlEditor.svelte';
+	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
 	let { status }: { status: ConnectionStatus } = $props();
 	let connectOpen = $state(false);
+	let workspace = $state<'tables' | 'sql'>('tables');
+	let sqlOpened = $state(false);
+	const sql = new SqlState(untrack(() => status.connection!.id));
+
+	function switchWorkspace(next: 'tables' | 'sql') {
+		if (editor.navigationBlocked) return;
+		workspace = next;
+		if (next === 'sql') sqlOpened = true;
+	}
 	let schemaEdit = $state.raw<{ mode: SchemaEditMode; target: TableTarget; anchor: HTMLElement | null } | null>(null);
 
 	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) {
@@ -27,7 +38,7 @@
 		};
 	}
 
-	const liveActive = () => document.visibilityState === 'visible' && !connectOpen;
+	const liveActive = () => document.visibilityState === 'visible' && !connectOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
 		if (status.connection) void editor.initialize(status.connection.id);
@@ -38,14 +49,19 @@
 	});
 
 	function beforeUnload(event: BeforeUnloadEvent) {
-		if (editor.navigationBlocked) {
+		if (editor.navigationBlocked || sql.protectedWork) {
 			event.preventDefault();
 			event.returnValue = '';
 		}
 	}
 </script>
 
-<svelte:window onbeforeunload={beforeUnload} />
+<svelte:window onbeforeunload={beforeUnload} onpagehide={(event) => {
+	// Best effort on reload/close; the server idle limit also covers crashes and offline tabs.
+	if (!event.persisted && sql.session) navigator.sendBeacon('/sql/close', new Blob([
+		JSON.stringify({ connection: sql.connection, session: sql.session })
+	], { type: 'application/json' }));
+}} />
 
 {#if !editor.ready && !editor.error}
 	<LoadingShell />
@@ -60,7 +76,17 @@
 	</main>
 {:else}
 	<div class="flex h-dvh bg-background text-foreground">
-		<Sidebar connection={status.connection!} onconnect={() => (connectOpen = true)} oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />
+		<nav aria-label="Workspace" class="flex w-12 shrink-0 flex-col items-center gap-2 border-r bg-card py-2">
+			<div class="mb-2 flex h-8 items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
+			<Button variant={workspace === 'tables' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Table editor" title="Table editor"
+				aria-pressed={workspace === 'tables'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('tables')}><Table2 /></Button>
+			<Button variant={workspace === 'sql' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="SQL editor" title={sql.busy ? 'SQL editor — running' : 'SQL editor'}
+				aria-pressed={workspace === 'sql'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('sql')}><SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} /></Button>
+			<Button variant="ghost" size="icon-sm" class="mt-auto" aria-label="Database connection" title="Database connection"
+				disabled={editor.busy || sql.busy} onclick={() => connectOpen = true}><Settings2 /></Button>
+		</nav>
+		<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'} hidden={workspace !== 'tables'}>
+		<Sidebar connection={status.connection!} oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />
 		<main class="flex min-w-0 flex-1 flex-col">
 			{#if editor.tables.length === 0}
 				<div class="grid flex-1 place-items-center p-6">
@@ -114,8 +140,15 @@
 					<GridFooter />
 			{/if}
 		</main>
+		</div>
+		{#if sqlOpened}
+			<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'} hidden={workspace !== 'sql'}>
+				<SqlEditor state={sql} active={workspace === 'sql' && !connectOpen} database={status.connection!.database} />
+			</main>
+		{/if}
 	</div>
 {/if}
 
-<ConnectionDialog bind:open={connectOpen} {status} />
+<ConnectionDialog bind:open={connectOpen} {status} sqlProtected={sql.protectedWork} sqlBusy={sql.busy || sql.cancelling}
+	onsuccess={() => { sql.draft = ''; sql.session = null; }} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} target={schemaEdit.target} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Database, Plus, Search, Settings2, Table2 } from '@lucide/svelte';
+	import { Plus, Search, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionInfo, Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -9,8 +9,8 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 
-	let { connection, onconnect, oncreate, onedit }: {
-		connection: ConnectionInfo; onconnect: () => void; oncreate: () => void;
+	let { connection, oncreate, onedit }: {
+		connection: ConnectionInfo; oncreate: () => void;
 		onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) => void;
 	} = $props();
 	let tableSearch = $state('');
@@ -18,19 +18,15 @@
 	const tables = $derived(editor.schemaTables.filter((table) => table.name.toLowerCase().includes(tableSearch.trim().toLowerCase())));
 </script>
 
-<aside class="flex h-full w-60 shrink-0 flex-col border-r border-border bg-card">
+<aside class="flex h-full w-48 shrink-0 flex-col border-r border-border bg-card lg:w-60">
 	<header class="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
-		<Database class="size-4 text-muted-foreground" />
-		<span class="text-sm font-semibold tracking-tight">superbase</span>
+		<span class="text-sm font-semibold tracking-tight">Table editor</span>
 	</header>
 	<div class="space-y-2 border-b border-border p-3">
 		<div class="truncate text-xs font-medium" title={connection.database}>{connection.database}</div>
 		<div class="truncate font-mono text-[11px] text-muted-foreground" title={`${connection.host}:${connection.port}`}>
 			{connection.host}:{connection.port}
 		</div>
-		<Button variant="outline" size="sm" class="w-full justify-start text-xs" disabled={editor.busy} onclick={onconnect}>
-			<Settings2 class="size-3.5" /> Change connection
-		</Button>
 	</div>
 	<div class="space-y-3 p-3">
 		<div class="space-y-1.5">

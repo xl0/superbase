@@ -10,7 +10,16 @@ import pg from 'pg';
 let serial = 0;
 async function fixture(defaultUrl = '') {
 	const key = `__connectionTest${serial++}`;
-	const state: any = { now: 0, event: null, pools: [], deferred: [], timer: null, unref: false };
+	const state: any = { now: 0, event: null, pools: [], sqlGroups: [], deferred: [], timer: null, unref: false };
+	state.SqlSessions = class {
+		disposed = false;
+		config: any;
+		redact: (error: unknown) => string;
+		constructor(config: any, redact: (error: unknown) => string) {
+			this.config = config; this.redact = redact; state.sqlGroups.push(this);
+		}
+		dispose() { this.disposed = true; }
+	};
 	class Pool extends EventEmitter {
 		config: any;
 		ended = false;
@@ -31,10 +40,11 @@ async function fixture(defaultUrl = '') {
 	(globalThis as any)[key] = state;
 	const source = (await readFile(new URL('../src/lib/server/connections.ts', import.meta.url), 'utf8'))
 		.replace("import pg from 'pg';", '')
+		.replace("import { SqlSessions } from './sql.js';", '')
 		.replace("import { getRequestEvent } from '$app/server';", '')
 		.replace("import { DATABASE_URL } from '$app/env/private';", '')
 		.replaceAll('Date.now()', 'testState.now');
-	const compiled = ts.transpileModule(`const testState = globalThis[${JSON.stringify(key)}];\nconst { pg, getRequestEvent, DATABASE_URL, setInterval } = testState;\n${source}`, {
+	const compiled = ts.transpileModule(`const testState = globalThis[${JSON.stringify(key)}];\nconst { pg, getRequestEvent, DATABASE_URL, setInterval, SqlSessions } = testState;\n${source}`, {
 		compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
 	}).outputText;
 	const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`;
@@ -270,6 +280,33 @@ test('session and pending-attempt limits apply before allocating additional pool
 	assert.equal(state.pools.length, 8);
 	state.now += 2 * 60 * 60 * 1000;
 	assert.equal(request(browser(), api.connectionStatus).connection, null);
+});
+
+test('SQL sessions are scoped to browser/generation and retired with their connection', async () => {
+	const { api, state, browser, request, defer } = await fixture(url);
+	const first = browser(), second = browser();
+	const generation = request(first, api.connectionStatus).connection.id;
+	const other = request(second, api.connectionStatus).connection.id;
+	const group = request(first, () => api.activeSql(generation));
+	assert.equal(request(first, () => api.activeSql(generation)), group);
+	const otherGroup = request(second, () => api.activeSql(other));
+	assert.notEqual(otherGroup, group);
+	assert.throws(() => request(second, () => api.activeSql(generation)), /changed/);
+	const failure = defer();
+	const pending = request(first, () => api.connect({ url, expected: generation }));
+	failure.reject(new Error('unavailable'));
+	await assert.rejects(pending, /unavailable/);
+	assert.equal(group.disposed, false);
+	const next = await request(first, () => api.connect({ url, expected: generation }));
+	assert.equal(group.disposed, true);
+	assert.equal(otherGroup.disposed, false);
+	assert.throws(() => request(first, () => api.activeSql(generation)), /changed/);
+	const replacement = request(first, () => api.activeSql(next.connection.id));
+	await request(first, () => api.disconnect({ expected: next.connection.id }));
+	assert.equal(replacement.disposed, true);
+	state.now += 2 * 60 * 60 * 1000;
+	state.timer();
+	assert.equal(otherGroup.disposed, true);
 });
 
 test('local-only hook checks actual peer and Host, ignoring spoofed forwarded headers', async () => {

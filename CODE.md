@@ -1,20 +1,23 @@
 # superbase — code map
 
-A local-only Postgres table editor: SvelteKit 3 / Svelte 5 SPA, shadcn-svelte, Tailwind v4,
+A local-only Postgres table and SQL editor: SvelteKit 3 / Svelte 5 SPA, shadcn-svelte, Tailwind v4,
 and direct `pg`. No Supabase services, ORM, or public API. One Node process owns sessions.
 
 ## Runtime and boundaries
 
 `+layout.ts` disables SSR. `+page.svelte` loads `connectionStatus()` before mounting either
 onboarding or `EditorApp`. The latter initializes the module-level `EditorState` and renders
-the sidebar, toolbar, grid and pagination. Connection changes reload the page
+the navigation rail, table workspace and lazily mounted SQL workspace. Hidden workspaces stay
+mounted to retain drafts, selection/history, filters and scroll state without reconnecting.
+Connection changes reload the page
 after confirming unsaved work; generation checks protect other tabs that did not reload.
 
 `lib/db.remote.ts` validates structured intents using the Standard Schema adapters in
 `lib/validation.ts` and `lib/schema-validation.ts`. It resolves a generation-checked pool
 exactly once, before calling the row or schema SQL module. Database functions receive their pool explicitly, never consult cookies,
-and never generate SQL on the client. Identifiers are quoted and values bound as parameters.
-No arbitrary-SQL endpoint is exposed.
+and never generate table/schema SQL on the client. Identifiers are quoted and values bound as
+parameters. The separate SQL-console commands intentionally accept arbitrary SQL, validated by
+`sql-validation.ts` and confined to dedicated clients rather than table-editor pool leases.
 
 `hooks.ts` supplies a shared SvelteKit transport codec for records with an own `__proto__`
 column key, which devalue otherwise rejects. It carries entries and reconstructs own data
@@ -180,6 +183,48 @@ downloads avoid buffering the whole file in browser JavaScript. The export panel
 raw spreadsheet formulas and links to a new tab so initial errors remain readable, not bogus
 CSV attachments. Responses are no-store/nosniff/same-origin; filenames are safely encoded.
 
+## SQL console
+
+`sql.ts` defines positional field/row results: every value is PostgreSQL text or NULL,
+including duplicate/hostile column names. `server/sql.ts` owns up to four dedicated clients per
+browser connection generation. Each SQL workspace lazily opens its own server-generated session;
+SET, temporary tables and explicit transactions survive subsequent runs without affecting pools.
+Buffers/selections are submitted unchanged using PostgreSQL's simple protocol: no splitting,
+LIMIT injection, implicit BEGIN wrapper or automatic retry. Multi-statement buffers follow
+PostgreSQL's native transaction rules. Earlier explicit commits can survive a later error.
+COPY protocol streams and binary cursor results explicitly close the session; this is not a
+psql terminal. UTF8 client encoding is required and established at startup. Reported encoding
+changes close the session and discard that run's previews. PostgreSQL does not report temporary
+change-and-restore within one buffer: changing client_encoding, including inside functions, is
+unsupported and may corrupt results/messages or cause native conversion errors. No SQL blacklist
+pretends to enforce arbitrary function behavior.
+
+Streaming `pg.Query` row events retain at most 1,000 rows per result, 50 results and a 2 MB
+aggregate preview budget, including metadata/notices and reserved error space. Excess previews
+are discarded without cancelling SQL or changing write semantics. A small, documented adapter
+to pinned pg 8.23.1 internals drops old driver result metadata too. One incoming protocol
+frame/value can still be large before the preview bound applies. Error text and notices are
+redacted/bounded. ReadyForQuery, not Query's earlier error event, determines actual idle/open/
+failed transaction status. Transport failures report unknown outcomes and require explicit Reset.
+
+Cancellation uses a separate bounded client with original credentials, checks the run ID again
+after connecting, and keeps the SQL session busy until cancellation settles. Idle/stale requests
+cannot cancel a later run. Connection replacement, disconnect and expiry retire all dedicated
+and connecting/cancelling clients. Defaults: 10-second connect, 30-second statement timeout,
+5-minute idle-transaction timeout, 15-minute SQL idle expiry and a 60-second application wall
+limit which destroys the socket even if SQL changes server timeouts. Socket destruction does
+not guarantee immediate database interruption; unfinished work has an unknown outcome.
+Closed/expired sessions never reconnect transparently. A same-origin JSON `/sql/close` beacon
+on non-bfcache pagehide releases abandoned sessions; expiry also covers crashes/offline tabs.
+
+`SqlState` is instantiated per mounted workspace. It snapshots submitted SQL/run IDs, retains
+memory-only drafts through errors and resets, and guards duplicate runs/connection changes.
+`SqlEditor` uses TextEditor's PostgreSQL CodeMirror mode, keyword completion, line numbers,
+selection-or-buffer Run/Ctrl+Enter, a keyboard/pointer resizer and paged read-only result sets.
+Transaction state, errors, messages, truncation and session reset are explicit. The rail shows
+Tables, SQL and connection controls only. Table Live polling pauses in SQL; returning preserves
+the table workspace. Schema changes made through SQL require a table Refresh.
+
 ## Connection lifecycle
 
 `lib/server/connections.ts` maintains a bounded in-memory registry. Each browser has an
@@ -241,7 +286,8 @@ arrows use a separate complete exact-key constraint. Switching tables clears use
 Show all rows / Remove filters clears both user and FK constraints.
 
 Live mode starts enabled and is scoped to the current result page. EditorApp invokes `poll()` every
-five seconds and on visibility changes, gated by document visibility and connection modal state.
+five seconds and on visibility changes, gated by document visibility, active workspace,
+SQL execution and connection modal state.
 Schema forms pause polling through the workspace guard. Polls never overlap or invalidate foreground reads. Foreground request and live
 mode generations reject obsolete responses, including reads begun before a mutation.
 Unchanged results keep the existing row array. Changes update an idle view, or set a notice
@@ -275,8 +321,9 @@ sit at the footer's right: one action is a button, multiple actions a DropdownMe
 Select handles enum/boolean choices; Escape dismisses the innermost menu first.
 
 `TextEditor.svelte` uses CodeMirror for text and JSON/JSONB columns, chosen from `Column.kind`,
-never content or length. Plain text stays literal and soft-wraps; only JSON gets indentation
-and syntax highlighting. Other kinds retain native controls. Both the cell editor and insert
+never content or length. Plain text stays literal and soft-wraps; JSON gets indentation
+and syntax highlighting. The SQL workspace selects a separate PostgreSQL language mode with
+line numbers/completion, without changing cell semantics. Other column kinds retain native controls. Both the cell editor and insert
 form use this component. EditorState survives cell-panel expansion, preserving selection and
 undo history. Initial formatting and external buffer changes do not emit edits.
 A shared history field tracks the semantic buffer value alongside the document:
@@ -389,7 +436,14 @@ contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted d
 Table-action regressions cover SQL round-trips, independent/cross-column sequence defaults,
 sequence exhaustion, dynamic CHECK rejection, self-FK ordering, RLS and unchanged sources.
 CSV tests cover exact bytes, multiple batches, snapshot visibility, permissions, catalog races,
-abort/error cleanup and route security. Browser checks verify actual clipboard contents and
+abort/error cleanup and route security. SQL-console tests cover exact/duplicate-name multiple
+results, preview bounds without truncating writes, transaction errors/ReadyForQuery ordering,
+session isolation, cancellation races, disposal/expiry, unsupported COPY and unknown outcomes.
+Connection and runes-state tests verify generation ownership, draft retention and no replay;
+production HTTP checks exercise every SQL command's generation/CSRF boundary and cleanup origin.
+Isolated SQL browser checks cover selection/keyboard execution, preview versus real write counts,
+transactions/cancellation/reset, navigation state, cross-tab isolation, reload/beacon/bfcache
+cleanup, connection-discard confirmations, unsupported protocols and narrow/short layouts. Browser checks verify actual clipboard contents and
 native full-table downloads (including filtered grids), error tabs, focus and narrow panels.
 Browser filter checks cover keyboard focus, same-column ranges,
 NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
@@ -399,15 +453,15 @@ rejection through the production launcher.
 
 ## Source layout and limits
 
-- `src/lib/types.ts`, `schema.ts` — shared row, connection and structured DDL contracts.
-- `src/lib/state/editor.svelte.ts` — workspace, pending changes and polling guards.
+- `src/lib/types.ts`, `schema.ts`, `sql.ts` — row/connection, structured DDL and SQL contracts.
+- `src/lib/state/` — table workspace/polling guards and per-workspace SQL execution state.
 - `src/lib/components/` — shell, custom grid, filter bar, cell editors and reference picker.
 - `src/lib/components/ui/` — generated MIT shadcn-svelte components.
-- `src/lib/db.remote.ts`, `validation.ts` — validated remote boundary.
+- `src/lib/db.remote.ts`, `*validation.ts` — validated remote boundaries.
 - `src/lib/server/` — connection lifecycle, catalog metadata and transactional SQL.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
 No server-side credential persistence, hosted authentication, multi-process sessions, views,
-SQL editor, or nested/OR filter groups. Schema editing excludes FK/index/unique/check editing,
+SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes FK/index/unique/check editing,
 enum/namespace management and replacing existing primary keys. Offset pagination is not a
 cross-page snapshot under concurrent changes. The app is intentionally a loopback-only tool.

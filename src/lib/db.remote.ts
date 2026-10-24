@@ -4,6 +4,7 @@ import * as db from '#lib/server/db.js';
 import * as schemaDb from '#lib/server/schema.js';
 import { schemaChangeSchema, schemaTargetSchema } from '#lib/schema-validation.js';
 import { connectSchema, connectionSchema, deleteSchema, rowsSchema, saveSchema, switchSchema } from '#lib/validation.js';
+import { sqlCancelSchema, sqlRunSchema, sqlTargetSchema } from '#lib/sql-validation.js';
 
 export const connectionStatus = query(() => connections.connectionStatus());
 export const connect = command(connectSchema, (args) => connections.connect(args));
@@ -19,3 +20,9 @@ export const schemaCatalog = query(connectionSchema, ({ connection }) => schemaD
 export const schemaDefinition = query(schemaTargetSchema, (args) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
 export const tableSchema = query(schemaTargetSchema, (args) => schemaDb.exportSchema(connections.activePool(args.connection), args));
 export const changeSchema = command(schemaChangeSchema, (args) => schemaDb.changeSchema(connections.activePool(args.connection), args));
+
+// Arbitrary SQL is confined to dedicated console sessions, never a table-editor pool lease.
+export const openSql = command(connectionSchema, ({ connection }) => connections.activeSql(connection).open());
+export const runSql = command(sqlRunSchema, (args) => connections.activeSql(args.connection).run(args));
+export const cancelSql = command(sqlCancelSchema, (args) => connections.activeSql(args.connection).cancel(args));
+export const closeSql = command(sqlTargetSchema, ({ connection, session }) => connections.activeSql(connection).close(session));

@@ -5,6 +5,7 @@ import { getRequestEvent } from '$app/server';
 import { DATABASE_URL } from '$app/env/private';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { ConnectionInfo, ConnectionStatus } from '#lib/types.js';
+import { SqlSessions } from './sql.js';
 
 const COOKIE = 'superbase_connection';
 const IDLE_MS = 2 * 60 * 60 * 1000;
@@ -21,6 +22,7 @@ type Session = {
 	info: ConnectionInfo | null;
 	settings: Settings | null;
 	pool: pg.Pool | null;
+	sql: SqlSessions | null;
 	pending: Set<pg.Pool>;
 	revision: number;
 	lastUsed: number;
@@ -145,6 +147,8 @@ function retire(pool: pg.Pool | null) {
 }
 
 function retireSession(session: Session) {
+	session.sql?.dispose();
+	session.sql = null;
 	retire(session.pool);
 	for (const pool of session.pending) retire(pool);
 }
@@ -187,6 +191,7 @@ export function prepareConnection(event: RequestEvent): void {
 		info: initial ? { ...initial.info, id: randomUUID(), source: 'env' } : null,
 		settings: initial,
 		pool: null,
+		sql: null,
 		pending: new Set(),
 		revision: 0,
 		lastUsed: Date.now(),
@@ -230,6 +235,14 @@ export function activePool(expected: string): pg.Pool {
 	const session = checked(event, expected);
 	if (!session.info || !session.settings) throw new Error('No database connected. Choose a connection first.');
 	return session.pool ??= newPool(session.settings.config);
+}
+
+/** Each SQL tab gets a dedicated client owned by this exact browser/generation. */
+export function activeSql(expected: string): SqlSessions {
+	const session = checked(getRequestEvent(), expected);
+	if (!session.info || !session.settings) throw new Error('No database connected. Choose a connection first.');
+	const { config, password } = session.settings;
+	return session.sql ??= new SqlSessions(config, (error) => safeErrorMessage(error, password));
 }
 
 async function replace(event: RequestEvent, expected: string | null, next: Settings, source: ConnectionInfo['source']): Promise<ConnectionStatus> {

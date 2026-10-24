@@ -4,8 +4,11 @@
 
 <div role="status" aria-busy="true" class="flex h-dvh bg-background text-foreground">
 	<span class="sr-only">Loading database…</span>
-	<div aria-hidden="true" class="w-60 shrink-0 space-y-5 border-r bg-card p-4">
-		<div class="mb-8 text-sm font-semibold">superbase</div>
+	<div aria-hidden="true" class="flex w-12 shrink-0 flex-col items-center gap-4 border-r bg-card py-4">
+		<Skeleton class="mb-3 size-5" /><Skeleton class="size-6" /><Skeleton class="size-6" /><Skeleton class="mt-auto size-6" />
+	</div>
+	<div aria-hidden="true" class="w-48 shrink-0 space-y-5 border-r bg-card p-4 lg:w-60">
+		<div class="mb-8 text-sm font-semibold">Table editor</div>
 		<Skeleton class="h-5 w-4/5" />
 		<Skeleton class="h-8 w-full" />
 		<div class="space-y-3 pt-4">

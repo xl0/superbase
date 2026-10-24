@@ -1,7 +1,7 @@
 # superbase
 
 A local Postgres table editor inspired by Supabase Studio, without the Supabase stack.
-Browse tables, edit cells and schemas, follow foreign keys, and copy/paste selections.
+Browse tables, edit cells and schemas, follow foreign keys, and run SQL.
 MIT licensed.
 
 ## Run
@@ -31,7 +31,8 @@ without it, traffic is encrypted but the server's identity is not verified.
 `sslmode=disable` explicitly selects plaintext. There is no automatic plaintext fallback.
 Percent-encode URL punctuation in credentials.
 
-**Change connection** switches databases, disconnects, or returns to an optional default.
+The connection button at the bottom of the navigation rail switches databases, disconnects,
+or returns to an optional default.
 To provide that default, copy `.env.example` to `.env` and set `DATABASE_URL`.
 Browser-entered credentials stay in server memory; sessions expire after two idle hours or a
 restart. **Remember on this browser** optionally saves your URL/password in browser storage
@@ -151,17 +152,42 @@ enum/namespace management and replacing existing primary keys are not supported.
   import untrusted data as text rather than opening it directly in a spreadsheet.
   The download opens in a new tab; initial errors appear there instead of becoming CSV files.
 
+## SQL editor
+
+Choose **SQL editor** in the navigation rail. **Run** or Ctrl/Cmd+Enter executes the selection,
+or the whole buffer if nothing is selected. PostgreSQL highlighting and keyword completion are
+included. Tables and SQL retain their state when switching views; drafts live only in memory.
+Results are read-only and preserve exact values, NULLs and duplicate column names.
+
+SQL runs with your database role’s permissions, including writes and DDL. Each browser tab gets
+a separate SQL connection: temporary tables, SET and explicit **BEGIN / COMMIT / ROLLBACK**
+persist between runs without affecting the table editor. Buffers follow PostgreSQL’s native
+multi-statement transaction rules. The status bar shows open or failed transactions; **Reset
+session** closes the connection and rolls back uncommitted work while keeping the draft.
+Refresh Tables after SQL schema changes.
+
+**Cancel** interrupts the current query, not earlier committed statements. Previews stop at
+1,000 rows per result, 50 results or 2 MB; these limits do **not** limit SQL execution or writes.
+Statements default to 30 seconds; the app closes the connection after 60 seconds. A lost
+connection does not prove a write failed—check before retrying. Sessions expire after 15 idle
+minutes; idle transactions default to 5 minutes. Reload/close sends best-effort cleanup;
+crashed/offline tabs rely on expiry. Up to four SQL sessions can be open per browser connection.
+COPY streams, binary cursor results and psql commands are unsupported. Keep **client_encoding
+at UTF8**, including inside functions. Persistent encoding changes close the session; changes
+restored within one buffer can evade detection and produce incorrect results/messages or native
+conversion errors. No saved query history or editor tabs yet.
+
 ## Live updates and limits
 
 **Live** starts enabled and checks the visible result page every five seconds. An idle grid
 updates itself; open cell editors, new-row forms and selections instead get a changed-data
 notice.
-Polling pauses while the tab is hidden or a connection/schema panel is displayed. It reruns the current query, so turn it off for expensive searches.
+Polling pauses in the SQL workspace, while the tab is hidden, or while a connection/schema panel is displayed. It reruns the current query, so turn it off for expensive searches.
 
 Row data without a primary key is read-only; add one through its sidebar **⋮** menu to enable writes.
 Generated fields can be inspected but not edited.
 Row counts are exact when the entire unfiltered table is loaded on the first page; `~` marks
 PostgreSQL estimates that may be stale. Pagination is not a snapshot across concurrent changes.
-A SQL console, views and nested/OR filter groups are not supported.
+Views and nested/OR filter groups are not supported.
 
 Development setup, test commands and architecture: [CODE.md](CODE.md).

@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { get } from 'node:http';
 import test from 'node:test';
+import { stringify } from 'devalue';
 import { manifest } from '../build/server/manifest.js';
 
 test('production HTTP supports same-origin commands without trusting forwarded headers', async () => {
@@ -43,6 +44,25 @@ test('production HTTP supports same-origin commands without trusting forwarded h
 		assert.equal((await result.json()).type, 'result', 'actual command must run, not merely return an error envelope');
 		const foreign = await fetch(endpoint, { method: 'POST', headers: { ...headers, Origin: 'http://evil.example' }, body });
 		assert.equal(foreign.status, 403);
+		for (const [name, args] of [
+			['openSql', { connection: 'stale' }],
+			['runSql', { connection: 'stale', session: 'missing', run: 'run-1', sql: 'SELECT 1' }],
+			['cancelSql', { connection: 'stale', session: 'missing', run: 'run-1' }],
+			['closeSql', { connection: 'stale', session: 'missing' }]
+		]) {
+			const sqlBody = JSON.stringify({ payload: Buffer.from(stringify(args)).toString('base64url'), refreshes: [] });
+			const sqlEndpoint = `${origin}/_app/remote/${id}/${name}`;
+			const stale = await fetch(sqlEndpoint, { method: 'POST', headers, body: sqlBody });
+			assert.match(await stale.text(), /Connection changed in another tab/, `${name} must check the generation`);
+			const crossOrigin = await fetch(sqlEndpoint, { method: 'POST', headers: { ...headers, Origin: 'http://evil.example' }, body: sqlBody });
+			assert.equal(crossOrigin.status, 403, `${name} must reject cross-origin execution`);
+		}
+		const cleanup = `${origin}/sql/close`;
+		const cleanupBody = JSON.stringify({ connection: 'stale', session: 'missing' });
+		assert.equal((await fetch(cleanup, { method: 'POST', headers, body: cleanupBody })).status, 400);
+		assert.equal((await fetch(cleanup, { method: 'POST', headers: { ...headers, Origin: 'http://evil.example' }, body: cleanupBody })).status, 403);
+		assert.equal((await fetch(cleanup, { method: 'POST', headers: { ...headers, Origin: '' }, body: cleanupBody })).status, 403);
+		assert.equal((await fetch(cleanup, { method: 'POST', headers, body: '{' })).status, 400);
 		const downloadUrl = `${origin}/export?connection=stale&schema=public&table=items`;
 		const staleDownload = await fetch(downloadUrl, { headers: { Cookie: cookie } });
 		assert.equal(staleDownload.status, 400);

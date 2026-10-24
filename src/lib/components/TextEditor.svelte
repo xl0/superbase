@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { Annotation, EditorState, StateEffect } from '@codemirror/state';
-	import { drawSelection, EditorView, highlightSpecialChars, keymap, placeholder as editorPlaceholder } from '@codemirror/view';
+	import { drawSelection, EditorView, highlightSpecialChars, keymap, lineNumbers, placeholder as editorPlaceholder } from '@codemirror/view';
 	import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
 	import { HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 	import { json } from '@codemirror/lang-json';
+	import { PostgreSQL, sql } from '@codemirror/lang-sql';
+	import { autocompletion } from '@codemirror/autocomplete';
 	import { tags } from '@lezer/highlight';
 	import { jsonValue, prettyJSON, setJSONValue } from '#lib/json.js';
 	import type { CellValue } from '#lib/types.js';
@@ -16,7 +18,7 @@
 		value: CellValue | undefined;
 		onchange: (value: CellValue | undefined) => void;
 		/** Chosen from column metadata, never inferred from the document. */
-		language?: 'text' | 'json';
+		language?: 'text' | 'json' | 'sql';
 		readonly?: boolean;
 		label: string;
 		id?: string;
@@ -40,10 +42,15 @@
 		'.cm-line': { padding: '0 10px' },
 		'.cm-cursor': { borderLeftColor: 'var(--foreground)' },
 		'.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#264f78' },
-		'.cm-placeholder': { color: 'var(--muted-foreground)' }
+		'.cm-placeholder': { color: 'var(--muted-foreground)' },
+		'.cm-gutters': { backgroundColor: 'var(--card)', color: 'var(--muted-foreground)', borderRight: '1px solid var(--border)' },
+		'.cm-tooltip': { backgroundColor: 'var(--popover)', border: '1px solid var(--border)' },
+		'.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--accent)', color: 'var(--foreground)' }
 	}, { dark: true });
 	const highlighting = syntaxHighlighting(HighlightStyle.define([
 		{ tag: tags.propertyName, color: '#9cdcfe' },
+		{ tag: tags.keyword, color: '#c4b5fd' },
+		{ tag: tags.comment, color: '#7f8a82' },
 		{ tag: tags.string, color: '#ce9178' },
 		{ tag: tags.number, color: '#b5cea8' },
 		{ tag: tags.bool, color: '#c4b5fd' },
@@ -53,7 +60,8 @@
 
 	function extensions() {
 		return [
-			language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],
+			language === 'sql' ? [sql({ dialect: PostgreSQL }), autocompletion(), lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting]
+				: language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],
 			// Split only LF, retaining CR characters even in mixed line endings.
 			EditorState.lineSeparator.of('\n'), highlightSpecialChars({ addSpecialChars: /\r/g }),
 			jsonValue, history(), drawSelection(), theme,

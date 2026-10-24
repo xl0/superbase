@@ -51,8 +51,9 @@
 <Popover.Root {open} onOpenChange={changeOpen}>
 	<Popover.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant={editor.sort.length ? 'secondary' : 'outline'} size="sm" class="text-xs" disabled={blocked}>
-				<ListOrdered />{editor.sort.length ? `Sorted by ${editor.sort.length} ${editor.sort.length === 1 ? 'rule' : 'rules'}` : 'Sort'}
+			<Button {...props} variant={editor.sort.length ? 'secondary' : 'outline'} size="sm" class="text-xs" disabled={blocked}
+				aria-label={editor.sort.length ? `Sorted by ${editor.sort.length} ${editor.sort.length === 1 ? 'rule' : 'rules'}` : 'Sort'}>
+				<ListOrdered />{editor.sort.length ? `Sort (${editor.sort.length})` : 'Sort'}
 			</Button>
 		{/snippet}
 	</Popover.Trigger>

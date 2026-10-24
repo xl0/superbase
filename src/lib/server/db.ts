@@ -1,7 +1,7 @@
 import pg from 'pg';
 
 import type {
-	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowsArgs, RowsPage,
+	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowQuery, RowsArgs, RowsPage,
 	SaveArgs, ServerInfo, Table, Values
 } from '../types.js';
 import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
@@ -60,7 +60,7 @@ type ForeignKeyRow = {
 
 const SYSTEM_SCHEMAS = `('pg_catalog', 'information_schema', 'pg_toast')`;
 
-async function loadMetadata(
+export async function loadMetadata(
 	db: pg.Pool | pg.PoolClient,
 	filter?: { schema: string; table: string }
 ): Promise<Table[]> {
@@ -199,16 +199,8 @@ export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; serv
 	};
 }
 
-export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
-	if (!Number.isSafeInteger(args.page) || args.page < 0 ||
-		!Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 500 ||
-		!Number.isSafeInteger(args.page * args.pageSize)) throw new Error('Invalid pagination');
-	// Direct callers must cross the same validation boundary as remote requests.
-	const validated = rowsSchema['~standard'].validate(args);
-	if ('issues' in validated) throw new Error(validated.issues[0].message);
-	args = validated.value;
-	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
-	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
+/** Validated grid query to bound WHERE/order clauses; callers select/paginate independently. */
+export function rowSelection(table: Table, args: RowQuery) {
 	if (args.sort.some((rule) => !table.columns.some((column) => column.name === rule.column))) throw new Error('Invalid sort column');
 	const pkColumns = primaryKey(table);
 	const search = table.columns.length ? args.search.trim() : '';
@@ -238,11 +230,26 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 	}
 	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only.
 	order.push('t.tableoid asc', 't.ctid asc');
+	return { filter, order: order.join(', '), values };
+}
+
+export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
+	if (!Number.isSafeInteger(args.page) || args.page < 0 ||
+		!Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 500 ||
+		!Number.isSafeInteger(args.page * args.pageSize)) throw new Error('Invalid pagination');
+	// Direct callers must cross the same validation boundary as remote requests.
+	const validated = rowsSchema['~standard'].validate(args);
+	if ('issues' in validated) throw new Error(validated.issues[0].message);
+	args = validated.value;
+	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
+	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
+	const pkColumns = primaryKey(table);
+	const { filter, order, values } = rowSelection(table, args);
 	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
 	selected.push('t.xmin', 't.tableoid', 't.ctid');
 	const result = await pool.query<(string | null)[]>({
 		text: `select ${selected.join(', ')} from ${qualify(args.schema, args.table)} t
-			${filter} order by ${order.join(', ')} limit $${values.length + 1} offset $${values.length + 2}`,
+			${filter} order by ${order} limit $${values.length + 1} offset $${values.length + 2}`,
 		values: [...values, args.pageSize + 1, args.page * args.pageSize],
 		rowMode: 'array',
 		// Per-query parsing preserves PostgreSQL's text output even for JSON, numeric and arrays.

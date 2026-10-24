@@ -71,6 +71,21 @@ test('production HTTP supports same-origin commands without trusting forwarded h
 		const foreignDownload = await fetch(downloadUrl, { headers: { Cookie: cookie, Origin: 'http://evil.example' } });
 		assert.equal(foreignDownload.status, 403);
 		assert.equal(foreignDownload.headers.has('content-disposition'), false);
+		const exportBody = new URLSearchParams({ export: JSON.stringify({
+			connection: 'stale', schema: 'public', table: 'items',
+			query: { search: '', sort: [], filters: [] }
+		}) });
+		const exportHeaders = { Origin: origin, Cookie: cookie };
+		const staleFiltered = await fetch(`${origin}/export`, { method: 'POST', headers: exportHeaders, body: exportBody });
+		assert.equal(staleFiltered.status, 400);
+		assert.equal(staleFiltered.headers.has('content-disposition'), false);
+		assert.match(await staleFiltered.text(), /Connection changed in another tab/);
+		for (const Origin of ['http://evil.example', '']) {
+			const forbidden = await fetch(`${origin}/export`, {
+				method: 'POST', headers: { ...exportHeaders, Origin }, body: exportBody
+			});
+			assert.equal(forbidden.status, 403);
+		}
 		// Fetch normalizes Host; raw HTTP is needed to exercise a forged Host header.
 		const hostStatus = await new Promise((resolve, reject) => {
 			get(origin, { headers: { Host: 'evil.example' } }, (response) => {

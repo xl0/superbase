@@ -1,7 +1,7 @@
 import type pg from 'pg';
-import type { TableTarget } from '../types.js';
-import { schemaTargetSchema } from '../schema-validation.js';
-import { qualify } from './db.js';
+import type { CsvExportArgs } from '../types.js';
+import { csvExportSchema } from '../schema-validation.js';
+import { ident, loadMetadata, qualify, rowSelection } from './db.js';
 
 // Bound retained rows, not bytes: an individual PostgreSQL value can itself be large.
 const BATCH_ROWS = 256;
@@ -12,11 +12,11 @@ const textRows = {
 const record = (values: (string | null)[]) =>
 	values.map((value) => value === null ? '' : `"${value.replaceAll('"', '""')}"`).join(',') + '\r\n';
 
-/** All SELECT-visible rows, with PostgreSQL's exact text output and one cursor snapshot. */
+/** All matching SELECT-visible rows, with exact text output and one cursor snapshot. */
 export async function exportCsv(
-	pool: pg.Pool, target: TableTarget, signal?: AbortSignal
+	pool: pg.Pool, target: CsvExportArgs, signal?: AbortSignal
 ): Promise<ReadableStream<Uint8Array>> {
-	const validated = schemaTargetSchema['~standard'].validate(target);
+	const validated = csvExportSchema['~standard'].validate(target);
 	if ('issues' in validated) throw new Error(validated.issues[0].message);
 	target = validated.value;
 	signal?.throwIfAborted();
@@ -62,6 +62,7 @@ export async function exportCsv(
 		}
 		// READ COMMITTED keeps the catalog fences fresh; DECLARE fixes the data snapshot.
 		await client.query('begin isolation level read committed read only');
+		const searchPath = (await client.query<{ search_path: string }>('show search_path')).rows[0].search_path;
 		await client.query("set local search_path = pg_catalog; set local lock_timeout = '3s'");
 		const catalog = async () => (await client.query<{
 			oid: string; namespace: string; version: string; ordinary: boolean;
@@ -85,7 +86,30 @@ export async function exportCsv(
 		const table = qualify(target.schema, target.table);
 		await client.query(`lock table ${table} in access share mode`);
 		await check();
-		await client.query(`declare superbase_csv no scroll cursor for select * from ${table}`);
+		let selection = '';
+		let projected = 't.*';
+		let values: (string | number)[] = [];
+		if (target.query || target.columns) {
+			// Read fresh metadata on this locked lease, never the grid's cached catalog.
+			const metadata = (await loadMetadata(client, target))[0];
+			if (!metadata) throw new Error('Table changed; retry the export');
+			if (target.columns) {
+				const names = new Set(target.columns);
+				for (const name of names) {
+					if (!metadata.columns.some((column) => column.name === name)) throw new Error(`Unknown column: ${name}`);
+				}
+				projected = metadata.columns.filter((column) => names.has(column.name))
+					.map((column) => `t.${ident(column.name)}`).join(', ');
+			}
+			if (target.query) {
+				const query = rowSelection(metadata, target.query);
+				selection = `${query.filter} order by ${query.order}`;
+				values = query.values;
+			}
+		}
+		// Match grid operator resolution (e.g. citext) and function/RLS execution context.
+		await client.query("select pg_catalog.set_config('search_path', $1, true)", [searchPath]);
+		await client.query(`declare superbase_csv no scroll cursor for select ${projected} from ${table} t ${selection}`, values);
 		const metadata = await client.query<(string | null)[]>({
 			text: 'fetch forward 0 from superbase_csv', ...textRows
 		});
@@ -95,7 +119,9 @@ export async function exportCsv(
 		if (metadata.fields.some((field) => String(field.tableID) !== before.oid)) {
 			throw new Error('Table changed; retry the export');
 		}
+		await client.query('set local search_path = pg_catalog');
 		await check();
+		await client.query("select pg_catalog.set_config('search_path', $1, true)", [searchPath]);
 		if (stopped) throw failure;
 		const encoder = new TextEncoder();
 		return new ReadableStream<Uint8Array>({

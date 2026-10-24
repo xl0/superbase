@@ -1,4 +1,4 @@
-import type { TableTarget } from './types.js';
+import type { RowQuery, TableTarget } from './types.js';
 
 /** Catalog identities, never user-supplied SQL type expressions. */
 export interface SchemaType {
@@ -77,5 +77,6 @@ export interface SchemaChangeArgs extends TableTarget {
 	operation: SchemaOperation;
 }
 export type SchemaEditMode =
-	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' | 'duplicateTable' | 'copySchema' | 'exportCsv' }
+	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' | 'duplicateTable' | 'copySchema' }
+	| { kind: 'exportCsv'; query?: RowQuery; options?: boolean }
 	| { kind: 'alterColumn' | 'dropColumn'; column: string };

@@ -12,6 +12,7 @@
 		onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) => void;
 	} = $props();
 	let trigger = $state<HTMLButtonElement | null>(null);
+	let exportOptionsOpening = false;
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
 
 	async function copyName() {
@@ -28,7 +29,10 @@
 				aria-label={`Table actions for ${table.name}`}><EllipsisVertical /></Button>
 		{/snippet}
 	</DropdownMenu.Trigger>
-	<DropdownMenu.Content align="start" class="w-52" onCloseAutoFocus={(event) => { if (editor.schemaEditing) event.preventDefault(); }}>
+	<DropdownMenu.Content align="start" class="w-52" onCloseAutoFocus={(event) => {
+		if (editor.schemaEditing || exportOptionsOpening) event.preventDefault();
+		exportOptionsOpening = false;
+	}}>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => void copyName()}><Copy />Copy name</DropdownMenu.Item>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'copySchema' }, trigger, table)}><Copy />Copy table schema</DropdownMenu.Item>
 		<DropdownMenu.Separator />
@@ -38,6 +42,9 @@
 			<DropdownMenu.Item disabled={blocked || !table.columns.length} onSelect={() => onedit({ kind: 'addPrimaryKey' }, trigger, table)}><KeyRound />Add primary key</DropdownMenu.Item>
 		{/if}
 		<DropdownMenu.Item disabled={blocked || !table.columns.length} onSelect={() => onedit({ kind: 'exportCsv' }, trigger, table)}><Download />Export CSV</DropdownMenu.Item>
+		<DropdownMenu.Item disabled={blocked || !table.columns.length} onSelect={() => {
+			exportOptionsOpening = true; onedit({ kind: 'exportCsv', options: true }, trigger, table);
+		}}>Export options…</DropdownMenu.Item>
 		<DropdownMenu.Separator />
 		<DropdownMenu.Item variant="destructive" disabled={blocked} onSelect={() => onedit({ kind: 'dropTable' }, trigger, table)}><Trash2 />Delete table</DropdownMenu.Item>
 	</DropdownMenu.Content>

@@ -75,6 +75,9 @@ Saves and deletions are transactional. Updates/deletes match PK + tableoid + xmi
 rowCount; inserts also require one created row. Conflict handling is deliberately explicit:
 no automatic retry, silent overwrite, or automatic merging of concurrent changes.
 
+`RowQuery` shares filters, exact FK constraints, search and sorting between paginated rows
+and unpaginated query exports. `validation.rowQuery` validates these fields at both boundaries;
+`server/db.rowSelection` builds the shared parameterized WHERE and deterministic ORDER BY.
 `RowsArgs.sort` is an ordered array of at most 20 unique column/direction pairs (empty means
 no explicit sort). Validation rejects duplicate columns, invalid directions and malformed lists;
 metadata validates every column. SQL emits rules in order with NULLS LAST for both directions,
@@ -169,7 +172,15 @@ standalone unique indexes restore correctly. No arbitrary SQL is accepted from t
 either action.
 
 `server/export.ts` streams exact CSV with a read-only SQL cursor in 256-row batches; one value
-can still be large. Non-null values (including empty strings and headers) are quoted; SQL NULL
+can still be large. Optional `CsvExportArgs.query` applies the grid's exact filters/FK tuple
+and sort to all matching rows, without pagination or checked-row selection. Query exports
+read fresh metadata on the locked lease, reuse the grid's WHERE/order builder and bind values
+in DECLARE. Catalog reads use a trusted search path; DECLARE/FETCH retain the connection's
+original path so custom operators (e.g. citext), functions and RLS behave as in grid reads.
+Full-table exports omit the query and retain unspecified ordering. Optional `columns` selects
+unique, existing names in table column order; filtering/sorting still uses the complete table.
+Omission means all columns, and an empty selection is rejected rather than silently broadened.
+Non-null values (including empty strings and headers) are quoted; SQL NULL
 is an unquoted empty field. Per-query text parsing and array-mode rows preserve precision and
 hostile column names. An ACCESS SHARE lock, namespace tuple-version fences and cursor field
 relation OIDs verify the bound target before response headers. The cursor supplies a consistent
@@ -177,11 +188,24 @@ snapshot without OFFSET pagination and respects the role's RLS visibility. Zero-
 non-standalone tables are rejected explicitly. Abort/cancellation destroys only the leased
 client; successful/error completion rolls back the read-only transaction before reuse.
 
-`/export` accepts only connection/schema/table GET parameters and captures one generation-checked
-pool. Loopback/session guards still apply; cross-origin requests are rejected. Native attachment
-downloads avoid buffering the whole file in browser JavaScript. The export panel warns about
-raw spreadsheet formulas and links to a new tab so initial errors remain readable, not bogus
-CSV attachments. Responses are no-store/nosniff/same-origin; filenames are safely encoded.
+`/export` accepts only connection/schema/table GET parameters for full-table downloads.
+The UI uses a native URL-encoded POST form with one JSON `export` field, avoiding URL
+length limits and filter values in URLs/history. Both validate strict structured arguments and
+capture one generation-checked pool. Loopback/session guards still apply; cross-origin requests
+are rejected, and POST requires a matching Origin and the expected form content type. Native attachment
+downloads avoid buffering the whole file in browser JavaScript. `CsvExport.svelte` captures
+requests and submits to a hidden, script-disabled download frame, without navigating the app or
+opening tabs. A new request replaces the previous frame; already-started attachments belong to
+the browser download manager. Initial error documents appear in the app, not as CSV files.
+The toolbar downloads all matching rows/columns immediately; the sidebar downloads the full
+table. A brief, dismissible request acknowledgement (or modal button label) confirms the click,
+not transfer completion; initial errors replace it. Its timer resets per request and is cleared
+on unmount. Optional Export options opens a modal with all columns initially checked, preserving
+the action's captured table/query scope. The schema-editing Sheet no longer handles CSV.
+Options/errors remain available for correction; browser-native downloads report later transfer
+failures. Browser-level URL blocking that produces neither a download nor a frame load event
+cannot be detected by this native handoff; there is no speculative failure timeout. Query exports use a fresh cursor snapshot, not the grid's displayed row versions.
+Responses are no-store/nosniff/same-origin; filenames are safely encoded.
 
 ## SQL console
 
@@ -462,7 +486,9 @@ contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted d
 Table-action regressions cover SQL round-trips, independent/cross-column sequence defaults,
 sequence exhaustion, dynamic CHECK rejection, self-FK ordering, RLS and unchanged sources.
 CSV tests cover exact bytes, multiple batches, snapshot visibility, permissions, catalog races,
-abort/error cleanup and route security. SQL-console tests cover exact/duplicate-name multiple
+abort/error cleanup and GET/POST route security. Filtered exports are compared with both native
+SQL and paginated grid reads, including multi-sort/NULLs/tie-breaks, FK tuples, hostile names,
+RLS, custom operator/search-path semantics, empty matches and native comparison errors. SQL-console tests cover exact/duplicate-name multiple
 results, preview bounds without truncating writes, transaction errors/ReadyForQuery ordering,
 session isolation, cancellation races, disposal/expiry, unsupported COPY and unknown outcomes.
 Connection and runes-state tests verify generation ownership, draft retention and no replay;
@@ -474,7 +500,10 @@ Draft-persistence checks cover exact restoration without execution, duplicate-ta
 database/generation isolation, genuine BFCache, real quota exhaustion and cancelled-reload
 recovery, denied storage/locks, external conflicts and unchanged table-edit guards.
 Browser checks verify actual clipboard contents and
-native full-table downloads (including filtered grids), error tabs, focus and narrow panels.
+native full-table, filtered/sorted and selected-column downloads against exact PostgreSQL
+bytes/order. Checks include composite FK constraints, long form values, empty matches, inline
+initial errors, focus and narrow modals. Concurrent 32.8 MB downloads survive frame replacement
+with exact hashes; midstream failures cancel browser downloads rather than producing success.
 Browser filter checks cover keyboard focus, same-column ranges,
 NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
 empty-page/table/no-match/error states.

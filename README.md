@@ -145,12 +145,20 @@ enum/namespace management and replacing existing primary keys are not supported.
   foreign keys, triggers, rules, policies, grants and ownership are not copied. RLS flags remain,
   so a copy without policies may deny access. PostgreSQL default privileges apply to the new
   table; external types, functions and unowned sequences remain shared.
-- **Export CSV** downloads all accessible rows from an ordinary standalone table, using one
-  cursor snapshot rather than the displayed page. Large exports stream to the browser.
+- **Export CSV** in the sidebar table menu downloads all accessible rows from an ordinary
+  standalone table, ignoring grid filters and pagination.
+- **Export query results** (the toolbar download button) exports every row matching the current
+  filters, including foreign-key navigation, in the grid's sort order—not just the current page
+  or checked rows. Both exports use a fresh cursor snapshot and stream directly to the browser.
   NULL is an unquoted empty field; empty text is quoted. Numbers and other PostgreSQL text
   values are not converted through JavaScript. Raw spreadsheet formulas are also preserved:
   import untrusted data as text rather than opening it directly in a spreadsheet.
-  The download opens in a new tab; initial errors appear there instead of becoming CSV files.
+  Downloads start immediately with all columns, without an info panel or new tab. A brief
+  confirmation acknowledges the request, not completion. Initial errors appear in the app;
+  later transfer failures are reported by your browser's download manager.
+- **Export options** beside the toolbar download button or in the sidebar table menu opens a column-selection
+  modal. All columns start selected; selected columns retain table order. Row scope remains the
+  same as the action: matching rows from the toolbar, all accessible rows from the sidebar.
 
 ## SQL editor
 

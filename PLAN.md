@@ -10,6 +10,11 @@ Preserve PostgreSQL values exactly. Navigation, background refreshes, and connec
 must never silently discard edits or send them to a different target. Favor simple, readable
 solutions; add infrastructure only when a concrete feature needs it.
 
+Keep Connections and Settings as separate UI entry points: Connections manages client-side
+profiles and database targets; Settings manages supported options for the selected database
+and clearly scoped sessions/roles. Expand reusable SQL and database administration without
+introducing Supabase platform services or nonfunctional navigation placeholders.
+
 ## TODO
 
 Finish and verify the active item before starting the next. Queue new feature requests here
@@ -140,9 +145,117 @@ reload/BFCache conflicts, real quota recovery, denied storage, clearing and reta
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 
-## Later
+## Queued requests
 
+These are planned, not implemented. Choose the next item before starting; finish and verify
+one feature at a time. Preserve the completed items above in their existing order.
+
+### [x] Direct CSV downloads and optional column selection
+
+Both export actions download all columns immediately, without an info panel or new tab.
+Optional column-selection modals preserve table order and full-table versus filtered scope.
+Brief request confirmations acknowledge clicks without claiming completion; errors replace them.
+Native streaming, exact projections, retained error state, concurrent large downloads,
+notification timing and keyboard/narrow layouts are verified. Use modals for interaction options like this; reserve
+right-hand panels for database manipulation.
+
+### [ ] Resizable left and right panels
+
+Make the left navigation panel and right-hand editor/details panels resizable with pointer
+and keyboard controls. Reuse existing right-sheet resizing where applicable. Keep sensible
+width bounds and controls reachable on narrow screens; resizing must preserve drafts and focus.
+
+### [ ] Connections: multiple database profiles
+
+Give Connections its own UI, separate from Settings. Manage named profiles for multiple
+servers/databases: add, edit, remove, connect and switch targets. Keep credential persistence
+opt-in, with the existing unencrypted-storage warning and Remember/Forget protections.
+Preserve database-scoped SQL drafts/snippets and guard open transactions, unsaved work,
+stale generations and cross-tab changes so commands never reach a replacement target.
+Start with multiple saved profiles and one active target per workspace; decide separately
+whether simultaneous connected workspaces are needed. A profile is not a PostgreSQL database:
+adding/removing a connection must not create/drop a database.
+
+### [ ] Settings: database administration, not connection credentials
+
+Add a separate Settings entry point for the selected target. Expose only implemented,
+permission-aware controls; host, credentials and TLS policy stay in Connections.
+
+- [ ] Extensions: list installed and server-available extensions/versions; install, update
+  and remove with explicit Apply, dependency warnings and no automatic CASCADE. Installing
+  missing server packages is outside the app; availability and permissions are authoritative.
+- [ ] Curated settings: inspect effective values and configured defaults, then deliberately
+  change/reset useful options such as search_path, timezone, statement timeout and lock timeout.
+  Make SQL-session versus database/role-default scope explicit, including new-connection effects.
+  Coordinate database timeouts with app-side limits rather than offering ineffective controls.
+  No broad ALTER SYSTEM, server filesystem, authentication-file or restart management UI.
+
+### [ ] SQL library: saved snippets and favourites
+
+Save named SQL snippets independently of the per-tab recovery draft. Provide explicit Save,
+open, rename, delete, search and heart/favourite actions, with a favourites view/order.
+Persist locally and make saved items available across browser tabs; decide database-specific
+versus reusable/global scope before implementation. Preserve unfinished editor text when
+opening another item and prevent concurrent saves from silently overwriting each other.
+Opening a snippet only loads editable SQL—it never executes it or silently changes connections.
+Keep sensitive-SQL storage warnings and failures explicit; cloud sharing/sync is not required.
+
+### [ ] SQL templates and examples
+
+Provide a small, first-party collection of useful PostgreSQL examples: common queries,
+transactions, schema operations and inspection. Load a copy into the editor, with clear target
+placeholders and warnings for destructive examples; never execute on selection. Users can
+adapt examples and save them as their own snippets. No copied non-MIT Studio templates,
+template engine, or large tutorial surface unless concrete usage calls for it.
+
+### [ ] Evaluate table-level realtime controls
+
+Distinguish our existing Live polling from Supabase Realtime's replication/publication-backed
+change delivery. Decide whether the desired feature is faster event-driven grid refresh,
+publication membership management for an existing consumer, or both. A publication alone
+does not deliver browser updates; LISTEN/NOTIFY alone does not observe arbitrary table writes.
+
+Retain polling until an end-to-end alternative is justified. Assess privileges, required server
+configuration, connection lifecycle, missed-event recovery and local-edit protection. Do not
+silently add triggers, publications or replication slots, or introduce unbounded WAL retention.
+Only expose an Enable realtime action if the corresponding consumer and delivery path exist;
+do not add a cosmetic Supabase-style toggle or require Supabase services.
+
+## Outstanding core work
+
+Agreed order: filtered/sorted CSV export, indexes, UNIQUE/CHECK constraints, then foreign keys.
+Each feature must pass focused tests and browser checks before the next starts.
+
+- [x] Toolbar CSV exports every matching row in grid order, including exact FK navigation
+  constraints, independent of pages/checked rows. Full-table export stays separate. Shared
+  validation/query building, streaming snapshots and native operator semantics are covered by
+  regression tests. Browser downloads verify exact bytes/order, long filters, errors, guards
+  and narrow layouts.
+- [ ] Index tools: inspect/create/drop indexes alongside their tables. Preserve explicit Apply,
+  native errors and catalog/concurrency protections. Assess concurrent operations separately:
+  they cannot share the existing transactional DDL path and may leave invalid indexes on failure.
+- [ ] UNIQUE and CHECK constraint tools: inspect/create/change/drop, with explicit Apply,
+  native validation, dependency handling and catalog/concurrency protections.
+- [ ] Foreign-key tools: inspect/create/change/drop, including composite tuples, referenced-key
+  eligibility and referential actions. Keep controls table-scoped and preserve the same guards.
 - [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
   and opens the browser. Bundle production assets and verify the Bun launch path.
+
+## Later / candidates
+
+These capture discussed ideas and existing scope gaps, not commitments to build them all.
+
+- [ ] Roles & permissions workspace: roles, memberships, grants and RLS policies across tables.
+  Start with inspection; privilege changes need explicit scope and confirmation. PostgreSQL
+  roles are not Supabase Auth users or hosted application authentication.
+- [ ] Schema overview: a read-only relationship/ER diagram with navigation to tables.
+- [ ] Activity workspace when useful: running queries, open transactions and blocking locks;
+  permission-aware cancellation/termination with clear consequences for other sessions.
+- [ ] Remaining schema coverage: schema/namespace and enum management, replacing existing PKs,
+  and browsing views/materialized views. Design each separately rather than bundling a schema IDE.
+- [ ] SQL editor tabs and execution history, if saved snippets and current drafts prove insufficient.
+  History must not become an implicit execution/replay or sensitive-data retention mechanism.
+- [ ] Nested/OR filters when the current AND-only filter model becomes limiting.
+- [ ] Docker distribution alongside the CLI, if needed.
 
 Consider virtualization only if larger pages demonstrate a need.

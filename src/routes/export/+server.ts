@@ -1,9 +1,9 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { activePool, safeErrorMessage } from '#lib/server/connections.js';
 import { exportCsv } from '#lib/server/export.js';
-import { schemaTargetSchema } from '#lib/schema-validation.js';
+import { csvExportSchema } from '#lib/schema-validation.js';
 
-export const GET: RequestHandler = async ({ request, url }) => {
+const download: RequestHandler = async ({ request, url }) => {
 	const headers = {
 		'cache-control': 'no-store',
 		'x-content-type-options': 'nosniff',
@@ -11,19 +11,35 @@ export const GET: RequestHandler = async ({ request, url }) => {
 	};
 	const origin = request.headers.get('origin');
 	const site = request.headers.get('sec-fetch-site');
-	if ((origin !== null && origin !== url.origin)
+	if ((request.method === 'POST' ? origin !== url.origin : origin !== null && origin !== url.origin)
 		|| (site !== null && site !== 'same-origin' && site !== 'none')) {
 		return new Response('CSV export requires a same-origin request.', {
 			status: 403, headers: { ...headers, 'content-type': 'text/plain; charset=utf-8' }
 		});
 	}
 	try {
-		const params = url.searchParams;
-		const keys = ['connection', 'schema', 'table'];
-		if ([...params].length !== keys.length || keys.some((key) => params.getAll(key).length !== 1)) {
-			throw new Error('Expected exactly one connection, schema and table parameter');
+		let input: unknown;
+		if (request.method === 'POST') {
+			if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {
+				return new Response('CSV export requires a URL-encoded form.', {
+					status: 415, headers: { ...headers, 'content-type': 'text/plain; charset=utf-8' }
+				});
+			}
+			// Native form downloads stream without a JS blob or filter values in URLs/history.
+			const form = await request.formData();
+			if (url.search || [...form].length !== 1 || typeof form.get('export') !== 'string') {
+				throw new Error('Expected exactly one export form field and no URL parameters');
+			}
+			input = JSON.parse(form.get('export') as string);
+		} else {
+			const params = url.searchParams;
+			const keys = ['connection', 'schema', 'table'];
+			if ([...params].length !== keys.length || keys.some((key) => params.getAll(key).length !== 1)) {
+				throw new Error('Expected exactly one connection, schema and table parameter');
+			}
+			input = Object.fromEntries(params);
 		}
-		const parsed = schemaTargetSchema['~standard'].validate(Object.fromEntries(params));
+		const parsed = csvExportSchema['~standard'].validate(input);
 		if ('issues' in parsed) throw new Error(parsed.issues[0].message);
 		const target = parsed.value;
 		const pool = activePool(target.connection);
@@ -44,3 +60,6 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		});
 	}
 };
+
+export const GET = download;
+export const POST = download;

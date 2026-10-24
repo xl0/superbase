@@ -109,15 +109,26 @@ export interface RowFilter {
 }
 export const MAX_FILTERS = 20;
 
-export interface RowsArgs extends TableTarget {
-	page: number;
-	pageSize: number;
+/** Shared selection/order for paginated reads and unpaginated CSV exports. */
+export interface RowQuery {
 	sort: Sort[];
 	/** Broad text search remains available to the reference picker. */
 	search: string;
 	/** Exact foreign-key navigation constraints, combined with user filters using AND. */
 	filter?: Values;
 	filters?: RowFilter[];
+}
+
+export interface RowsArgs extends TableTarget, RowQuery {
+	page: number;
+	pageSize: number;
+}
+
+export interface CsvExportArgs extends TableTarget {
+	/** Omitted means all columns; explicit selections are emitted in table column order. */
+	columns?: string[];
+	/** Omitted for full-table export; present to apply the grid's filters and ordering. */
+	query?: RowQuery;
 }
 
 export interface SaveArgs extends TableTarget {

@@ -8,6 +8,7 @@
 	import ConnectionDialog from './ConnectionDialog.svelte';
 	import DataGrid from './DataGrid.svelte';
 	import SchemaEditor from './SchemaEditor.svelte';
+	import CsvExport from './CsvExport.svelte';
 	import GridFooter from './GridFooter.svelte';
 	import Sidebar from './Sidebar.svelte';
 	import TableToolbar from './TableToolbar.svelte';
@@ -18,29 +19,34 @@
 
 	let { status }: { status: ConnectionStatus } = $props();
 	let connectOpen = $state(false);
+	let exportOpen = $state(false);
+	let csvExport: CsvExport;
 	let workspace = $state<'tables' | 'sql'>('tables');
 	let sqlOpened = $state(false);
 	const sql = new SqlState(untrack(() => status.connection!));
 	let workspaceChosen = false;
 
 	function switchWorkspace(next: 'tables' | 'sql') {
-		if (editor.navigationBlocked) return;
+		if (editor.navigationBlocked || exportOpen) return;
 		workspaceChosen = true;
 		workspace = next;
 		if (next === 'sql') sqlOpened = true;
 	}
-	let schemaEdit = $state.raw<{ mode: SchemaEditMode; target: TableTarget; anchor: HTMLElement | null } | null>(null);
+	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' }>; target: TableTarget; anchor: HTMLElement | null } | null>(null);
 
 	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) {
-		if (editor.navigationBlocked || editor.loading) return;
+		if (editor.navigationBlocked || editor.loading || exportOpen) return;
+		const target = { connection: editor.connection, schema: table?.schema ?? editor.activeSchema, table: table?.name ?? editor.activeTableName };
+		const trigger = anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+		if (mode.kind === 'exportCsv') {
+			csvExport.start({ ...target, ...(mode.query ? { query: mode.query } : {}) }, table ?? editor.table, !!mode.options, trigger);
+			return;
+		}
 		editor.schemaEditing = true;
-		schemaEdit = {
-			mode, anchor: anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null),
-			target: { connection: editor.connection, schema: table?.schema ?? editor.activeSchema, table: table?.name ?? editor.activeTableName }
-		};
+		schemaEdit = { mode, anchor: trigger, target };
 	}
 
-	const liveActive = () => document.visibilityState === 'visible' && !connectOpen && workspace === 'tables' && !sql.busy;
+	const liveActive = () => document.visibilityState === 'visible' && !connectOpen && !exportOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
 		void sql.restoreDraft().then(() => {
@@ -111,7 +117,7 @@ onstorage={(event) => sql.checkDraft(event.key)} />
 					</div>
 				</div>
 			{:else}
-				<TableToolbar />
+				<TableToolbar onedit={openSchema} />
 				{#if editor.error && (editor.rows.length || editor.loading)}
 					<div role="alert" class="flex shrink-0 items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 						<span class="min-w-0 break-words">{editor.error}</span>
@@ -159,4 +165,5 @@ onstorage={(event) => sql.checkDraft(event.key)} />
 
 <ConnectionDialog bind:open={connectOpen} {status} sqlProtected={() => { sql.checkDraft(); return sql.protectedWork; }} sqlBusy={sql.busy || sql.cancelling}
 	onsuccess={() => sql.prepareReload()} />
+<CsvExport bind:this={csvExport} bind:open={exportOpen} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} target={schemaEdit.target} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}

@@ -18,7 +18,7 @@
 	import TextEditor from './TextEditor.svelte';
 
 	let { mode, target: initialTarget, onclose, returnFocus }: {
-		mode: SchemaEditMode; target: TableTarget; onclose: () => void; returnFocus?: HTMLElement | null;
+		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' }>; target: TableTarget; onclose: () => void; returnFocus?: HTMLElement | null;
 	} = $props();
 	const intent = untrack(() => mode);
 	const target = untrack(() => ({ ...initialTarget }));
@@ -27,10 +27,8 @@
 	const id = $props.id();
 	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: 'Delete table',
 		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key',
-		duplicateTable: 'Duplicate table', copySchema: 'Copy table schema', exportCsv: 'Export CSV' }[intent.kind];
+		duplicateTable: 'Duplicate table', copySchema: 'Copy table schema' }[intent.kind];
 	const copying = intent.kind === 'copySchema';
-	const exporting = intent.kind === 'exportCsv';
-	const exportUrl = `/export?${new URLSearchParams({ ...target })}`;
 	let exported = $state<SchemaExport | null>(null);
 	let copied = $state(false);
 	let includeRows = $state(false);
@@ -80,7 +78,6 @@
 		let cancelled = false;
 		void (async () => {
 			try {
-				if (exporting) return;
 				if (copying) {
 					const result = tableSchema(target);
 					await result.refresh();
@@ -133,7 +130,7 @@
 	}
 
 	async function apply() {
-		if (!canApply || intent.kind === 'copySchema' || intent.kind === 'exportCsv') return;
+		if (!canApply || intent.kind === 'copySchema') return;
 		let operation: SchemaOperation;
 		switch (intent.kind) {
 			case 'createTable': operation = { kind: intent.kind, columns }; break;
@@ -158,7 +155,7 @@
 	async function focusField(event?: Event) {
 		event?.preventDefault();
 		await tick();
-		(panel?.querySelector<HTMLElement>('[data-schema-fields] input:not(:disabled), [data-schema-fields] button:not(:disabled), [data-copy-schema]:not(:disabled), [data-export-csv]')
+		(panel?.querySelector<HTMLElement>('[data-schema-fields] input:not(:disabled), [data-schema-fields] button:not(:disabled), [data-copy-schema]:not(:disabled)')
 			?? panel?.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
 	}
 
@@ -207,11 +204,7 @@
 		<div data-schema-fields class="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6" aria-busy={loading || saving}>
 			{#if loading}
 				<div role="status" class="space-y-4"><span class="sr-only">Loading schema…</span><Skeleton class="h-8 w-2/3" /><Skeleton class="h-32 w-full" /><Skeleton class="h-32 w-full" /></div>
-			{:else if exporting}
-				<p class="text-sm">Download all rows visible to your database role, not just the current page or filtered results.</p>
-				<p class="text-xs text-muted-foreground">CSV preserves PostgreSQL text values. NULL is an unquoted empty field; empty text is quoted. Large exports stream directly to your browser.</p>
-				<p class="text-xs text-muted-foreground">Raw values may contain spreadsheet formulas. Import untrusted data as text rather than opening it as an executable spreadsheet.</p>
-				<p class="text-xs text-muted-foreground">The download opens in a new tab. Any initial database error appears there instead of a CSV file.</p>
+
 			{:else if copying && exported}
 				<ul class="list-disc space-y-2 pl-4 text-xs text-muted-foreground">
 					{#each exported.warnings as warning}<li>{warning}</li>{/each}
@@ -290,10 +283,8 @@
 		<div class="shrink-0 space-y-3 border-t px-5 py-4">
 			{#if error}<p role="alert" class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-destructive">{error}</p>{/if}
 			<div class="flex justify-end gap-2">
-				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>{copying || exporting ? 'Close' : 'Cancel'}</Button>
-				{#if exporting}
-					<Button data-export-csv href={exportUrl} target="_blank" rel="noopener noreferrer" size="sm">Download CSV</Button>
-				{:else if copying}
+				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>{copying ? 'Close' : 'Cancel'}</Button>
+				{#if copying}
 					<Button data-copy-schema size="sm" disabled={loading || saving || !exported} onclick={copySQL}><Copy /><span aria-live="polite">{saving ? 'Copying…' : copied ? 'Copied' : 'Copy SQL'}</span></Button>
 				{:else}
 					<Button variant={destructive ? 'destructive' : 'default'} size="sm" disabled={!canApply} onclick={apply}>{saving ? 'Applying…' : 'Apply'}</Button>

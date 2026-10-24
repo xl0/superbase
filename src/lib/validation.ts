@@ -1,4 +1,4 @@
-import type { DeleteArgs, FilterOperator, RowIdentity, RowsArgs, SaveArgs, Sort, TableTarget, Values } from './types.js';
+import type { DeleteArgs, FilterOperator, RowIdentity, RowQuery, RowsArgs, SaveArgs, Sort, TableTarget, Values } from './types.js';
 import { FILTER_OPERATORS, MAX_FILTERS, MAX_SORTS } from './types.js';
 
 /** Small Standard Schema adapter for the remote boundary; no validation dependency needed. */
@@ -89,8 +89,8 @@ export const switchSchema = schema((input) => {
 	return { expected: value.expected === null ? null : text(value.expected, 100) };
 });
 
-export const rowsSchema = schema<RowsArgs>((input) => {
-	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search', 'filter', 'filters']);
+/** Parse shared query fields after the caller validates its enclosing object's keys. */
+export function rowQuery(value: Record<string, unknown>): RowQuery {
 	if (!Array.isArray(value.sort) || value.sort.length > MAX_SORTS) throw new Error(`Expected at most ${MAX_SORTS} sort rules`);
 	const columns = new Set<string>();
 	const sort = Array.from(value.sort, (input): Sort => {
@@ -127,11 +127,18 @@ export const rowsSchema = schema<RowsArgs>((input) => {
 		});
 	}
 	return {
-		...target(value), page: integer(value.page, 0, 1_000_000), pageSize: integer(value.pageSize, 1, 500),
 		search: text(value.search, 1024, true),
 		...(Object.hasOwn(value, 'filter') ? { filter: values(value.filter) } : {}),
 		...(filters ? { filters } : {}),
 		sort
+	};
+}
+
+export const rowsSchema = schema<RowsArgs>((input) => {
+	const value = object(input, ['connection', 'schema', 'table', 'page', 'pageSize', 'sort', 'search', 'filter', 'filters']);
+	return {
+		...target(value), page: integer(value.page, 0, 1_000_000), pageSize: integer(value.pageSize, 1, 500),
+		...rowQuery(value)
 	};
 });
 

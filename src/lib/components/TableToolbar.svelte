@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Check, Plus, Radio, RotateCw, Trash2, X } from '@lucide/svelte';
+	import { Check, Download, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
+	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -8,12 +9,21 @@
 	import FilterBar from './FilterBar.svelte';
 	import SortMenu from './SortMenu.svelte';
 
+	let { onedit }: { onedit: (mode: SchemaEditMode, anchor: HTMLElement) => void } = $props();
 	let deleteOpen = $state(false);
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
 	const exactCount = $derived(!editor.loading && !editor.error && editor.rowsPage === 0 && !editor.hasMore
 		? editor.rows.length : null);
+
+	function exportRows(options: boolean, anchor: HTMLElement) {
+		onedit({ kind: 'exportCsv', options, query: {
+			search: '', sort: editor.sort.map((rule) => ({ ...rule })),
+			filters: editor.filters.map((filter) => ({ ...filter })),
+			...(editor.filter ? { filter: { ...editor.filter } } : {})
+		} }, anchor);
+	}
 
 	async function deleteRows() {
 		if (blocked || !editor.tableEditable) return;
@@ -46,6 +56,14 @@
 			<FilterBar />
 			<div class="ml-auto flex flex-wrap items-center gap-2">
 				<SortMenu />
+				<div class="flex shrink-0">
+					<Button variant="outline" size="icon-sm" class="rounded-r-none" disabled={blocked || !editor.table.columns.length}
+						aria-label="Export query results" title="Download all matching rows and columns as CSV"
+						onclick={(event) => exportRows(false, event.currentTarget)}><Download /></Button>
+					<Button variant="outline" size="icon-sm" class="rounded-l-none border-l-0"
+						disabled={blocked || !editor.table.columns.length} aria-label="Query export options" title="Choose export columns"
+						onclick={(event) => exportRows(true, event.currentTarget)}><Settings2 /></Button>
+				</div>
 				<Button variant={editor.live ? 'secondary' : 'outline'} size="sm" class="text-xs" aria-label="Live updates" aria-pressed={editor.live}
 					title="Check for changes every 5 seconds while this tab is visible" onclick={() => editor.setLive(!editor.live)}>
 					<Radio class={editor.live ? 'text-primary' : ''} />Live

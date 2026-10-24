@@ -1,6 +1,6 @@
 import type { ColumnDefault, ColumnSpec, SchemaChangeArgs, SchemaOperation } from './schema.js';
-import type { TableTarget } from './types.js';
-import { object, schema, target, text } from './validation.js';
+import type { CsvExportArgs, TableTarget } from './types.js';
+import { object, rowQuery, schema, target, text } from './validation.js';
 
 function exact(input: unknown, keys: string[]): Record<string, unknown> {
 	const value = object(input, keys);
@@ -111,6 +111,25 @@ function operation(input: unknown): SchemaOperation {
 export const schemaTargetSchema = schema<TableTarget>((input) =>
 	schemaTarget(exact(input, ['connection', 'schema', 'table']))
 );
+
+export const csvExportSchema = schema<CsvExportArgs>((input) => {
+	const value = object(input, ['connection', 'schema', 'table', 'query', 'columns']);
+	let columns: string[] | undefined;
+	if (Object.hasOwn(value, 'columns')) {
+		if (!Array.isArray(value.columns) || !value.columns.length || value.columns.length > 1600) {
+			throw new Error('Select between 1 and 1600 columns');
+		}
+		columns = Array.from(value.columns, name);
+		if (new Set(columns).size !== columns.length) throw new Error('Duplicate export column');
+	}
+	return {
+		...schemaTarget(value),
+		...(columns ? { columns } : {}),
+		...(Object.hasOwn(value, 'query') ? {
+			query: rowQuery(object(value.query, ['sort', 'search', 'filter', 'filters']))
+		} : {})
+	};
+});
 
 export const schemaChangeSchema = schema<SchemaChangeArgs>((input) => {
 	const value = exact(input, ['connection', 'schema', 'table', 'expected', 'operation']);

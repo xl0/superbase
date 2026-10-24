@@ -100,7 +100,7 @@ keyboard/narrow layouts and metadata refresh. Inheritance/partitions, FK/index/e
 management and existing PK replacement remain outside this first pass.
 
 [x] Schema actions live in grid column menus and a sticky add-column header; table operations
-sit beside the table name. The separate Definition view is removed. Browser checks verify
+sit in sidebar table-row menus. The separate Definition view is removed. Browser checks verify
 explicit Apply, confirmations, metadata access, focus restoration, sorting, protected drafts,
 clipboard boundaries and zero-column tables. Narrow filter/pagination controls fit the viewport.
 
@@ -108,6 +108,10 @@ clipboard boundaries and zero-column tables. Narrow filter/pagination controls f
 length/precision/scale options. Type-specific defaults/literal editors preserve drafts and exact
 existing definitions; incompatible choices block Apply without resets. SQL previews, native
 round-trips, lossless defaults, custom types, keyboard flows and narrow layouts are verified.
+
+[x] Table operations use each sidebar row’s ⋮ menu, not breadcrumbs. Explicit targets keep
+inactive-table actions safe; Cancel and unrelated deletion preserve the current table.
+Browser checks verify native writes, confirmations, guards, narrow menus and restored focus.
 
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.

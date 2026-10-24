@@ -106,8 +106,8 @@ and Live updates; changing tables resets it.
 ## Schema editing
 
 Use **+** in the sidebar to create a table. Open a column header’s chevron menu to **Edit
-column**, **Delete column**, or copy its name. The **+** header adds a column. The **…** menu
-beside the table name offers rename/delete and adding a primary key to a keyless table.
+column**, **Delete column**, or copy its name. The **+** header adds a column. Each table’s **⋮**
+menu in the sidebar offers rename/delete and adding a primary key to a keyless table.
 Everything stays in the grid; there is no separate Definition view. New tables start with
 an identity `id` primary key; you can change the columns and select a composite key.
 
@@ -138,7 +138,7 @@ updates itself; open cell editors, new-row forms and selections instead get a ch
 notice.
 Polling pauses while the tab is hidden or a connection/schema panel is displayed. It reruns the current query, so turn it off for expensive searches.
 
-Row data without a primary key is read-only; add one through **Table actions** to enable writes.
+Row data without a primary key is read-only; add one through its sidebar **⋮** menu to enable writes.
 Generated fields can be inspected but not edited.
 Row counts are exact when the entire unfiltered table is loaded on the first page; `~` marks
 PostgreSQL estimates that may be stale. Pagination is not a snapshot across concurrent changes.

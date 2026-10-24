@@ -129,10 +129,14 @@ cannot be replaced. Native constraints and permissions remain authoritative. Dro
 can remove its own indexes/constraints; external dependencies block restricted drops.
 
 `SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
-serves create/add/alter forms. The sidebar creates tables; the table-name menu exposes rename,
-delete and keyless-table PK creation. Grid header menus expose column edit/delete, and a trailing
+serves create/add/alter forms. The sidebar creates tables; each table row's `TableMenu` exposes
+rename, delete and keyless-table PK creation. Breadcrumbs are display-only. Opening a menu/form
+captures its own table target without changing the active grid; cancelling preserves that view.
+Deleting another table leaves the current table selected. Grid header menus expose column edit/delete, and a trailing
 sticky + header adds columns, including to zero-column tables. There is no separate Definition view.
-Menus pass stable triggers to the panel for focus restoration; removed triggers fall back to the grid. Apply or Ctrl/Cmd+Enter submits; outside clicks do nothing, Cancel confirms dirty
+The panel snapshots its menu trigger before parent intent teardown for focus restoration;
+removed triggers fall back to the grid. Apply or Ctrl/Cmd+Enter submits; outside clicks do
+nothing, Cancel confirms dirty
 form discard, and destructive operations require the exact target name. `schemaEditing` blocks
 navigation, row writes and polling. Successful DDL invalidates metadata and clears stale query
 conditions/selections before reloading the created/renamed/current table. A table with its last

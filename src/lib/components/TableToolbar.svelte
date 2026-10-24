@@ -1,17 +1,13 @@
 <script lang="ts">
-	import { Check, Ellipsis, KeyRound, Pencil, Plus, Radio, RotateCw, Trash2, X } from '@lucide/svelte';
+	import { Check, Plus, Radio, RotateCw, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
-	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
-	import type { SchemaEditMode } from '#lib/schema.js';
 	import InsertRow from './InsertRow.svelte';
 	import FilterBar from './FilterBar.svelte';
 	import SortMenu from './SortMenu.svelte';
 
-	let { onedit }: { onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null) => void } = $props();
-	let tableTrigger = $state<HTMLButtonElement | null>(null);
 	let deleteOpen = $state(false);
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
@@ -32,21 +28,6 @@
 			<span class="text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
 			<span class="truncate font-medium">{editor.table.name}</span>
 		</div>
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props })}
-					<Button {...props} bind:ref={tableTrigger} variant="ghost" size="icon-xs" disabled={blocked} aria-label="Table actions"><Ellipsis /></Button>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="start" class="w-52" onCloseAutoFocus={(event) => { if (editor.schemaEditing) event.preventDefault(); }}>
-				<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'renameTable' }, tableTrigger)}><Pencil />Rename table</DropdownMenu.Item>
-				{#if !editor.tableEditable}
-					<DropdownMenu.Item disabled={blocked || !editor.table.columns.length} onSelect={() => onedit({ kind: 'addPrimaryKey' }, tableTrigger)}><KeyRound />Add primary key</DropdownMenu.Item>
-				{/if}
-				<DropdownMenu.Separator />
-				<DropdownMenu.Item variant="destructive" disabled={blocked} onSelect={() => onedit({ kind: 'dropTable' }, tableTrigger)}><Trash2 />Delete table</DropdownMenu.Item>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
 		{#if !editor.hasFilters && editor.table.rowCount >= 0}
 			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground"
 				title={exactCount === null ? 'PostgreSQL row estimate; statistics may be stale.' : 'Exact row count from the last loaded page.'}>

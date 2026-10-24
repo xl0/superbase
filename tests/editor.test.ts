@@ -222,6 +222,28 @@ test('DDL snapshots intent, protects navigation/polling, refreshes metadata and 
 	assert.equal(s.busy, false);
 });
 
+test('sidebar DDL targets inactive tables without switching away on an unrelated drop', async () => {
+	const { editor: s, calls, tables, deferSchema } = await fixture();
+	tables.push({ ...tables[0], name: 'c' });
+	await s.selectTable('public', 'b');
+	s.schemaEditing = true;
+	deferSchema(async (args) => {
+		const index = tables.findIndex((table) => table.schema === args.schema && table.name === args.table);
+		assert.notEqual(index, -1);
+		if (args.operation.kind === 'dropTable') tables.splice(index, 1);
+		else tables[index].name = args.operation.name;
+	});
+	await s.applySchemaChange({ connection: 'connection-1', schema: 'public', table: 'c', expected: 'fingerprint', operation: { kind: 'dropTable' } });
+	assert.equal(calls[0].args.table, 'c');
+	assert.equal(s.activeTableName, 'b');
+	await s.applySchemaChange({ connection: 'connection-1', schema: 'public', table: 'a', expected: 'fingerprint', operation: { kind: 'renameTable', name: 'renamed' } });
+	assert.equal(calls[1].args.table, 'a');
+	assert.equal(s.activeTableName, 'renamed');
+	assert.equal(tables[1].name, 'b');
+	await s.applySchemaChange({ connection: 'connection-1', schema: 'public', table: 'renamed', expected: 'fingerprint', operation: { kind: 'dropTable' } });
+	assert.equal(s.activeTableName, 'b');
+});
+
 test('dropping the last column retains the table through DDL and manual refresh', async () => {
 	const { editor: s, tables, deferSchema } = await fixture();
 	await s.selectTable('public', 'b');

@@ -4,6 +4,7 @@
 	import { schemaCatalog, schemaDefinition } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ColumnSpec, SchemaCatalog, SchemaDefinition, SchemaEditMode, SchemaOperation } from '#lib/schema.js';
+	import type { TableTarget } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { columnOptionsError } from '#lib/schema-options.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -15,11 +16,13 @@
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import SchemaColumnFields from './SchemaColumnFields.svelte';
 
-	let { mode, onclose, returnFocus }: {
-		mode: SchemaEditMode; onclose: () => void; returnFocus?: HTMLElement | null;
+	let { mode, target: initialTarget, onclose, returnFocus }: {
+		mode: SchemaEditMode; target: TableTarget; onclose: () => void; returnFocus?: HTMLElement | null;
 	} = $props();
 	const intent = untrack(() => mode);
-	const target = untrack(() => ({ connection: editor.connection, schema: editor.activeSchema, table: editor.activeTableName }));
+	const target = untrack(() => ({ ...initialTarget }));
+	// Parent props may disappear before the closing animation restores focus.
+	const anchor = untrack(() => returnFocus);
 	const id = $props.id();
 	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: 'Delete table',
 		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key' }[intent.kind];
@@ -153,7 +156,7 @@
 		onOpenAutoFocus={focusField} onkeydown={keydown}
 		onCloseAutoFocus={(event) => {
 			event.preventDefault();
-			void tick().then(() => (returnFocus?.isConnected ? returnFocus
+			void tick().then(() => (anchor?.isConnected ? anchor
 				: document.querySelector<HTMLElement>('[role="grid"]') ?? document.querySelector<HTMLElement>('button[aria-label="Create table"]'))?.focus());
 		}}>
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Adjustable separator supports keyboard resizing.) -->

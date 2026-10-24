@@ -277,8 +277,11 @@ export class EditorState {
 			this.filters = [];
 			this.filter = null;
 			this.sort = [];
-			this.activeSchema = submitted.schema;
-			this.activeTableName = submitted.operation.kind === 'renameTable' ? submitted.operation.name : submitted.table;
+			// Deleting another sidebar table should not switch the current table.
+			if (submitted.operation.kind !== 'dropTable') {
+				this.activeSchema = submitted.schema;
+				this.activeTableName = submitted.operation.kind === 'renameTable' ? submitted.operation.name : submitted.table;
+			}
 			// An acknowledged DDL write stays successful even if metadata refresh fails.
 			await this.#reload();
 		} finally { this.busy = false; }

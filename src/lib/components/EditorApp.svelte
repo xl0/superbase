@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { Database } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import type { ConnectionStatus } from '#lib/types.js';
+	import type { ConnectionStatus, Table, TableTarget } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import ConnectionDialog from './ConnectionDialog.svelte';
@@ -16,15 +16,15 @@
 
 	let { status }: { status: ConnectionStatus } = $props();
 	let connectOpen = $state(false);
-	let schemaEdit = $state<SchemaEditMode | null>(null);
+	let schemaEdit = $state.raw<{ mode: SchemaEditMode; target: TableTarget; anchor: HTMLElement | null } | null>(null);
 
-	let schemaAnchor = $state.raw<HTMLElement | null>(null);
-
-	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null) {
+	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) {
 		if (editor.navigationBlocked || editor.loading) return;
-		schemaAnchor = anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 		editor.schemaEditing = true;
-		schemaEdit = mode;
+		schemaEdit = {
+			mode, anchor: anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null),
+			target: { connection: editor.connection, schema: table?.schema ?? editor.activeSchema, table: table?.name ?? editor.activeTableName }
+		};
 	}
 
 	const liveActive = () => document.visibilityState === 'visible' && !connectOpen;
@@ -60,7 +60,7 @@
 	</main>
 {:else}
 	<div class="flex h-dvh bg-background text-foreground">
-		<Sidebar connection={status.connection!} onconnect={() => (connectOpen = true)} oncreate={() => openSchema({ kind: 'createTable' })} />
+		<Sidebar connection={status.connection!} onconnect={() => (connectOpen = true)} oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />
 		<main class="flex min-w-0 flex-1 flex-col">
 			{#if editor.tables.length === 0}
 				<div class="grid flex-1 place-items-center p-6">
@@ -77,7 +77,7 @@
 					</div>
 				</div>
 			{:else}
-				<TableToolbar onedit={openSchema} />
+				<TableToolbar />
 				{#if editor.error && (editor.rows.length || editor.loading)}
 					<div role="alert" class="flex shrink-0 items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 						<span class="min-w-0 break-words">{editor.error}</span>
@@ -99,7 +99,7 @@
 					</div>
 				{/if}
 				{#if !editor.tableEditable}
-					<p class="border-b border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">Read-only: this table has no primary key. Use Table actions to add one and enable row editing.</p>
+					<p class="border-b border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">Read-only: this table has no primary key. Use the table’s ⋮ menu in the sidebar to add one and enable row editing.</p>
 				{/if}
 					<div class="relative min-h-0 flex-1" aria-busy={editor.loading || editor.busy}>
 						{#key editor.tableKey}
@@ -118,4 +118,4 @@
 {/if}
 
 <ConnectionDialog bind:open={connectOpen} {status} />
-{#if schemaEdit}<SchemaEditor mode={schemaEdit} returnFocus={schemaAnchor} onclose={() => schemaEdit = null} />{/if}
+{#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} target={schemaEdit.target} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}

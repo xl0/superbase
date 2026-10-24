@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { Database, Plus, Search, Settings2, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import type { ConnectionInfo } from '#lib/types.js';
+	import type { ConnectionInfo, Table } from '#lib/types.js';
+	import type { SchemaEditMode } from '#lib/schema.js';
+	import TableMenu from './TableMenu.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 
-	let { connection, onconnect, oncreate }: { connection: ConnectionInfo; onconnect: () => void; oncreate: () => void } = $props();
+	let { connection, onconnect, oncreate, onedit }: {
+		connection: ConnectionInfo; onconnect: () => void; oncreate: () => void;
+		onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null, table?: Table) => void;
+	} = $props();
 	let tableSearch = $state('');
 	const id = $props.id();
 	const tables = $derived(editor.schemaTables.filter((table) => table.name.toLowerCase().includes(tableSearch.trim().toLowerCase())));
@@ -50,12 +55,15 @@
 	<nav aria-label="Tables" class="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
 		{#each tables as table (table.name)}
 			{@const active = editor.activeSchema === table.schema && editor.activeTableName === table.name}
-			<Button variant="ghost" size="sm" disabled={editor.busy} aria-current={active ? 'page' : undefined}
-				onclick={() => void editor.selectTable(table.schema, table.name)}
-				class={['mb-0.5 w-full justify-start gap-2 px-2 text-xs font-normal', active ? 'bg-muted text-foreground' : 'text-muted-foreground']}>
-				<Table2 class={['size-3.5', active && 'text-foreground']} />
-				<span class="truncate">{table.name}</span>
-			</Button>
+			<div class={['mb-0.5 flex items-center rounded-md hover:bg-muted', active ? 'bg-muted text-foreground' : 'text-muted-foreground']}>
+				<Button variant="ghost" size="sm" disabled={editor.busy} aria-current={active ? 'page' : undefined}
+					onclick={() => void editor.selectTable(table.schema, table.name)}
+					class="min-w-0 flex-1 justify-start gap-2 px-2 text-xs font-normal">
+					<Table2 class={['size-3.5', active && 'text-foreground']} />
+					<span class="truncate">{table.name}</span>
+				</Button>
+				<TableMenu {table} {onedit} />
+			</div>
 		{:else}
 			<p class="px-2 py-3 text-xs text-muted-foreground">{tableSearch ? 'No matching tables.' : 'No tables in this schema.'}</p>
 		{/each}

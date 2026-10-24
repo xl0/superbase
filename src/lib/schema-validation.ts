@@ -1,3 +1,4 @@
+import { INDEX_METHODS } from './schema.js';
 import type { ColumnDefault, ColumnSpec, SchemaChangeArgs, SchemaOperation } from './schema.js';
 import type { CsvExportArgs, TableTarget } from './types.js';
 import { object, rowQuery, schema, target, text } from './validation.js';
@@ -68,9 +69,9 @@ function column(input: unknown, fresh: boolean): ColumnSpec {
 	return result;
 }
 
-function unique<T>(input: unknown, parse: (value: unknown) => T, key: (value: T) => string): T[] {
-	if (!Array.isArray(input) || input.length < 1 || input.length > 100) {
-		throw new Error('Expected between 1 and 100 columns');
+function unique<T>(input: unknown, parse: (value: unknown) => T, key: (value: T) => string, max = 100): T[] {
+	if (!Array.isArray(input) || input.length < 1 || input.length > max) {
+		throw new Error(`Expected between 1 and ${max} columns`);
 	}
 	const result = Array.from(input, parse);
 	if (new Set(result.map(key)).size !== result.length) throw new Error('Duplicate column name');
@@ -104,6 +105,19 @@ function operation(input: unknown): SchemaOperation {
 		case 'addPrimaryKey':
 			exact(value, ['kind', 'columns']);
 			return { kind: value.kind, columns: unique(value.columns, name, (v) => v) };
+		case 'createIndex': {
+			exact(value, ['kind', 'name', 'method', 'unique', 'columns']);
+			const method = INDEX_METHODS.find((method) => method === value.method);
+			if (!method) throw new Error('Unsupported index method');
+			return { kind: value.kind, name: name(value.name), method, unique: flag(value.unique),
+				columns: unique(value.columns, name, (v) => v, 32) };
+		}
+		case 'dropIndex': {
+			exact(value, ['kind', 'indexOid']);
+			const indexOid = text(value.indexOid, 10);
+			if (!/^[1-9]\d*$/.test(indexOid)) throw new Error('Invalid index OID');
+			return { kind: value.kind, indexOid };
+		}
 		default: throw new Error('Invalid schema operation');
 	}
 }

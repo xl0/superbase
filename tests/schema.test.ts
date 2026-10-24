@@ -51,6 +51,22 @@ describe('structured schema validation', () => {
 		expect(validate(valid({ kind: 'createTable', columns: [column('x', '1700', { typeModifiers: [5, -2] })] }))).toHaveProperty('value');
 	});
 
+	test('index intents require bounded unique columns, fixed methods and captured identities', () => {
+		const create = { kind: 'createIndex', name: 'idx', method: 'btree', unique: false, columns: ['__proto__', 'id'] } as const;
+		const args = { ...target('t'), expected: 'a'.repeat(64), operation: create };
+		expect(validate(args)).toHaveProperty('value');
+		for (const operation of [
+			{ ...create, method: 'btree); drop table x; --' }, { ...create, unique: 'false' },
+			{ ...create, name: 'é'.repeat(32) }, { ...create, columns: [] },
+			{ ...create, columns: ['id', 'id'] }, { ...create, columns: Array.from({ length: 33 }, (_, i) => `c${i}`) },
+			{ ...create, columns: ['id'], where: 'true' }, { ...create, concurrently: true },
+			{ kind: 'dropIndex', indexOid: '0' }, { kind: 'dropIndex', indexOid: '1;select 1' },
+			{ kind: 'dropIndex', indexOid: '123', cascade: true }
+		]) expect(validate({ ...args, operation })).toHaveProperty('issues');
+		expect(validate({ ...args, expected: null })).toHaveProperty('issues');
+		expect(validate({ ...args, operation: { kind: 'dropIndex', indexOid: '123' } })).toHaveProperty('value');
+	});
+
 	test('duplication requires an exact boolean, bounded destination and source fingerprint', () => {
 		const op = { kind: 'duplicateTable', name: 'copy', includeRows: false } as const;
 		expect(validate(valid(op, 'a'.repeat(64)))).toHaveProperty('value');
@@ -424,6 +440,136 @@ const change = async (table: string, operation: SchemaOperation) => changeSchema
 		await pool.query(`create table ${tableSql('included_pk')} (a int, b int, primary key (a) include (b))`);
 		expect((await definition('included_pk')).primaryKey).toEqual(['a']);
 		expect((await definition('included_pk')).columns[1].primaryKey).toBe(false);
+	});
+
+	test('inspects native indexes and creates/drops ordered plain-column indexes with native rollback', async () => {
+		await pool.query(`create table ${tableSql('index_tools')} (
+			id int primary key, "__proto__" text, value int unique, payload jsonb);
+			insert into ${tableSql('index_tools')} values (1, 'same', 1, '{}'), (2, 'same', 2, '{}');
+			create index ${ident('index_expression')} on ${tableSql('index_tools')} (lower("__proto__")) where value > 0;
+			comment on index ${tableSql('index_expression')} is 'Expression/partial example'`);
+		await expect(pool.query(`create unique index concurrently ${ident('index_invalid')}
+			on ${tableSql('index_tools')} ("__proto__")`)).rejects.toMatchObject({ code: '23505' });
+		let def = await definition('index_tools');
+		expect(def.indexes.find((index) => index.primary)).toMatchObject({ unique: true, constraint: 'index_tools_pkey' });
+		expect(def.indexes.find((index) => index.name === 'index_tools_value_key')?.constraint).toBe('index_tools_value_key');
+		expect(def.indexes.find((index) => index.name === 'index_invalid')?.valid).toBe(false);
+		const expression = def.indexes.find((index) => index.name === 'index_expression')!;
+		expect(expression.definition).toContain('lower(');
+		expect(expression.definition).toContain('WHERE');
+		expect(expression.comment).toBe('Expression/partial example');
+		const name = 'idx";--';
+		await change('index_tools', { kind: 'createIndex', name, method: 'btree', unique: false, columns: ['value', '__proto__'] });
+		def = await definition('index_tools');
+		const built = def.indexes.find((index) => index.name === name)!;
+		expect(built).toMatchObject({ method: 'btree', unique: false, valid: true, ready: true, constraint: null });
+		expect((await pool.query(`select a.attname from pg_index i
+			cross join lateral unnest(i.indkey) with ordinality k(num, position)
+			join pg_attribute a on a.attrelid = i.indrelid and a.attnum = k.num
+			where i.indexrelid = $1::oid order by k.position`, [built.oid])).rows.map((row) => row.attname)).toEqual(['value', '__proto__']);
+		await change('index_tools', { kind: 'createIndex', name: 'index_gin', method: 'gin', unique: false, columns: ['payload'] });
+		const before = await definition('index_tools');
+		for (const [method, unique, columns, code] of [
+			['btree', true, ['__proto__'], '23505'], ['gin', true, ['payload'], '0A000'],
+			['hash', false, ['value', '__proto__'], '0A000']
+		] as const) {
+			await expect(change('index_tools', { kind: 'createIndex', name: 'index_failed', method, unique, columns: [...columns] })).rejects.toMatchObject({ code });
+			expect((await definition('index_tools')).version).toBe(before.version);
+		}
+		await expect(change('index_tools', { kind: 'createIndex', name: 'index_missing', method: 'btree', unique: false, columns: ['missing'] })).rejects.toThrow('Unknown index column');
+		await expect(change('index_tools', { kind: 'createIndex', name, method: 'btree', unique: false, columns: ['value'] })).rejects.toThrow('already exists');
+		await change('index_tools', { kind: 'dropIndex', indexOid: built.oid });
+		await change('index_tools', { kind: 'dropIndex', indexOid: before.indexes.find((index) => index.name === 'index_invalid')!.oid });
+		expect((await definition('index_tools')).indexes.some((index) => index.oid === built.oid)).toBe(false);
+		expect((await pool.query(`select count(*)::int as n from ${tableSql('index_tools')}`)).rows[0].n).toBe(2);
+	});
+
+	test('protects constraint/replica identity indexes and lets RESTRICT reject self-FK dependencies', async () => {
+		await pool.query(`create table ${tableSql('index_guards')} (id int not null, parent int, u int unique);
+			create unique index ${ident('index_self')} on ${tableSql('index_guards')} (id);
+			alter table ${tableSql('index_guards')} add foreign key (parent) references ${tableSql('index_guards')} (id);
+			create unique index ${ident('index_replica')} on ${tableSql('index_guards')} (id);
+			alter table ${tableSql('index_guards')} replica identity using index ${ident('index_replica')}`);
+		const before = await definition('index_guards');
+		const self = before.indexes.find((index) => index.name === 'index_self')!;
+		expect(self.constraint).toBeNull();
+		await expect(change('index_guards', { kind: 'dropIndex', indexOid: self.oid })).rejects.toMatchObject({ code: '2BP01' });
+		await expect(change('index_guards', { kind: 'dropIndex', indexOid: before.indexes.find((index) => index.constraint)!.oid })).rejects.toThrow('constraint');
+		await expect(change('index_guards', { kind: 'dropIndex', indexOid: before.indexes.find((index) => index.replicaIdentity)!.oid })).rejects.toThrow('replica identity');
+		const other = (await definition('index_tools')).indexes[0];
+		await expect(change('index_guards', { kind: 'dropIndex', indexOid: other.oid })).rejects.toThrow('belongs');
+		await pool.query(`alter index ${tableSql('index_self')} rename to index_self_renamed`);
+		await expect(changeSchema(pool, { ...target('index_guards'), expected: before.version,
+			operation: { kind: 'dropIndex', indexOid: self.oid } })).rejects.toThrow('schema changed');
+	});
+
+	test('a renamed index cannot redirect DROP to another table index with its former name', async () => {
+		await pool.query(`create table ${tableSql('index_race_a')} (id int);
+			create table ${tableSql('index_race_b')} (id int);
+			create index index_race_selected on ${tableSql('index_race_a')} (id);
+			create index index_race_other on ${tableSql('index_race_b')} (id)`);
+		const before = await definition('index_race_a');
+		const other = (await definition('index_race_b')).indexes[0];
+		const racer = await pool.connect();
+		let changed = false;
+		try {
+			await racer.query("set lock_timeout = '1s'");
+			const wrapped = interleaved(async (sql) => {
+				if (changed || !sql.includes('with approved as')) return;
+				changed = true;
+				await racer.query(`alter index ${tableSql('index_race_selected')} rename to index_race_moved;
+					alter index ${tableSql('index_race_other')} rename to index_race_selected`);
+			});
+			await expect(changeSchema(wrapped, { ...target('index_race_a'), expected: before.version,
+				operation: { kind: 'dropIndex', indexOid: before.indexes[0].oid } })).rejects.toThrow('Index changed');
+			expect(changed).toBe(true);
+			expect((await definition('index_race_a')).indexes[0]).toMatchObject({ oid: before.indexes[0].oid, name: 'index_race_moved' });
+			expect((await definition('index_race_b')).indexes[0]).toMatchObject({ oid: other.oid, name: 'index_race_selected' });
+		} finally { await racer.query('reset lock_timeout'); racer.release(); }
+	});
+
+	test('index operations reject namespace retargeting and unauthorized writes', async () => {
+		const original = `${namespace}_index`, moved = `${namespace}_imoved`;
+		for (const kind of ['createIndex', 'dropIndex'] as const) {
+			try {
+				await pool.query(`create schema ${ident(original)}; create table ${qualify(original, 't')} (v int);
+					create index idx on ${qualify(original, 't')} (v)`);
+				const args = { connection: 'test', schema: original, table: 't' };
+				const before = await getSchemaDefinition(pool, args);
+				let changed = false;
+				const wrapped = interleaved(async (sql) => {
+					if (changed || !sql.includes('with approved as')) return;
+					changed = true;
+					await pool.query(`alter schema ${ident(original)} rename to ${ident(moved)};
+						create schema ${ident(original)}; create table ${qualify(original, 't')} (v int);
+						create index idx on ${qualify(original, 't')} (v)`);
+				});
+				const operation: SchemaOperation = kind === 'createIndex'
+					? { kind, name: 'new_idx', method: 'btree', unique: false, columns: ['v'] }
+					: { kind, indexOid: before.indexes[0].oid };
+				await expect(changeSchema(wrapped, { ...args, expected: before.version, operation })).rejects.toThrow('changed');
+				for (const schema of [original, moved]) expect((await getSchemaDefinition(pool, { ...args, schema })).indexes.map((index) => index.name)).toEqual(['idx']);
+			} finally { await pool.query(`drop schema if exists ${ident(original)} cascade; drop schema if exists ${ident(moved)} cascade`); }
+		}
+		const role = `${namespace}_idxreader`;
+		let restricted: pg.Pool | undefined;
+		try {
+			await pool.query(`create role ${ident(role)}; grant usage on schema ${ident(namespace)} to ${ident(role)};
+				grant select on ${tableSql('index_tools')} to ${ident(role)}`);
+			restricted = new pg.Pool({ connectionString: url, options: `-c role=${role}`, max: 1 });
+			const before = await getSchemaDefinition(restricted, target('index_tools'));
+			expect(before.indexes.length).toBeGreaterThan(0);
+			for (const operation of [
+				{ kind: 'createIndex', name: 'forbidden', method: 'btree', unique: false, columns: ['id'] },
+				{ kind: 'dropIndex', indexOid: before.indexes.find((index) => index.name === 'index_gin')!.oid }
+			] satisfies SchemaOperation[]) {
+				await expect(changeSchema(restricted, { ...target('index_tools'), expected: before.version, operation })).rejects.toMatchObject({ code: '42501' });
+			}
+			expect((await definition('index_tools')).version).toBe(before.version);
+		} finally {
+			await restricted?.end();
+			await pool.query(`drop owned by ${ident(role)}; drop role ${ident(role)}`);
+		}
 	});
 
 	test('RESTRICT blocks external dependencies; dropping a column may remove its own indexes', async () => {

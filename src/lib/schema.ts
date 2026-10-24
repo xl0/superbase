@@ -29,6 +29,24 @@ export interface SchemaColumn {
 	comment: string | null;
 	primaryKey: boolean;
 }
+/** Native index definitions are inspection-only; structured creation accepts plain columns. */
+export interface SchemaIndex {
+	oid: string;
+	name: string;
+	method: string;
+	definition: string;
+	unique: boolean;
+	primary: boolean;
+	valid: boolean;
+	ready: boolean;
+	clustered: boolean;
+	replicaIdentity: boolean;
+	/** Owning PK/UNIQUE/exclusion constraint, not referencing foreign keys. */
+	constraint: string | null;
+	comment: string | null;
+}
+export const INDEX_METHODS = ['btree', 'hash', 'gin', 'gist', 'spgist', 'brin'] as const;
+
 /** version fingerprints semantic catalog metadata, including the table OID. */
 export interface SchemaDefinition {
 	schema: string;
@@ -39,6 +57,7 @@ export interface SchemaDefinition {
 	reason: string | null;
 	columns: SchemaColumn[];
 	primaryKey: string[];
+	indexes: SchemaIndex[];
 }
 export type ColumnDefault =
 	| { kind: 'keep' | 'none' | 'now' | 'today' | 'currentTime' | 'uuid' | 'identity' }
@@ -70,13 +89,15 @@ export type SchemaOperation =
 	| { kind: 'addColumn'; column: ColumnSpec }
 	| { kind: 'alterColumn'; column: string; changes: ColumnSpec }
 	| { kind: 'dropColumn'; column: string }
-	| { kind: 'addPrimaryKey'; columns: string[] };
+	| { kind: 'addPrimaryKey'; columns: string[] }
+	| { kind: 'createIndex'; name: string; method: typeof INDEX_METHODS[number]; unique: boolean; columns: string[] }
+	| { kind: 'dropIndex'; indexOid: string };
 export interface SchemaChangeArgs extends TableTarget {
 	/** null only for CREATE; existing targets require the last-read fingerprint. */
 	expected: string | null;
 	operation: SchemaOperation;
 }
 export type SchemaEditMode =
-	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' | 'duplicateTable' | 'copySchema' }
+	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'addColumn' | 'addPrimaryKey' | 'duplicateTable' | 'copySchema' | 'indexes' }
 	| { kind: 'exportCsv'; query?: RowQuery; options?: boolean }
 	| { kind: 'alterColumn' | 'dropColumn'; column: string };

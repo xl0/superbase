@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import pg from 'pg';
 
-import type { ColumnDefault, ColumnSpec, SchemaCatalog, SchemaChangeArgs, SchemaColumn, SchemaDefinition, SchemaExport, SchemaType } from '../schema.js';
+import type { ColumnDefault, ColumnSpec, SchemaCatalog, SchemaChangeArgs, SchemaColumn, SchemaDefinition, SchemaExport, SchemaIndex, SchemaType } from '../schema.js';
 import type { TableTarget } from '../types.js';
 import { schemaChangeSchema, schemaTargetSchema } from '../schema-validation.js';
 import { columnOptionsError, elementType } from '../schema-options.js';
@@ -67,6 +67,7 @@ type Snapshot = {
 	inheritance: unknown[];
 	columns: (SchemaColumn & { dropped: boolean })[];
 	primaryKey: string[];
+	indexes: SchemaIndex[];
 };
 
 async function definition(client: pg.PoolClient, target: TableTarget): Promise<SchemaDefinition> {
@@ -118,10 +119,14 @@ async function definition(client: pg.PoolClient, target: TableTarget): Promise<S
 				'comment', obj_description(con.oid, 'pg_constraint')) order by con.oid)
 				from pg_constraint con where con.conrelid = c.oid or con.confrelid = c.oid), '[]'::jsonb),
 			'indexes', coalesce((select jsonb_agg(jsonb_build_object(
-				'oid', i.indexrelid::text, 'definition', pg_get_indexdef(i.indexrelid),
+				'oid', i.indexrelid::text, 'name', ic.relname, 'method', am.amname,
+				'definition', pg_get_indexdef(i.indexrelid), 'unique', i.indisunique, 'primary', i.indisprimary,
 				'valid', i.indisvalid, 'ready', i.indisready, 'clustered', i.indisclustered,
-				'replicaIdentity', i.indisreplident, 'comment', obj_description(i.indexrelid, 'pg_class'))
-				order by i.indexrelid) from pg_index i where i.indrelid = c.oid), '[]'::jsonb)
+				'replicaIdentity', i.indisreplident, 'comment', obj_description(i.indexrelid, 'pg_class'),
+				'constraint', (select con.conname from pg_constraint con
+					where con.conindid = i.indexrelid and con.conrelid = c.oid and con.contype in ('p', 'u', 'x')))
+				order by i.indexrelid) from pg_index i join pg_class ic on ic.oid = i.indexrelid
+				join pg_am am on am.oid = ic.relam where i.indrelid = c.oid), '[]'::jsonb)
 		) as metadata
 		from pg_class c join pg_namespace n on n.oid = c.relnamespace
 		where n.nspname = $1 and c.relname = $2`, [target.schema, target.table]);
@@ -138,7 +143,7 @@ async function definition(client: pg.PoolClient, target: TableTarget): Promise<S
 			defaultValue: column.defaultValue, generated: column.generated, identity: column.identity,
 			comment: column.comment, primaryKey: column.primaryKey
 		})),
-		primaryKey: raw.primaryKey
+		primaryKey: raw.primaryKey, indexes: raw.indexes
 	};
 }
 
@@ -312,6 +317,32 @@ export async function changeSchema(pool: pg.Pool, args: SchemaChangeArgs): Promi
 				}
 				await addPrimaryKey(op.columns);
 				break;
+			case 'createIndex': {
+				for (const name of op.columns) {
+					if (!current!.columns.some((column) => column.name === name)) throw new Error(`Unknown index column: ${name}`);
+				}
+				await client.query(`create ${op.unique ? 'unique ' : ''}index ${ident(op.name)} on ${table}
+					using ${ident(op.method)} (${op.columns.map(ident).join(', ')})`);
+				const created = await client.query<{ table: string }>(`
+					select i.indrelid::text as table from pg_index i
+					join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace
+					where n.nspname = $1 and c.relname = $2`, [args.schema, op.name]);
+				if (created.rows[0]?.table !== current!.oid) throw new Error('Index or table changed; reopen the schema editor before applying');
+				break;
+			}
+			case 'dropIndex': {
+				const index = current!.indexes.find((index) => index.oid === op.indexOid);
+				if (!index) throw new Error('Index no longer belongs to this table; reopen the schema editor');
+				if (index.constraint) throw new Error(`Index belongs to constraint ${index.constraint}; manage the constraint instead`);
+				if (index.replicaIdentity) throw new Error('Change the table replica identity before dropping this index');
+				await client.query(`drop index ${qualify(args.schema, index.name)} restrict`);
+				// Index renames need not lock the parent table. A reused name must not let us
+				// commit the removal of a different index; roll the entire operation back.
+				if ((await client.query('select oid from pg_class where oid = $1::oid', [index.oid])).rows.length) {
+					throw new Error('Index changed; reopen the schema editor before applying');
+				}
+				break;
+			}
 			case 'alterColumn': {
 				const old = current!.columns.find((column) => column.name === op.column);
 				if (!old) throw new Error('Column does not exist');

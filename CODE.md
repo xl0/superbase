@@ -134,9 +134,23 @@ Existing generated type/expressions and identity defaults stay unchanged. New ta
 cannot be replaced. Native constraints and permissions remain authoritative. Dropping a column
 can remove its own indexes/constraints; external dependencies block restricted drops.
 
+`SchemaDefinition.indexes` exposes the same index metadata already included in the fingerprint:
+native definitions, method, uniqueness/PK, validity/readiness, clustering, replica identity,
+comments and owning PK/UNIQUE/exclusion constraints. Referencing FKs are not index owners.
+The table menu's Indexes Sheet inspects every definition and stages create/drop intents.
+Creation accepts 1–32 ordered, distinct plain columns, the six standard access methods and an
+optional unique flag. PostgreSQL supplies default ordering, collations and operator classes;
+unsupported combinations and duplicate data produce native errors without clearing the form.
+Expressions, partial indexes, INCLUDE, custom operator classes and concurrent operations remain
+SQL-only. Index operations use the existing exclusive table lock/transaction/fingerprint and
+namespace fences, so builds can block reads and writes. Creation verifies the resulting index's
+parent OID. Drops resolve an index OID against the locked table snapshot, protect constraint-owned
+and replica-identity indexes, use RESTRICT, then verify the original index OID is absent. This
+postcondition rolls back a name-resolved DROP if a concurrent rename redirected it elsewhere.
+
 `SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
 serves create/add/alter forms. The sidebar creates tables; each table row's `TableMenu` exposes
-copy name/schema, duplicate, CSV export, rename, delete and keyless-table PK creation.
+copy name/schema, duplicate, CSV export, indexes, rename, delete and keyless-table PK creation.
 Breadcrumbs are display-only. Opening a menu/form
 captures its own table target without changing the active grid; cancelling preserves that view.
 Deleting another table leaves the current table selected. Grid header menus expose column edit/delete, and a trailing
@@ -479,7 +493,12 @@ typed/parameterized filters, multi-column order/NULL placement and stable page b
 Schema integration tests cover literal quoting, contextual presets, scalar/array modifiers,
 domain/enum metadata, exact modifier preservation, casts/default ordering, rollback,
 concurrent fingerprints and catalog-name reuse, dependency restrictions, PKs, lock timeouts
-and metadata invalidation. Isolated schema browser checks exercise all DDL flows, native-error
+and metadata invalidation. Index tests cover native definitions/status, ordered B-tree/GIN
+creation, invalid combinations and duplicate-data rollback, owner/replica-identity protection,
+FK dependencies, cross-table OIDs, permissions and actual index/namespace rename races.
+Index browser checks verify native writes/errors, draft correction, protected/dependent drops,
+inactive targeting, stale metadata, permissions, focus, resizing and narrow layouts.
+Isolated schema browser checks exercise all DDL flows, native-error
 recovery, stale definitions, protected drafts, keyboard handling and narrow/resizable panels.
 Type-option browser checks verify exact existing settings, retained incompatible drafts,
 contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted definitions.
@@ -521,6 +540,7 @@ rejection through the production launcher.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
 No server-side credential persistence, hosted authentication, multi-process sessions, views,
-SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes FK/index/unique/check editing,
-enum/namespace management and replacing existing primary keys. Offset pagination is not a
+SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes FK/unique/check
+constraint editing, advanced/concurrent index creation, enum/namespace management and replacing
+existing primary keys. Offset pagination is not a
 cross-page snapshot under concurrent changes. The app is intentionally a loopback-only tool.

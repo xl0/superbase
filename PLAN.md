@@ -231,9 +231,11 @@ Each feature must pass focused tests and browser checks before the next starts.
   validation/query building, streaming snapshots and native operator semantics are covered by
   regression tests. Browser downloads verify exact bytes/order, long filters, errors, guards
   and narrow layouts.
-- [ ] Index tools: inspect/create/drop indexes alongside their tables. Preserve explicit Apply,
-  native errors and catalog/concurrency protections. Assess concurrent operations separately:
-  they cannot share the existing transactional DDL path and may leave invalid indexes on failure.
+- [x] Table-menu index tools inspect definitions/status and create/drop column-based indexes
+  with ordered keys, standard methods and optional uniqueness. Native errors retain drafts;
+  explicit Apply, typed drop confirmation, ownership/replica guards and catalog/name-reuse
+  fences are verified by PostgreSQL tests and isolated browser QA. Advanced definitions and
+  concurrent builds remain SQL-only; concurrent operations need a separate failure model.
 - [ ] UNIQUE and CHECK constraint tools: inspect/create/change/drop, with explicit Apply,
   native validation, dependency handling and catalog/concurrency protections.
 - [ ] Foreign-key tools: inspect/create/change/drop, including composite tuples, referenced-key

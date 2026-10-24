@@ -108,7 +108,7 @@ and Live updates; changing tables resets it.
 
 Use **+** in the sidebar to create a table. Open a column header’s chevron menu to **Edit
 column**, **Delete column**, or copy its name. The **+** header adds a column. Each table’s **⋮**
-menu in the sidebar offers copy name/schema, duplication, CSV export, rename/delete and
+menu in the sidebar offers copy name/schema, duplication, CSV export, indexes, rename/delete and
 adding a primary key to a keyless table.
 Everything stays in the grid; there is no separate Definition view. New tables start with
 an identity `id` primary key; you can change the columns and select a composite key.
@@ -130,8 +130,20 @@ Concurrent schema changes conflict rather than overwrite. After a lost connectio
 database before retrying an operation.
 
 Only ordinary standalone tables are supported, not inheritance or partitions. Existing
-generated expressions and identity defaults are preserved. FK/index/unique/check editing,
+generated expressions and identity defaults are preserved. FK/UNIQUE/CHECK constraint editing,
 enum/namespace management and replacing existing primary keys are not supported.
+
+## Indexes
+
+Open a table’s **⋮ → Indexes** to inspect definitions, methods, status, comments and ownership.
+**Create index** accepts ordered columns, a standard access method and optional uniqueness.
+Nothing changes until **Apply**; PostgreSQL errors retain the form. Dropping requires typing
+its name. Constraint-owned and replica-identity indexes are protected, and dependencies block
+removal rather than being dropped automatically.
+
+Index changes lock the table and can block reads and writes. Creation uses plain columns and
+PostgreSQL’s default ordering, collations and operator classes. Use SQL for concurrent builds,
+expressions, partial indexes, INCLUDE columns and other advanced options.
 
 ## Copying and exporting tables
 

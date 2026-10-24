@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Database, Search, Settings2, Table2 } from '@lucide/svelte';
+	import { Database, Plus, Search, Settings2, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionInfo } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -7,7 +7,7 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 
-	let { connection, onconnect }: { connection: ConnectionInfo; onconnect: () => void } = $props();
+	let { connection, onconnect, oncreate }: { connection: ConnectionInfo; onconnect: () => void; oncreate: () => void } = $props();
 	let tableSearch = $state('');
 	const id = $props.id();
 	const tables = $derived(editor.schemaTables.filter((table) => table.name.toLowerCase().includes(tableSearch.trim().toLowerCase())));
@@ -43,7 +43,10 @@
 			<Input bind:value={tableSearch} aria-label="Search tables" placeholder="Search tables" disabled={editor.busy} spellcheck={false} class="h-8 pl-8 text-xs" />
 		</div>
 	</div>
-	<div class="px-3 pb-2 text-[10px] tracking-wider text-muted-foreground uppercase">Tables · {tables.length}</div>
+	<div class="flex items-center justify-between px-3 pb-2">
+		<span class="text-[10px] tracking-wider text-muted-foreground uppercase">Tables · {tables.length}</span>
+		<Button variant="ghost" size="icon-xs" aria-label="Create table" disabled={editor.navigationBlocked || editor.loading} onclick={oncreate}><Plus /></Button>
+	</div>
 	<nav aria-label="Tables" class="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
 		{#each tables as table (table.name)}
 			{@const active = editor.activeSchema === table.schema && editor.activeTableName === table.name}

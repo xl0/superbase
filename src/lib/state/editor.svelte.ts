@@ -1,5 +1,6 @@
-import { database, deleteRows, saveTable, tableRows } from '#lib/db.remote.js';
+import { database, deleteRows, saveTable, tableRows, changeSchema } from '#lib/db.remote.js';
 import { message } from '#lib/utils.js';
+import type { SchemaChangeArgs } from '#lib/schema.js';
 import { editable, tableKey, writable, MAX_SORTS, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
@@ -28,6 +29,7 @@ export class EditorState {
 	busy = $state(false);
 	editing = $state(false);
 	inserting = $state(false);
+	schemaEditing = $state(false);
 	cellSelected = $state(false);
 	live = $state(true);
 	polling = $state(false);
@@ -46,7 +48,7 @@ export class EditorState {
 	tableEditable = $derived(editable(this.table));
 	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
-	get navigationBlocked() { return this.busy || this.editing || this.inserting; }
+	get navigationBlocked() { return this.busy || this.editing || this.inserting || this.schemaEditing; }
 	get hasFilters() { return this.filters.length > 0 || this.filter !== null; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
 
@@ -68,6 +70,10 @@ export class EditorState {
 
 	async reload() {
 		if (this.navigationBlocked || !this.connection) return;
+		await this.#reload();
+	}
+
+	async #reload() {
 		const request = ++this.#request;
 		this.loading = true;
 		this.rows = [];
@@ -83,7 +89,7 @@ export class EditorState {
 			this.tables = resource.current.tables;
 			this.server = resource.current.server;
 			this.ready = true;
-			if (!this.table.columns.length) {
+			if (this.table === EMPTY_TABLE) {
 				const first = this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
 				this.activeSchema = first?.schema ?? '';
 				this.activeTableName = first?.name ?? '';
@@ -149,7 +155,7 @@ export class EditorState {
 
 	async poll(isActive: () => boolean = () => true) {
 		const eligible = () => this.live && this.ready && !!this.activeTableName &&
-			!this.loading && !this.busy && !this.error && isActive();
+			!this.loading && !this.busy && !this.schemaEditing && !this.error && isActive();
 		if (this.polling || !eligible()) return;
 		const request = this.#request;
 		const generation = this.#liveGeneration;
@@ -252,6 +258,32 @@ export class EditorState {
 		await this.fetch(true);
 	}
 
+	async applySchemaChange(args: SchemaChangeArgs) {
+		if (!this.schemaEditing || this.editing || this.inserting || this.busy || this.loading || !this.ready) {
+			throw new Error('The workspace is not ready for schema editing');
+		}
+		if (args.connection !== this.connection) throw new Error('Connection changed; reopen the schema editor');
+		// Schema intents contain JSON scalars only; snapshot before any asynchronous work.
+		const submitted: SchemaChangeArgs = JSON.parse(JSON.stringify(args));
+		this.#request++;
+		this.#liveGeneration++;
+		this.busy = true;
+		this.savedAt = null;
+		try {
+			await changeSchema(submitted);
+			this.savedAt = Date.now();
+			this.rowSelection = {};
+			this.cellSelected = false;
+			this.filters = [];
+			this.filter = null;
+			this.sort = [];
+			this.activeSchema = submitted.schema;
+			this.activeTableName = submitted.operation.kind === 'renameTable' ? submitted.operation.name : submitted.table;
+			// An acknowledged DDL write stays successful even if metadata refresh fails.
+			await this.#reload();
+		} finally { this.busy = false; }
+	}
+
 	getValue(row: Row, column: string): CellValue | undefined {
 		return Object.hasOwn(row.values, column) ? row.values[column] : undefined;
 	}
@@ -292,7 +324,7 @@ export class EditorState {
 	}
 
 	async #save(updates: SaveArgs['updates'], inserts: Values[]) {
-		if (this.busy || this.loading || !this.ready || !this.tableEditable) throw new Error('The table is not ready for editing');
+		if (this.busy || this.loading || this.schemaEditing || !this.ready || !this.tableEditable) throw new Error('The table is not ready for editing');
 		const key = this.tableKey;
 		const args = { connection: this.connection, schema: this.activeSchema, table: this.activeTableName, updates, inserts };
 		this.#liveGeneration++;
@@ -311,6 +343,7 @@ export class EditorState {
 		this.rowSelection = {};
 		this.editing = false;
 		this.inserting = false;
+		this.schemaEditing = false;
 	}
 
 	clearRowSelection() {

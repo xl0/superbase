@@ -1,6 +1,8 @@
 import { command, query } from '$app/server';
 import * as connections from '#lib/server/connections.js';
 import * as db from '#lib/server/db.js';
+import * as schemaDb from '#lib/server/schema.js';
+import { schemaChangeSchema, schemaTargetSchema } from '#lib/schema-validation.js';
 import { connectSchema, connectionSchema, deleteSchema, rowsSchema, saveSchema, switchSchema } from '#lib/validation.js';
 
 export const connectionStatus = query(() => connections.connectionStatus());
@@ -13,3 +15,6 @@ export const database = query(connectionSchema, ({ connection }) => db.listTable
 export const tableRows = query(rowsSchema, (args) => db.listRows(connections.activePool(args.connection), args));
 export const saveTable = command(saveSchema, (args) => db.saveTable(connections.activePool(args.connection), args));
 export const deleteRows = command(deleteSchema, (args) => db.deleteRows(connections.activePool(args.connection), args));
+export const schemaCatalog = query(connectionSchema, ({ connection }) => schemaDb.listSchemaCatalog(connections.activePool(connection)));
+export const schemaDefinition = query(schemaTargetSchema, (args) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
+export const changeSchema = command(schemaChangeSchema, (args) => schemaDb.changeSchema(connections.activePool(args.connection), args));

@@ -10,8 +10,8 @@
 	let returnFocus: HTMLElement | null = null;
 
 	function approve() {
-		return !editor.busy && (!(editor.inserting || editor.editing) || window.confirm(
-			'Discard the open editor or new-row form and change the database connection?'
+		return !editor.busy && (!(editor.inserting || editor.editing || editor.schemaEditing) || window.confirm(
+			'Discard the open editor or form and change the database connection?'
 		));
 	}
 </script>

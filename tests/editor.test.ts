@@ -10,6 +10,7 @@ let serial = 0;
 async function fixture() {
 	const calls: { kind: string; args: any }[] = [];
 	let save: (() => Promise<void>) | undefined;
+	let ddl: ((args: any) => Promise<void>) | undefined;
 	let read: ((args: any) => Promise<{ rows: Row[]; hasMore: boolean }>) | undefined;
 	const column = (name: string, primaryKey = false) => ({ name, primaryKey, type: 'text', kind: 'text' as const, nullable: !primaryKey, generated: false, identity: null, defaultValue: null });
 	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
@@ -21,12 +22,13 @@ async function fixture() {
 			return resource;
 		},
 		saveTable: async (args: any) => { calls.push({ kind: 'save', args: structuredClone(args) }); await save?.(); },
-		deleteRows: async (args: any) => { calls.push({ kind: 'delete', args: structuredClone(args) }); }
+		deleteRows: async (args: any) => { calls.push({ kind: 'delete', args: structuredClone(args) }); },
+		changeSchema: async (args: any) => { calls.push({ kind: 'schema', args: structuredClone(args) }); await ddl?.(args); }
 	};
 	const key = `__editorTest${serial++}`;
 	(globalThis as any)[key] = api;
 	let source = await readFile(new URL('../src/lib/state/editor.svelte.ts', import.meta.url), 'utf8');
-	source = source.replace(/^import \{ database, deleteRows, saveTable, tableRows \}.*$/m, `const { database, deleteRows, saveTable, tableRows } = globalThis[${JSON.stringify(key)}];`)
+	source = source.replace(/^import \{ database, deleteRows, saveTable, tableRows, changeSchema \}.*$/m, `const { database, deleteRows, saveTable, tableRows, changeSchema } = globalThis[${JSON.stringify(key)}];`)
 		.replace("'#lib/types.js'", JSON.stringify(new URL('../src/lib/types.ts', import.meta.url).href))
 		.replace("'#lib/utils.js'", JSON.stringify(new URL('../src/lib/utils.ts', import.meta.url).href));
 	const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
@@ -36,7 +38,7 @@ async function fixture() {
 	delete (globalThis as any)[key];
 	const editor = new EditorState();
 	await editor.initialize('connection-1');
-	return { editor, calls, tables, row, deferSave: (fn: () => Promise<void>) => save = fn, deferRead: (fn: typeof read) => read = fn };
+	return { editor, calls, tables, row, deferSave: (fn: () => Promise<void>) => save = fn, deferRead: (fn: typeof read) => read = fn, deferSchema: (fn: typeof ddl) => ddl = fn };
 }
 
 function deferred<T = void>() {
@@ -186,6 +188,53 @@ test('multi-sort snapshots rules and header cycling preserves the other prioriti
 	assert.deepEqual(s.sort, []);
 });
 
+test('DDL snapshots intent, protects navigation/polling, refreshes metadata and preserves acknowledged writes', async () => {
+	const { editor: s, calls, tables, deferSchema, deferRead } = await fixture();
+	s.toggleRowSelection(s.rows[0]);
+	s.schemaEditing = true;
+	let reads = 0;
+	deferRead(async () => { reads++; throw new Error('read refresh failed'); });
+	await s.poll();
+	assert.equal(reads, 0);
+	await assert.rejects(s.updateRows([{ row: s.rows[0], values: { value: 'blocked' } }]), /not ready/);
+	const pending = deferred();
+	deferSchema(async (args) => { await pending.promise; tables[0].name = args.operation.name; });
+	const args = { connection: 'connection-1', schema: 'public', table: 'a', expected: 'fingerprint', operation: { kind: 'renameTable', name: 'renamed' } };
+	await assert.rejects(s.applySchemaChange({ ...args, connection: 'wrong' }), /Connection changed/);
+	const saving = s.applySchemaChange(args);
+	args.operation.name = 'changed after submission';
+	assert.equal(s.busy, true);
+	assert.equal(s.navigationBlocked, true);
+	assert.equal(calls[0].args.operation.name, 'renamed');
+	pending.resolve();
+	await saving;
+	assert.equal(calls.length, 1);
+	assert.equal(s.activeTableName, 'renamed');
+	assert.equal(s.selectedCount, 0);
+	assert.equal(s.error, 'read refresh failed');
+	assert.equal(typeof s.savedAt, 'number');
+	assert.equal(s.busy, false);
+	assert.equal(s.schemaEditing, true); // The panel owns dismissal after acknowledgement.
+	deferSchema(async () => { throw new Error('schema changed'); });
+	await assert.rejects(s.applySchemaChange({ ...args, table: 'renamed' }), /schema changed/);
+	assert.equal(s.activeTableName, 'renamed');
+	assert.equal(s.schemaEditing, true);
+	assert.equal(s.busy, false);
+});
+
+test('dropping the last column retains the table through DDL and manual refresh', async () => {
+	const { editor: s, tables, deferSchema } = await fixture();
+	await s.selectTable('public', 'b');
+	s.schemaEditing = true;
+	deferSchema(async () => { tables[1].columns = []; });
+	await s.applySchemaChange({ connection: 'connection-1', schema: 'public', table: 'b', expected: 'fingerprint', operation: { kind: 'dropColumn', column: 'last' } });
+	assert.equal(s.activeTableName, 'b');
+	assert.equal(s.table.columns.length, 0);
+	s.schemaEditing = false;
+	await s.reload();
+	assert.equal(s.activeTableName, 'b');
+});
+
 test('failed sort clears stale rows and resets their displayed page', async () => {
 	const { editor: s, deferRead } = await fixture();
 	await s.setPage(1);
@@ -256,8 +305,8 @@ test('insert form never adds grid drafts and preserves sparse DEFAULT, NULL, emp
 	assert.deepEqual(calls[1].args.inserts, [{}]);
 });
 
-test('open cell and insert forms block navigation, reload and connection changes', async () => {
-	for (const flag of ['editing', 'inserting']) {
+test('open cell, insert and schema forms block navigation, reload and connection changes', async () => {
+	for (const flag of ['editing', 'inserting', 'schemaEditing']) {
 		const { editor: s, deferRead } = await fixture();
 		let reads = 0;
 		deferRead(async () => { reads++; return { rows: [], hasMore: false }; });

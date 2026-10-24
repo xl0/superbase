@@ -7,12 +7,12 @@ and direct `pg`. No Supabase services, ORM, or public API. One Node process owns
 
 `+layout.ts` disables SSR. `+page.svelte` loads `connectionStatus()` before mounting either
 onboarding or `EditorApp`. The latter initializes the module-level `EditorState` and renders
-the sidebar, toolbar, grid/definition tab, and pagination. Connection changes reload the page
+the sidebar, toolbar, grid and pagination. Connection changes reload the page
 after confirming unsaved work; generation checks protect other tabs that did not reload.
 
 `lib/db.remote.ts` validates structured intents using the Standard Schema adapters in
-`lib/validation.ts`. It resolves a generation-checked pool exactly once, before calling
-`lib/server/db.ts`. Database functions receive their pool explicitly, never consult cookies,
+`lib/validation.ts` and `lib/schema-validation.ts`. It resolves a generation-checked pool
+exactly once, before calling the row or schema SQL module. Database functions receive their pool explicitly, never consult cookies,
 and never generate SQL on the client. Identifiers are quoted and values bound as parameters.
 No arbitrary-SQL endpoint is exposed.
 
@@ -90,6 +90,55 @@ Exact FK constraints (`filter`) and user conditions (`filters`) combine with AND
 picker retains its separate debounced, text-cast ILIKE search across columns, which can scan
 large tables. Refresh reloads metadata and rows.
 
+## Schema editing
+
+`lib/schema.ts` defines catalog types, table definitions and structured DDL intents.
+`lib/server/schema.ts` lists usable namespaces (including empty ones) and approved builtin,
+enum/domain and array type OIDs, actual scalar/array relationships and ordered enum labels.
+Domains remain opaque, including domains over arrays. Type names are resolved and quoted on
+the server, never accepted as SQL. Strict validation bounds columns, UTF-8 identifier lengths,
+literals/comments and type-specific integer modifiers. Array modifiers apply to their elements.
+`schema-options.ts` shares modifier and contextual-default validation between client/server.
+Literal defaults use pg's escaping; date/time, UUID and new-integer identity are fixed presets.
+Text UUID defaults cast explicitly to text and reject character bounds below 36. Keeping a
+default emits no replacement SQL, preserving arbitrary existing expressions.
+
+Existing-table DDL takes an ACCESS EXCLUSIVE lock with a three-second lock timeout, then
+compares a semantic SHA-256 catalog fingerprint including table OID, column types/modifiers,
+defaults, comments, constraints and indexes. Data writes and statistics do not invalidate it;
+concurrent definition changes or same-name replacement do. Relation locks do not prevent
+namespace/type renames: transaction-start/end catalog tuple versions fence those names
+(including array elements and rename-and-restore), and pre-commit relation/type OID checks
+verify the actual target.
+These use namespace/type xmin, never table xmin or statistics. Transactions explicitly use
+READ COMMITTED so catalog checks stay fresh even with a stricter role default. Introspection
+and writes share a trusted search path. Each Apply is one transaction; errors roll back and retain the form.
+There is no CASCADE, trial rollback, custom USING expression or automatic conversion fallback.
+Only standalone ordinary tables are editable; inheritance and partition targets are rejected.
+
+An explicit type selection uses a native PostgreSQL cast and requires acknowledgement that
+values may change and the table may be rewritten. Keeping a type preserves its exact modifiers.
+`SchemaTypePicker` groups integer sizes and timezone variants with an array checkbox;
+JSON/JSONB remain distinct. Decoded modifiers seed contextual length/precision/scale controls
+without triggering DDL. Unsupported existing modifiers stay exact until explicitly replaced.
+Changing types retains modifier/default drafts; incompatible choices block Apply, never silently
+reset values. Literal editors follow type: enum/boolean choices, JSON/plain CodeMirror, array
+literals and native scalar inputs. Empty text, arrays and JSON containers are distinct from NULL.
+Existing generated type/expressions and identity defaults stay unchanged. New tables can have composite PKs; keyless tables can add a PK, but existing PKs
+cannot be replaced. Native constraints and permissions remain authoritative. Dropping a column
+can remove its own indexes/constraints; external dependencies block restricted drops.
+
+`SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
+serves create/add/alter forms. The sidebar creates tables; the table-name menu exposes rename,
+delete and keyless-table PK creation. Grid header menus expose column edit/delete, and a trailing
+sticky + header adds columns, including to zero-column tables. There is no separate Definition view.
+Menus pass stable triggers to the panel for focus restoration; removed triggers fall back to the grid. Apply or Ctrl/Cmd+Enter submits; outside clicks do nothing, Cancel confirms dirty
+form discard, and destructive operations require the exact target name. `schemaEditing` blocks
+navigation, row writes and polling. Successful DDL invalidates metadata and clears stale query
+conditions/selections before reloading the created/renamed/current table. A table with its last
+column removed remains selected, with its add-column header and table menu available. A read failure after
+acknowledgement never turns a successful DDL command into a retryable write failure.
+
 ## Connection lifecycle
 
 `lib/server/connections.ts` maintains a bounded in-memory registry. Each browser has an
@@ -135,7 +184,7 @@ with the normal unsaved-work guard. Browser-entered credentials are never persis
 
 `EditorState` owns the active query and cross-page row selections, not staged edits.
 Cell buffers and new-row form values stay in their components. `updateRows` validates and
-captures an atomic mutation batch for a cell, composite reference, paste or range clear.
+captures an atomic mutation batch for an applied cell/composite reference, paste or range clear.
 `insertRow` inserts one complete sparse form. Both await the real database write; PostgreSQL
 validates all types and constraints. Failures throw to the owning editor without replacing
 its rows or buffer. After acknowledgement, a refresh failure is a read error, not a failed
@@ -151,8 +200,8 @@ arrows use a separate complete exact-key constraint. Switching tables clears use
 Show all rows / Remove filters clears both user and FK constraints.
 
 Live mode starts enabled and is scoped to the current result page. EditorApp invokes `poll()` every
-five seconds and on visibility changes, gated by document visibility, data view and connection
-modal state. Polls never overlap or invalidate foreground reads. Foreground request and live
+five seconds and on visibility changes, gated by document visibility and connection modal state.
+Schema forms pause polling through the workspace guard. Polls never overlap or invalidate foreground reads. Foreground request and live
 mode generations reject obsolete responses, including reads begun before a mutation.
 Unchanged results keep the existing row array. Changes update an idle view, or set a notice
 when an open editor/form, row selections or cell/range focus need preserving.
@@ -170,9 +219,11 @@ focus from controls or clear selection underneath an open cell editor.
 
 `CellEditor.svelte` owns one exact text/NULL/DEFAULT buffer shared between a shadcn Popover
 and a resizable Sheet. Apply saves existing rows immediately; Escape cancels the buffer.
-Compact outside-click also saves. The editor stays open on database errors, disables changes
-and dismissal while saving, and closes only after acknowledgement. A transparent overlay consumes that click so sorting or
-navigation cannot run before dismissal applies the buffer. Filter changes are likewise blocked
+Outside clicks and blur neither save nor discard the buffer. FK selection prepares a complete
+local tuple; Apply writes it together with any subsequent field edit. The editor stays open on
+database errors, disables changes/dismissal while saving, and closes only after acknowledgement.
+A transparent overlay consumes outside clicks so navigation cannot bypass Apply or Cancel.
+Filter changes are likewise blocked
 while cell editors or insert forms are open. Opening a cell places a caret rather than selecting
 all text. Expansion preserves the buffer and deliberate text selection.
 Set to options depend on nullability, type and draft status. Temporal Now uses PostgreSQL's
@@ -208,7 +259,7 @@ Select/Popover provide keyboard navigation and focus handling. Draft conditions 
 until Apply (unary NULL checks apply immediately); no AI, SQL expression parser or nested OR.
 The grid distinguishes an empty table, zero filtered matches (with Remove filters), and read
 failures. Failed reads show the PostgreSQL warning inside the empty-results panel, not a
-duplicate top banner; errors with retained rows or in Definition keep the banner. There is no
+duplicate top banner; errors with retained rows keep the banner. There is no
 panel Retry button: edit/remove invalid filters, or use the toolbar Refresh for transient errors.
 Empty-result panels fit their content, wrap long messages within the viewport, and stay sticky
 at the grid's left edge during horizontal scrolling.
@@ -222,10 +273,14 @@ in one retained-row fetch; closing the popover discards the draft. Grid headers 
 column through ascending/descending/off without replacing other rules, and display priority
 numbers. Only the primary header uses `aria-sort`; other sorted headers have descriptive names.
 Sorting survives filters, paging, refresh and polls, but resets when switching tables.
+`ColumnMenu.svelte` provides explicit ascending/descending/remove-sort actions without replacing
+other priorities, plus copy-name and schema actions. Header chevrons are separate from the sort
+button and resize handle. Header tooltips retain comments, nullability, defaults/generation,
+enum values and FK targets; the trailing action column never enters cell selection or clipboard data.
 
 `ReferencePicker.svelte` queries 25 target records per page with debounced search and
-superseded-response cancellation. Selection saves all source columns atomically for existing
-rows, or fills the new-row form locally. NULL-containing target tuples cannot be selected.
+superseded-response cancellation. Selection prepares all source columns in the cell editor;
+Apply saves them atomically for existing rows, or fills the new-row form locally. NULL-containing target tuples cannot be selected.
 The same resizable panel hosts the picker; a raw-value editor remains available.
 
 The grid uses fixed 35px rows/header and 100/250/500-row pages, without virtualization.
@@ -235,7 +290,7 @@ storage is denied at mount. Resizing works with pointer or keyboard. shadcn prov
 markers. Opening and closing a cell without input does not coerce its original value.
 
 The shell uses generated shadcn-svelte buttons, inputs, labels, dialogs, selects and badges.
-TableDefinition and ReferencePicker use shadcn Table; the picker's outer scroll container
+ReferencePicker uses shadcn Table; its outer scroll container
 owns scrolling so the table header remains sticky. The spreadsheet remains custom.
 Dialogs provide focus containment/restoration. Connection URLs are masked with optional
 reveal; discard confirmation and beforeunload guards protect open editors/forms and writes. The dark
@@ -283,6 +338,13 @@ CodeMirror history.
 With explicit `TEST_DATABASE_URL`, real PostgreSQL tests cover
 precision, defaults, arbitrary names, inheritance/partitions, conflicts, transaction rollback,
 typed/parameterized filters, multi-column order/NULL placement and stable page boundaries.
+Schema integration tests cover literal quoting, contextual presets, scalar/array modifiers,
+domain/enum metadata, exact modifier preservation, casts/default ordering, rollback,
+concurrent fingerprints and catalog-name reuse, dependency restrictions, PKs, lock timeouts
+and metadata invalidation. Isolated schema browser checks exercise all DDL flows, native-error
+recovery, stale definitions, protected drafts, keyboard handling and narrow/resizable panels.
+Type-option browser checks verify exact existing settings, retained incompatible drafts,
+contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted definitions.
 Browser filter checks cover keyboard focus, same-column ranges,
 NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
 empty-page/table/no-match/error states.
@@ -291,7 +353,7 @@ rejection through the production launcher.
 
 ## Source layout and limits
 
-- `src/lib/types.ts` — shared value, identity, connection and mutation contracts.
+- `src/lib/types.ts`, `schema.ts` — shared row, connection and structured DDL contracts.
 - `src/lib/state/editor.svelte.ts` — workspace, pending changes and polling guards.
 - `src/lib/components/` — shell, custom grid, filter bar, cell editors and reference picker.
 - `src/lib/components/ui/` — generated MIT shadcn-svelte components.
@@ -300,5 +362,6 @@ rejection through the production launcher.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
 No server-side credential persistence, hosted authentication, multi-process sessions, views,
-schema editing, SQL editor, or nested/OR filter groups. Offset pagination is not a cross-page
-snapshot under concurrent database changes. The app is intentionally a loopback-only tool.
+SQL editor, or nested/OR filter groups. Schema editing excludes FK/index/unique/check editing,
+enum/namespace management and replacing existing primary keys. Offset pagination is not a
+cross-page snapshot under concurrent changes. The app is intentionally a loopback-only tool.

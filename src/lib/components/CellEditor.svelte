@@ -39,6 +39,7 @@
 	let panel = $state<HTMLDivElement | null>(null);
 	let error = $state<string | null>(null);
 	let saving = $state(false);
+	let referenceChanges = $state<Record<string, CellValue> | null>(null);
 	let resize: { x: number; width: number } | null = null;
 	let selection: { start: number; end: number } | null = null;
 	const temporal = $derived(/^(date|timestamp|time)(?:\(|\s|$)/.test(column.type));
@@ -51,7 +52,8 @@
 	]);
 	const optionLabel = (option: string) => column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)';
 	const panelWidth = $derived(Math.min(windowWidth, Math.max(320, width)));
-	const current = $derived(Object.fromEntries((column.foreignKey?.columns ?? []).map((name) => [name, editor.getValue(row, name) ?? null])));
+	const current = $derived(Object.fromEntries((column.foreignKey?.columns ?? []).map((name) =>
+		[name, name === column.name ? value ?? null : referenceChanges?.[name] ?? editor.getValue(row, name) ?? null])));
 	const referenceReadOnly = $derived(readOnly || column.foreignKey?.columns.some((name) => {
 		const source = editor.table.columns.find((column) => column.name === name);
 		return !source || !writable(source);
@@ -73,13 +75,15 @@
 
 	function apply() {
 		if (saving || editor.busy) return;
-		if (readOnly || value === original) { onclose(); return; }
-		void commit({ [column.name]: value });
+		if (readOnly || (value === original && !referenceChanges)) { onclose(); return; }
+		void commit({ ...referenceChanges, [column.name]: value });
 	}
 
 	function selectReference(target: Row) {
 		const fk = column.foreignKey!;
-		void commit(Object.fromEntries(fk.columns.map((name, i) => [name, target.values[fk.referencedColumns[i]]])));
+		referenceChanges = Object.fromEntries(fk.columns.map((name, i) => [name, target.values[fk.referencedColumns[i]]]));
+		value = referenceChanges[column.name];
+		picking = false;
 	}
 
 	function special(action: string) {
@@ -197,16 +201,16 @@
 	{/if}
 {/snippet}
 
-<Popover.Root open={!expanded} onOpenChange={(open) => { if (!open && !expanded) apply(); }}>
+<Popover.Root open={!expanded}>
 	<Popover.Portal>
-		<!-- Consume the outside click: dismissal must apply before any navigation can run. -->
+		<!-- Keep outside clicks from navigating or implicitly saving/discarding the buffer. -->
 		<PopoverPrimitive.Overlay class="fixed inset-0 z-40" />
 	</Popover.Portal>
 		<Popover.Content customAnchor={anchor} side="bottom" align="start" sideOffset={4} collisionPadding={12}
 			role="dialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} aria-modal="true"
 			class="z-50 flex max-h-[min(var(--bits-popover-content-available-height),calc(100dvh-24px))] w-[420px] max-w-[calc(100vw-24px)] flex-col gap-3 overflow-y-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl outline-none"
 			onOpenAutoFocus={focusField} onCloseAutoFocus={(event) => event.preventDefault()}
-			onInteractOutside={(event) => { event.preventDefault(); apply(); }}
+			onInteractOutside={(event) => event.preventDefault()}
 			onEscapeKeydown={(event) => { event.preventDefault(); if (!saving) onclose(); }} onkeydown={keydown}>
 			{@render contents()}
 		</Popover.Content>

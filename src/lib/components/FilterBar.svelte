@@ -158,7 +158,7 @@
 			<Combobox.Input aria-label="Add filter" {placeholder} maxlength={1024} autocomplete="off" spellcheck={false}
 				onfocus={() => { if (!blocked && editor.filters.length < MAX_FILTERS) columnOpen = true; }}
 				oninput={(event) => query = event.currentTarget.value}>
-				{#snippet child({ props })}<Input {...props} class="h-8 min-w-36 flex-1 basis-52 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent" />{/snippet}
+				{#snippet child({ props })}<Input {...props} class="h-8 flex-1 basis-52 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent" />{/snippet}
 			</Combobox.Input>
 			<Combobox.Portal>
 				<Combobox.Content align="start" sideOffset={4} class="z-50 max-h-72 w-80 max-w-[calc(100vw-24px)] overflow-y-auto rounded-md border bg-popover p-1 shadow-md">

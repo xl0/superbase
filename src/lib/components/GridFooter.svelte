@@ -12,7 +12,7 @@
 <footer class="flex min-h-11 shrink-0 flex-wrap items-center gap-3 border-t border-border bg-background px-3 py-1.5 text-xs text-muted-foreground">
 	<span class="font-mono text-[11px]">{start.toLocaleString()}–{end.toLocaleString()} displayed</span>
 	{#if editor.hasFilters}<span class="text-[10px]">filtered</span>{/if}
-	<div class="ml-auto flex items-center gap-2">
+	<div class="ml-auto flex max-w-full flex-wrap items-center gap-2">
 		<Select.Root type="single" value={String(editor.pageSize)} disabled={blocked} allowDeselect={false}
 			onValueChange={(value) => { if (value) void editor.setPageSize(Number(value)); }}>
 			<Select.Trigger size="sm" aria-label="Rows per page" class="text-xs">{editor.pageSize} rows</Select.Trigger>

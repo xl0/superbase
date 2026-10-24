@@ -2,7 +2,7 @@ import type { DeleteArgs, FilterOperator, RowIdentity, RowsArgs, SaveArgs, Sort,
 import { FILTER_OPERATORS, MAX_FILTERS, MAX_SORTS } from './types.js';
 
 /** Small Standard Schema adapter for the remote boundary; no validation dependency needed. */
-function schema<T>(parse: (input: unknown) => T): {
+export function schema<T>(parse: (input: unknown) => T): {
 	'~standard': {
 		version: 1;
 		vendor: string;
@@ -25,7 +25,7 @@ function schema<T>(parse: (input: unknown) => T): {
 	};
 }
 
-function object(input: unknown, keys?: string[]): Record<string, unknown> {
+export function object(input: unknown, keys?: string[]): Record<string, unknown> {
 	if (!input || typeof input !== 'object' || Array.isArray(input) ||
 		![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new Error('Expected an object');
 	const value = input as Record<string, unknown>;
@@ -33,14 +33,14 @@ function object(input: unknown, keys?: string[]): Record<string, unknown> {
 	return value;
 }
 
-function text(input: unknown, max = 1024, empty = false): string {
+export function text(input: unknown, max = 1024, empty = false): string {
 	if (typeof input !== 'string' || (!empty && !input) || input.length > max || input.includes('\0')) {
 		throw new Error('Invalid text value');
 	}
 	return input;
 }
 
-function integer(input: unknown, min: number, max: number): number {
+export function integer(input: unknown, min: number, max: number): number {
 	if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < min || input > max) {
 		throw new Error('Number is outside the allowed range');
 	}
@@ -70,7 +70,7 @@ function identity(input: unknown): RowIdentity {
 	return { pk: pk as Record<string, string>, version, relation };
 }
 
-function target(value: Record<string, unknown>): TableTarget {
+export function target(value: Record<string, unknown>): TableTarget {
 	return { connection: text(value.connection, 100), schema: text(value.schema), table: text(value.table) };
 }
 

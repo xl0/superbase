@@ -1,17 +1,22 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
-	import { ArrowDown, ArrowUp, ArrowUpRight, Info, KeyRound, Link2, TriangleAlert } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, ArrowUpRight, Info, KeyRound, Link2, Plus, TriangleAlert } from '@lucide/svelte';
 	import { PersistedState } from 'runed';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import CellEditor from './CellEditor.svelte';
+	import ColumnMenu from './ColumnMenu.svelte';
+	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
 	import { MAX_SORTS, writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
-	let { table, rows, rowOffset }: { table: Table; rows: Row[]; rowOffset: number } = $props();
+	let { table, rows, rowOffset, onedit }: {
+		table: Table; rows: Row[]; rowOffset: number;
+		onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null) => void;
+	} = $props();
 	const id = $props.id();
 	const ROW_HEIGHT = 35;
 	const GUTTER = 64;
@@ -35,7 +40,7 @@
 	}
 	const width = (column: Column) => Object.hasOwn(widths.current, column.name) && Number.isFinite(widths.current[column.name])
 		? Math.max(64, widths.current[column.name]) : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
-	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')}`);
+	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')} 44px`);
 	const disabled = $derived(editor.busy || editor.loading);
 	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
 	const someSelected = $derived(rows.some((row) => editor.isRowSelected(row.key)));
@@ -99,7 +104,7 @@
 
 	function onKeydown(event: KeyboardEvent) {
 		// Leave native buttons, checkboxes and editors in charge of their own keys.
-		if (event.target !== viewport || editing || event.isComposing || !rows.length) return;
+		if (event.target !== viewport || editing || event.isComposing || !rows.length || !table.columns.length) return;
 		const current = focus ?? { r: 0, c: 0 };
 		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
 			event.preventDefault(); focus = { r: 0, c: 0 }; anchor = focus; head = { r: rows.length - 1, c: table.columns.length - 1 }; return;
@@ -181,7 +186,7 @@
 
 <div class="flex h-full min-h-0 flex-col bg-background">
 	<div bind:this={viewport} role="grid" tabindex="0" aria-label={`${table.schema}.${table.name} data`}
-		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 1}
+		aria-rowcount={rows.length + 1} aria-colcount={table.columns.length + 2}
 		aria-busy={editor.loading || editor.busy} aria-readonly={!editor.tableEditable}
 		aria-activedescendant={focus ? `${id}-${focus.r}-${focus.c}` : undefined}
 		class="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -202,10 +207,13 @@
 				{#each table.columns as column (column.name)}
 					{@const sortIndex = editor.sort.findIndex((rule) => rule.column === column.name)}
 					{@const sort = editor.sort[sortIndex]}
-					<div class="header-cell" role="columnheader" aria-sort={sortIndex === 0 ? sort.direction === 'asc' ? 'ascending' : 'descending' : undefined}>
-						<button class="flex h-full w-full items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={disabled || (!sort && editor.sort.length >= MAX_SORTS)}
+					<div class="header-cell flex items-center" role="columnheader" aria-sort={sortIndex === 0 ? sort.direction === 'asc' ? 'ascending' : 'descending' : undefined}>
+						<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={editor.navigationBlocked || editor.loading || (!sort && editor.sort.length >= MAX_SORTS)}
 							aria-label={sort ? `${column.name} ${column.type}, sort priority ${sortIndex + 1}, ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}
-							onclick={() => editor.toggleSort(column.name)} title={`${column.name} · ${column.type} — sort`}>
+							onclick={() => editor.toggleSort(column.name)} title={[`${column.name} · ${column.type} — sort`, column.nullable ? 'Nullable' : 'NOT NULL',
+								column.identity ? `Identity (${column.identity})` : column.generated ? `Generated: ${column.defaultValue}` : `Default: ${column.defaultValue ?? 'none'}`,
+								column.comment, column.enumValues ? `Values: ${column.enumValues.map((value) => JSON.stringify(value)).join(', ')}` : null,
+								column.foreignKey ? `References ${column.foreignKey.schema}.${column.foreignKey.table} (${column.foreignKey.referencedColumns.join(', ')})` : null].filter(Boolean).join('\n')}>
 							{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-muted-foreground" />{:else if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" />{/if}
 							<span class="truncate font-semibold">{column.name}</span><span class="truncate text-muted-foreground">{column.type}</span>
 							{#if sort}
@@ -213,6 +221,7 @@
 								{#if editor.sort.length > 1}<span class="text-[10px] text-muted-foreground">{sortIndex + 1}</span>{/if}
 							{/if}
 						</button>
+						<ColumnMenu {column} {onedit} />
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
 						<div class="resizer" role="separator" tabindex="0" aria-label={`Resize ${column.name}`}
 							aria-orientation="vertical" aria-valuenow={Math.round(width(column))} aria-valuemin={64}
@@ -224,6 +233,10 @@
 							}}></div>
 					</div>
 				{/each}
+				<div class="header-cell add-column flex items-center justify-center" role="columnheader" aria-label="Add column">
+					<Button variant="ghost" size="icon-xs" aria-label="Add column" title="Add column" disabled={editor.navigationBlocked || editor.loading}
+						onclick={(event) => onedit({ kind: 'addColumn' }, event.currentTarget)}><Plus /></Button>
+				</div>
 			</div>
 			{#each rows as row, r (row.key)}
 				<div class="grid-row" role="row" aria-rowindex={r + 2} style:grid-template-columns={template}>
@@ -255,6 +268,7 @@
 							{/if}
 						</div>
 					{/each}
+					<div role="gridcell" aria-colindex={table.columns.length + 2} aria-readonly="true" class="border-b border-border"></div>
 				</div>
 			{/each}
 		</div>
@@ -309,6 +323,7 @@
 	.grid-header, .grid-row { display: grid; height: 35px; }
 	.grid-header { position: sticky; top: 0; z-index: 20; background: var(--card); }
 	.header-cell { position: relative; min-width: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+	.add-column { position: sticky; right: 0; z-index: 3; background: var(--card); border-left: 1px solid var(--border); }
 	.gutter { position: sticky; left: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); color: var(--muted-foreground); font: 10px var(--font-mono); }
 	.gutter span { margin-left: auto; }
 	.resizer { position: absolute; top: 0; right: -3px; z-index: 2; width: 6px; height: 100%; cursor: col-resize; }

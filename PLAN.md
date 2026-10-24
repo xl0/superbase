@@ -34,7 +34,7 @@ pausing, race guards, failure recovery and actual database updates are verified.
 [x] README covers running, connecting, editing and limits for users. Development setup,
 test commands and architecture live in CODE.md.
 
-[x] Cell completion, reference selection and rectangular paste save immediately and atomically.
+[x] Applied cell/reference changes and rectangular paste save immediately and atomically.
 PostgreSQL errors retain editor input; concurrent changes still conflict. Insert row uses a
 resizable, unblurred form with explicit NULL/defaults, rich fields and one Save action.
 Failures retain the form; Create more resets it. Browser and state regressions are verified,
@@ -86,12 +86,34 @@ compact/long messages, narrow viewports, recovery actions and no duplicate top b
 removal and Apply. Headers cycle individual rules and show priority. SQL/state and browser
 checks verify typed ordering, NULLs, stable pages, keyboard flows, Live and local-work guards.
 
+[x] Cell and FK edits require explicit Apply. Outside clicks/blur retain the buffer without
+saving or discarding. Browser checks cover composite tuples, cancellation, expansion and nested
+insert editors; deliberate paste/clear actions remain immediate.
+
+[x] Schema editing creates/renames/drops ordinary tables and adds/edits/drops columns,
+including confirmed native type casts, nullability, comments and literal/preset defaults.
+New tables and keyless tables support PK creation. Resizable panels use explicit Apply,
+discard guards and typed destructive confirmation. Transactional DDL, short lock waits,
+semantic fingerprints and catalog identity checks protect concurrent changes and name reuse.
+SQL/state and isolated browser checks verify rollback, preservation, errors, zero-column tables,
+keyboard/narrow layouts and metadata refresh. Inheritance/partitions, FK/index/enum/namespace
+management and existing PK replacement remain outside this first pass.
+
+[x] Schema actions live in grid column menus and a sticky add-column header; table operations
+sit beside the table name. The separate Definition view is removed. Browser checks verify
+explicit Apply, confirmations, metadata access, focus restoration, sorting, protected drafts,
+clipboard boundaries and zero-column tables. Narrow filter/pagination controls fit the viewport.
+
+[x] Schema forms use searchable base types with integer size, timezone, array and validated
+length/precision/scale options. Type-specific defaults/literal editors preserve drafts and exact
+existing definitions; incompatible choices block Apply without resets. SQL previews, native
+round-trips, lossless defaults, custom types, keyboard flows and narrow layouts are verified.
+
 For these items, completion includes focused regression tests and browser checks, not just
 rendered controls. Keep CODE.md and user-facing documentation aligned with actual behavior.
 
 ## Later
 
-- [ ] Schema editing.
 - [ ] SQL editor with an explicit connection lifecycle.
 - [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
   and opens the browser. Bundle production assets and verify the Bun launch path.

@@ -1,7 +1,7 @@
 # superbase
 
 A local Postgres table editor inspired by Supabase Studio, without the Supabase stack.
-Browse tables, edit cells, follow foreign keys, and copy/paste spreadsheet selections.
+Browse tables, edit cells and schemas, follow foreign keys, and copy/paste selections.
 MIT licensed.
 
 ## Run
@@ -70,7 +70,7 @@ move rules up/down or remove them, then **Apply sorting**. Closing the menu disc
 changes. NULL values sort last in either direction.
 
 Clicking a column header cycles ascending → descending → off for that column, preserving the
-other rules. Header numbers show priority. Sorting remains during filtering, paging, refresh
+other rules. Its chevron menu also offers ascending, descending and remove-sort actions. Header numbers show priority. Sorting remains during filtering, paging, refresh
 and Live updates; changing tables resets it.
 
 ## Editing
@@ -79,10 +79,10 @@ and Live updates; changing tables resets it.
   Text and JSON columns use CodeMirror regardless of content length; other types keep native
   controls. Text stays literal. JSON/JSONB gets highlighting and indentation without rounding
   numbers or changing literal values. Opening a cell never auto-selects all its text.
-- **Apply**, Ctrl/Cmd+Enter, or clicking outside a compact editor saves an existing cell
-  immediately. Invalid values keep the editor open with an error and your input intact.
-  Escape cancels unsaved input; Enter adds a newline. The outside click does not activate
-  the control beneath it.
+- **Apply** or Ctrl/Cmd+Enter saves an existing cell. Invalid values keep the editor open
+  with an error and your input intact. Escape cancels unsaved input; Enter adds a newline.
+  Clicking outside or leaving a field never saves or discards changes, and does not activate
+  the control beneath the editor.
 - **Insert row** opens a side panel with all fields. Fill the row, then **Save** once;
   **Create more** keeps a fresh form open. Defaults are supplied by PostgreSQL, and failed
   inserts retain the whole form. Cancel asks before discarding entered values.
@@ -94,8 +94,8 @@ and Live updates; changing tables resets it.
   Deletes execute after confirmation.
 - Concurrent changes cause a conflict rather than an overwrite. Database-rejected writes
   roll back and preserve your input; cancel and refresh to work from the latest rows.
-- Foreign-key cells open a searchable record picker. Selecting a record saves the whole
-  key atomically, including composite keys; in a new-row form it only fills the form.
+- Foreign-key cells open a searchable record picker. Select a record, then **Apply** to save
+  the whole key atomically, including composite keys; in a new-row form it only fills the form.
   The arrow opens the referenced row; **Show all rows** clears that filter.
 - Arrow keys navigate; Shift-click/arrows extend a range; Shift+Space selects a row.
   Copy/paste uses quoted TSV, preserving tabs and newlines. Unquoted `\N` means NULL and
@@ -103,17 +103,45 @@ and Live updates; changing tables resets it.
   clearing a range saves the whole operation atomically. Escape, clicking empty grid space,
   or clicking outside the grid clears cell selection without changing checked rows.
 
+## Schema editing
+
+Use **+** in the sidebar to create a table. Open a column header’s chevron menu to **Edit
+column**, **Delete column**, or copy its name. The **+** header adds a column. The **…** menu
+beside the table name offers rename/delete and adding a primary key to a keyless table.
+Everything stays in the grid; there is no separate Definition view. New tables start with
+an identity `id` primary key; you can change the columns and select a composite key.
+
+Changes stay local until **Apply** or Ctrl/Cmd+Enter. Errors retain your form; Cancel asks
+before discarding changes. Existing-column type changes use PostgreSQL casts and require
+confirmation: conversions can round values, rewrite the table and block other work.
+Search base types, then choose integer size, timezone, array, length or precision/scale options.
+The resulting SQL type is shown below. Existing settings stay exact until changed; incompatible
+options/defaults are flagged rather than silently reset. A timestamp with timezone stores an
+instant, not the original timezone name.
+
+Defaults offer type-appropriate literals, current date/time, UUID or new-integer identity,
+not SQL expressions. JSON, enum and boolean literals have dedicated editors; empty text/array
+shortcuts remain distinct from NULL. Text types also offer an advanced UUID preset.
+Existing expressions can be kept unchanged. Deletes require typing the target name; column
+deletion can remove its indexes and table constraints, but external dependencies block deletion.
+Concurrent schema changes conflict rather than overwrite. After a lost connection, check the
+database before retrying an operation.
+
+Only ordinary standalone tables are supported, not inheritance or partitions. Existing
+generated expressions and identity defaults are preserved. FK/index/unique/check editing,
+enum/namespace management and replacing existing primary keys are not supported.
+
 ## Live updates and limits
 
 **Live** starts enabled and checks the visible result page every five seconds. An idle grid
 updates itself; open cell editors, new-row forms and selections instead get a changed-data
 notice.
-Polling pauses while the tab is hidden, the Definition view is open, or a connection dialog
-is displayed. It reruns the current query, so turn it off for expensive searches.
+Polling pauses while the tab is hidden or a connection/schema panel is displayed. It reruns the current query, so turn it off for expensive searches.
 
-Tables without a primary key are read-only. Generated fields can be inspected but not edited.
+Row data without a primary key is read-only; add one through **Table actions** to enable writes.
+Generated fields can be inspected but not edited.
 Row counts are exact when the entire unfiltered table is loaded on the first page; `~` marks
 PostgreSQL estimates that may be stale. Pagination is not a snapshot across concurrent changes.
-Schema editing, a SQL console, views and nested/OR filter groups are not supported.
+A SQL console, views and nested/OR filter groups are not supported.
 
 Development setup, test commands and architecture: [CODE.md](CODE.md).

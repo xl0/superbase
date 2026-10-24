@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { Check, Plus, Radio, RotateCw, Trash2, X } from '@lucide/svelte';
+	import { Check, Ellipsis, KeyRound, Pencil, Plus, Radio, RotateCw, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import type { SchemaEditMode } from '#lib/schema.js';
 	import InsertRow from './InsertRow.svelte';
 	import FilterBar from './FilterBar.svelte';
 	import SortMenu from './SortMenu.svelte';
 
-	let { tab = $bindable('data') }: { tab: 'data' | 'definition' } = $props();
+	let { onedit }: { onedit: (mode: SchemaEditMode, anchor?: HTMLElement | null) => void } = $props();
+	let tableTrigger = $state<HTMLButtonElement | null>(null);
 	let deleteOpen = $state(false);
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
@@ -29,16 +32,27 @@
 			<span class="text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
 			<span class="truncate font-medium">{editor.table.name}</span>
 		</div>
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props })}
+					<Button {...props} bind:ref={tableTrigger} variant="ghost" size="icon-xs" disabled={blocked} aria-label="Table actions"><Ellipsis /></Button>
+				{/snippet}
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content align="start" class="w-52" onCloseAutoFocus={(event) => { if (editor.schemaEditing) event.preventDefault(); }}>
+				<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'renameTable' }, tableTrigger)}><Pencil />Rename table</DropdownMenu.Item>
+				{#if !editor.tableEditable}
+					<DropdownMenu.Item disabled={blocked || !editor.table.columns.length} onSelect={() => onedit({ kind: 'addPrimaryKey' }, tableTrigger)}><KeyRound />Add primary key</DropdownMenu.Item>
+				{/if}
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item variant="destructive" disabled={blocked} onSelect={() => onedit({ kind: 'dropTable' }, tableTrigger)}><Trash2 />Delete table</DropdownMenu.Item>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
 		{#if !editor.hasFilters && editor.table.rowCount >= 0}
 			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground"
 				title={exactCount === null ? 'PostgreSQL row estimate; statistics may be stale.' : 'Exact row count from the last loaded page.'}>
 				{exactCount === null ? `~${editor.table.rowCount.toLocaleString()}` : exactCount.toLocaleString()} rows
 			</Badge>
 		{/if}
-		<div class="ml-2 flex items-center rounded-md border border-border p-0.5" aria-label="Table view">
-			<Button variant={tab === 'data' ? 'secondary' : 'ghost'} size="xs" disabled={editor.navigationBlocked} aria-pressed={tab === 'data'} onclick={() => (tab = 'data')}>Data</Button>
-			<Button variant={tab === 'definition' ? 'secondary' : 'ghost'} size="xs" disabled={editor.navigationBlocked} aria-pressed={tab === 'definition'} onclick={() => (tab = 'definition')}>Definition</Button>
-		</div>
 		<div class="ml-auto flex items-center gap-2">
 			{#if editor.busy}
 				<span role="status" class="text-[11px] text-muted-foreground">Saving…</span>
@@ -47,7 +61,6 @@
 			{/if}
 		</div>
 	</div>
-	{#if tab === 'data'}
 		<div class="flex flex-wrap items-start gap-2 px-3 py-2">
 			<FilterBar />
 			<div class="ml-auto flex flex-wrap items-center gap-2">
@@ -71,7 +84,6 @@
 				<Button variant="outline" size="xs" class="ml-auto shrink-0" disabled={blocked} onclick={() => void editor.clearFilters()}>Show all rows</Button>
 			</div>
 		{/if}
-	{/if}
 </header>
 
 <Dialog.Root open={deleteOpen} onOpenChange={(value) => { if (!editor.busy) deleteOpen = value; }}>

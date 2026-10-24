@@ -7,14 +7,14 @@ import type {
 import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
 import { rowsSchema } from '../validation.js';
 
-function ident(name: string): string {
+export function ident(name: string): string {
 	if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) {
 		throw new Error('Invalid identifier');
 	}
 	return `"${name.replaceAll('"', '""')}"`;
 }
 
-function qualify(schema: string, table: string): string {
+export function qualify(schema: string, table: string): string {
 	return `${ident(schema)}.${ident(table)}`;
 }
 
@@ -157,6 +157,10 @@ async function loadMetadata(
 // Refresh explicitly on listTables, or at most every 30 seconds on reads.
 // Replacing the whole map also discards dropped tables instead of accumulating stale entries.
 const metadata = new WeakMap<pg.Pool, { expires: number; tables: Promise<Map<string, Table>> }>();
+
+export function invalidateMetadata(pool: pg.Pool): void {
+	metadata.delete(pool);
+}
 
 async function cachedTables(pool: pg.Pool, refresh = false): Promise<Map<string, Table>> {
 	let cached = metadata.get(pool);

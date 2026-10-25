@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import pg from 'pg';
 
-import { deleteRows, listRows, listTables, saveTable } from '../src/lib/server/db.js';
+import { deleteRows, listRows, listTables, saveTable } from '../src/lib/queries/db.js';
 import type { RowFilter, RowIdentity, RowsArgs, Values } from '../src/lib/types.js';
 
 // Never fall back to DATABASE_URL: integration tests require an explicit disposable test database.

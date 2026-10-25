@@ -27,3 +27,4 @@ vite.config.ts.timestamp-*
 
 # npm pack
 *.tgz
+/build-demo

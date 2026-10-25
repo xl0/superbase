@@ -3,6 +3,7 @@
 .pi
 .vscode
 build
+build-demo
 node_modules
 docs
 tests

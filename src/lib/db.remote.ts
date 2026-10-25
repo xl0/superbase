@@ -1,8 +1,8 @@
 import { command, query } from '$app/server';
 import * as connections from '#lib/server/connections.js';
-import * as db from '#lib/server/db.js';
-import * as schemaDb from '#lib/server/schema.js';
-import * as databaseDb from '#lib/server/database.js';
+import * as db from '#lib/queries/db.js';
+import * as schemaDb from '#lib/queries/schema.js';
+import * as databaseDb from '#lib/queries/database.js';
 import type { ConnectionOptions } from '#lib/connection-options.js';
 import type { DeleteArgs, RowsArgs, SaveArgs, TableTarget } from '#lib/types.js';
 import type { SqlRunArgs, SqlTarget } from '#lib/sql.js';

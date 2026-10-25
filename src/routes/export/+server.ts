@@ -1,7 +1,7 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import type { CsvExportArgs } from '#lib/types.js';
 import { activePool, safeErrorMessage } from '#lib/server/connections.js';
-import { exportCsv } from '#lib/server/export.js';
+import { exportCsv } from '#lib/queries/export.js';
 
 /** Native form POST (SvelteKit checks its origin) into a hidden frame: the browser streams the download. */
 export const POST: RequestHandler = async ({ request }) => {

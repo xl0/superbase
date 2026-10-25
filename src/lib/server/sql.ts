@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { SQL_MAX_RESULTS, SQL_MAX_ROWS, type SqlResult, type SqlRunResult, type SqlTransaction } from '../sql.js';
-import { textTypes } from './db.js';
+import { textTypes } from '../queries/db.js';
 
 const MAX_SESSIONS = 16;
 const MAX_PREVIEW_CHARS = 10_000_000;

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import pg from 'pg';
-import { exportCsv } from '../src/lib/server/export.js';
+import { exportCsv } from '../src/lib/queries/export.js';
 import { ident, qualify } from '../src/lib/ddl.js';
 
 const url = process.env.TEST_DATABASE_URL;

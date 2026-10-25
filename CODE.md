@@ -36,7 +36,7 @@ host/port/db/user. A successful switch reloads the page. Switching to a saved pr
 id; on load, an unconnected (non-locked) server is reconnected to it (`+page.svelte`).
 One-off URLs are never stored.
 
-## Rows (`server/db.ts`)
+## Rows (`queries/db.ts`)
 
 - `CellValue` is PostgreSQL text or NULL: per-query identity type parsers, never JS coercion.
 - `loadMetadata` reads tables/columns/PK/FK/enum info; cached per pool for 30 s, refreshed by
@@ -54,7 +54,7 @@ One-off URLs are never stored.
 `lib/ddl.ts` is the pure SQL generator (create table, add/alter column, duplicate, constraint
 clauses, literal escaping). Forms build a `SchemaChange { sql, select?, destructive? }`, show it
 as a preview, and `executeDdl` runs it in one transaction (`lock_timeout` 3 s). PostgreSQL is
-the validator. `server/schema.ts` also lists approved column types (builtins, enums, domains,
+the validator. `queries/schema.ts` also lists approved column types (builtins, enums, domains,
 arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 `SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
 `SchemaConstraints` are list + form children that bind their `change`. Editing a constraint is
@@ -77,7 +77,7 @@ toolbar checkbox) also offers schema/table/column names from the loaded metadata
 
 ## Database workspace
 
-`server/database.ts` lists all indexes (key columns/expressions, owning constraint), top
+`queries/database.ts` lists all indexes (key columns/expressions, owning constraint), top
 `pg_stat_statements` entries for the current database (PG 13+; missing extension or preload is
 reported, not thrown), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
@@ -89,7 +89,7 @@ written as SQL lists; other values are quoted literals.
 ## CSV export
 
 `/export` takes one form-POSTed JSON `CsvExportArgs` into a hidden iframe so the browser streams
-the attachment; an error response loads in the frame and is shown as a toast. `server/export.ts`
+the attachment; an error response loads in the frame and is shown as a toast. `queries/export.ts`
 declares a read-only cursor (same `rowSelection` as the grid when a query is given) and streams
 256-row batches; cancel/abort destroys the leased client.
 
@@ -110,6 +110,24 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
   value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).
 - `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for the sidebar and sheets.
 - Theme: dark charcoal palette in `app.css`, shared by shadcn components and the grid.
+
+## Demo build
+
+`bun run build:demo` (`vite --mode demo`, `dev:demo` for development) is a static site with
+PostgreSQL in the tab (PGlite, seeded from `demo/seed.sql`, in memory). Vite aliases
+`#lib/db.remote.js` to `demo/db.svelte.ts`, which runs the `queries/` modules against a
+pg-shaped pool and returns minimal `RemoteQuery` look-alikes. That is why `queries/` lives
+outside `server/` (SvelteKit keeps `/server/` out of client bundles) and imports only pg types.
+- Exact text: PGlite applies per-query parsers/serializers by oid only, so the pool maps every
+  `pg_type` oid to identity; parameterless queries use the simple protocol, like pg.
+- One session: a promise queue serializes pool calls and holds it for a client lease; release
+  rolls back a leftover transaction. SQL console runs roll back an open transaction and say so;
+  cancel is unavailable (queries block the tab).
+- A few small contrib extensions are bundled, including preloaded pg_stat_statements.
+- Remaining `import.meta.env.MODE === 'demo'` branches: CSV export builds a Blob, no
+  `/sql/close` beacon, a header badge. The normal build drops them, PGlite included.
+- `BASE_PATH` sets the subpath; `.github/workflows/demo.yml` publishes to GitHub Pages on
+  release tags or on demand.
 
 ## Releases
 
@@ -138,7 +156,8 @@ SQL sessions, CSV and the production HTTP boundary.
 ## Layout
 
 - `src/lib/types.ts`, `schema.ts`, `sql.ts` — shared contracts; `ddl.ts` — DDL generation.
-- `src/lib/db.remote.ts` — remote functions; `src/lib/server/` — connections, rows, schema, SQL, CSV.
+- `src/lib/db.remote.ts` — remote functions; `src/lib/server/` — connections, SQL sessions.
+- `src/lib/queries/` — rows, schema, database workspace, CSV (any pg-shaped pool); `src/lib/demo/` — demo build.
 - `src/lib/state/` — editor and SQL workspace state; `src/lib/components/` — UI (`ui/` is generated shadcn).
 - `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
 

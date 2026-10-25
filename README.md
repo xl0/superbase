@@ -4,6 +4,9 @@ A Postgres table editor in the spirit of Supabase Studio, without the Supabase s
 Browse and edit rows, change schemas through previewed SQL, follow foreign keys, run SQL,
 manage indexes and extensions, and find slow queries. One command, any Postgres. MIT licensed.
 
+**[Try the live demo](https://xl0.github.io/superbase/)**: PostgreSQL runs in your browser (PGlite) on
+sample data, so nothing leaves your machine and a reload starts over.
+
 ![Table editor with a filter and sort applied](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/table-editor.png)
 
 ## Run it

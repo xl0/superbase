@@ -64,7 +64,7 @@
 
 <svelte:window onbeforeunload={(event) => { if (!leaving && unsavedWork()) event.preventDefault(); }} onpagehide={(event) => {
 	// Release the SQL session on close/reload; server idle expiry covers crashes.
-	if (!event.persisted && sql.session) navigator.sendBeacon('/sql/close', JSON.stringify({ connection: sql.connection, session: sql.session }));
+	if (!event.persisted && sql.session && import.meta.env.MODE !== 'demo') navigator.sendBeacon('/sql/close', JSON.stringify({ connection: sql.connection, session: sql.session }));
 }} />
 
 <div class="flex h-dvh flex-col">
@@ -76,6 +76,10 @@
 				onswitch={() => leaving = true} />
 		</div>
 		{#if editor.version}<span class="shrink-0 font-mono text-[11px] text-muted-foreground">PG {editor.version}</span>{/if}
+		{#if import.meta.env.MODE === 'demo'}
+			<a href="https://github.com/xl0/superbase" class="shrink-0" title="PostgreSQL (PGlite) runs in this tab; reloading the page resets the data.">
+				<Badge variant="outline" class="text-[10px] font-normal text-primary">Demo · in-browser database</Badge></a>
+		{/if}
 		{#if workspace === 'tables' && editor.table.name}
 			<div class="ml-4 flex min-w-0 items-baseline gap-1.5 font-mono text-xs">
 				<span class="max-w-48 truncate text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>

@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import pg from 'pg';
 import * as ddl from '../src/lib/ddl.js';
-import { executeDdl, getSchemaDefinition, listSchemaCatalog } from '../src/lib/server/schema.js';
-import { listTables } from '../src/lib/server/db.js';
+import { executeDdl, getSchemaDefinition, listSchemaCatalog } from '../src/lib/queries/schema.js';
+import { listTables } from '../src/lib/queries/db.js';
 import type { SchemaType } from '../src/lib/schema.js';
 
 const url = process.env.TEST_DATABASE_URL;

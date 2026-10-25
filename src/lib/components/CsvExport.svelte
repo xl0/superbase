@@ -6,6 +6,7 @@
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { message } from '#lib/utils.js';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 	const id = $props.id();
@@ -30,6 +31,11 @@
 
 	async function download(target: CsvExportArgs) {
 		error = null;
+		if (import.meta.env.MODE === 'demo') {
+			const { downloadCsv } = await import('#lib/demo/db.svelte.js');
+			await downloadCsv(target).catch((cause) => { error = `CSV export failed: ${message(cause)}`; });
+			return;
+		}
 		payload = JSON.stringify(target);
 		await tick();
 		form?.submit();

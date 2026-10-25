@@ -69,10 +69,18 @@ Commit/Rollback buttons while a transaction is open. **Reset session** closes it
 up to 1,000 rows per result; this does not limit what the SQL does. Statements time out after
 30 s (change with `SET statement_timeout`). The draft autosaves per database in localStorage.
 
+The left panel holds your snippets and built-in examples. **Ctrl/Cmd+S** saves the editor text
+(new text gets a name you can edit in place; an opened snippet is updated). Hearts pin
+favourites; the ⋮ menu renames or deletes. Snippets are shared by all databases in this browser.
+Opening a snippet or example only loads its text — nothing runs until you press Run.
+
 ## CSV export
 
 The toolbar download button exports every row matching the current filters, in grid order;
 the sidebar **⋮ → Export CSV** exports the whole table. **Export options** chooses columns.
 Values are exact PostgreSQL text; NULL is an empty unquoted field.
+
+Most built-in SQL examples are adapted from Supabase Studio (Apache-2.0, see
+[licenses/supabase-apache-2.0.txt](licenses/supabase-apache-2.0.txt)).
 
 Development and architecture: [CODE.md](CODE.md).

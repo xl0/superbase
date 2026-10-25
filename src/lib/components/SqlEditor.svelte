@@ -1,13 +1,21 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import type { EditorView } from '@codemirror/view';
-	import { Play, Square, RotateCcw } from '@lucide/svelte';
+	import { Play, Save, Square, RotateCcw } from '@lucide/svelte';
+	import type { SQLNamespace } from '@codemirror/lang-sql';
+	import { editor } from '#lib/state/editor.svelte.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
+	import { Label } from '#lib/components/ui/label/index.js';
 	import type { SqlState } from '#lib/state/sql.svelte.js';
+	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import SqlLibrary from './SqlLibrary.svelte';
 	import TextEditor from './TextEditor.svelte';
 
 	let { state: sql, active }: { state: SqlState; active: boolean } = $props();
+	const id = $props.id();
 	let view = $state.raw<EditorView | null>(null);
+	let library: SqlLibrary;
 	let selectedResult = $state(0);
 	let page = $state(0);
 	let editorHeight = $state(280);
@@ -16,6 +24,11 @@
 	const height = $derived(Math.min(editorHeight, Math.max(120, windowHeight * 0.55)));
 	const result = $derived(sql.result?.results[selectedResult]);
 	const pageSize = 100;
+	/** schema → table → columns, for autocompletion. */
+	const sqlSchema = $derived(editor.tables.reduce<Record<string, Record<string, string[]>>>((namespace, table) => {
+		(namespace[table.schema] ??= {})[table.name] = table.columns.map((column) => column.name);
+		return namespace;
+	}, {}) as SQLNamespace);
 	const transactionLabel = $derived(sql.busy ? 'Running…'
 		: sql.transaction === 'transaction' ? 'Transaction open'
 		: sql.transaction === 'failed' ? 'Transaction failed'
@@ -30,11 +43,20 @@
 		// A selection is sent verbatim, including incomplete statements; PostgreSQL decides validity.
 		void sql.run(selection.empty ? sql.draft : view.state.sliceDoc(selection.from, selection.to));
 	}
+	/** Update the open snippet, or save untitled text under its first line and start renaming it. */
+	function save() {
+		if (!sql.draft.trim()) return;
+		try {
+			if (sql.current) { sql.save(); return; }
+			const firstLine = sql.draft.trim().split('\n')[0].replace(/^--\s*/, '');
+			sql.save(firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine);
+			void library.rename(sql.current!);
+		} catch (cause) { window.alert(`Could not save the snippet: ${message(cause)}`); }
+	}
 	function keydown(event: KeyboardEvent) {
-		if (active && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-			event.preventDefault();
-			run();
-		}
+		if (!active || !(event.ctrlKey || event.metaKey)) return;
+		if (event.key === 'Enter') { event.preventDefault(); run(); }
+		else if (event.key.toLowerCase() === 's') { event.preventDefault(); save(); }
 	}
 	async function finishTransaction(command: 'COMMIT' | 'ROLLBACK', trigger: HTMLElement) {
 		await sql.run(command);
@@ -50,7 +72,9 @@
 
 <svelte:window onkeydown={keydown} bind:innerHeight={windowHeight} />
 
-<section aria-label="SQL workspace" class="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
+<div class="flex h-full min-h-0">
+<SqlLibrary bind:this={library} state={sql} />
+<section aria-label="SQL workspace" class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 	<div class="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
 		<Button size="sm" disabled={sql.busy || sql.needsReset || !sql.draft.trim()} onclick={run}
 			title="Run selection, or the entire buffer when nothing is selected (Ctrl/Cmd+Enter)">
@@ -59,12 +83,19 @@
 		{#if sql.running}
 			<Button size="sm" variant="outline" disabled={sql.cancelling} onclick={() => void sql.cancel()}><Square class="size-3" />{sql.cancelling ? 'Cancelling…' : 'Cancel'}</Button>
 		{/if}
+		<Button size="sm" variant="ghost" disabled={!sql.draft.trim() || (!!sql.current && !sql.unsaved)} onclick={save}
+			title={sql.current ? `Save “${sql.current.name}” (Ctrl/Cmd+S)` : 'Save as a new snippet (Ctrl/Cmd+S)'}><Save class="size-3.5" />Save</Button>
 		<Button size="sm" variant="ghost" disabled={sql.busy || !sql.session} onclick={reset} title="Close the connection and roll back uncommitted work; keep the draft">
 			<RotateCcw class="size-3.5" />Reset session
 		</Button>
+		<span class="ml-auto truncate text-xs text-muted-foreground">{sql.current ? `${sql.current.name}${sql.unsaved ? ' •' : ''}` : 'Untitled'}</span>
+		<div class="flex shrink-0 items-center gap-2">
+			<Checkbox id={`${id}-completion`} checked={sql.completion} onCheckedChange={(checked) => sql.setCompletion(checked)} />
+			<Label for={`${id}-completion`} class="text-xs font-normal text-muted-foreground" title="Suggest keywords, schemas, tables and columns">Autocomplete</Label>
+		</div>
 	</div>
 	<div class="shrink-0 px-3 pt-3" style:height={`${height}px`}>
-		<TextEditor value={sql.draft} onchange={(value) => sql.updateDraft(value)} language="sql" tabIndent label="SQL query"
+		<TextEditor value={sql.draft} onchange={(value) => sql.updateDraft(value)} language="sql" tabIndent completion={sql.completion} {sqlSchema} label="SQL query"
 			placeholder="SELECT current_database();" class="h-full rounded-b-none" bind:ref={view} />
 	</div>
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard-adjustable separator.) -->
@@ -138,3 +169,4 @@
 		{/if}
 	</div>
 </section>
+</div>

@@ -15,7 +15,8 @@ PostgreSQL validates. Keep code and tests minimal.
 - Table editor: exact values, cell/range/paste edits with optimistic row-version conflicts,
   insert form, FK picker/navigation, filters, multi-sort, live polling, CSV export.
 - Schema editing via previewed SQL: tables, columns, PK, indexes, UNIQUE/CHECK/FK.
-- SQL console with per-tab sessions, transactions, cancel, autosaved draft.
+- SQL console with per-tab sessions, transactions, cancel, autosaved draft; snippet library with
+  favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
@@ -28,8 +29,6 @@ PostgreSQL validates. Keep code and tests minimal.
 - [ ] Docker image for the locked/viewer mode (document `DATABASE_URL`, `HOST`, `ORIGIN`).
 - [ ] Settings: extensions (install/update/remove) and a few session/role settings
   (search_path, timezone, timeouts) — as previewed SQL, like schema forms.
-- [ ] SQL library: saved snippets/favourites (localStorage), plus a few built-in examples.
-  Opening loads text only, never executes.
 
 ## Later / maybe
 

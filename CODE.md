@@ -61,7 +61,11 @@ accumulating rows; previews keep ≤1,000 rows per result and ~10M chars total. 
 results come from pg's internal `query._results`; transaction status is read after
 ReadyForQuery. Cancel opens a second client and `pg_cancel_backend`, guarded by a run counter.
 Sessions expire after 15 idle minutes; a pagehide `sendBeacon` to `/sql/close` releases them.
-`SqlState` (client) persists only the draft text, per database, in localStorage.
+`SqlState` (client) persists the draft and its linked snippet id per database, and the snippet
+library (`superbase.sql-snippets`, shared by databases/tabs; writes re-read first) in localStorage.
+`SqlLibrary.svelte` lists favourites, snippets and `sql-examples.ts` (Apache-2.0 attributed).
+Opening anything only loads text; replacing modified text asks first. Autocomplete (a
+toolbar checkbox) also offers schema/table/column names from the loaded metadata.
 
 ## CSV export
 

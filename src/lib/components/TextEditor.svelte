@@ -5,7 +5,7 @@
 	import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
 	import { HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 	import { json } from '@codemirror/lang-json';
-	import { PostgreSQL, sql } from '@codemirror/lang-sql';
+	import { PostgreSQL, sql, type SQLNamespace } from '@codemirror/lang-sql';
 	import { acceptCompletion, autocompletion, closeCompletion } from '@codemirror/autocomplete';
 	import { tags } from '@lezer/highlight';
 	import { prettyJSON } from '#lib/json.js';
@@ -13,7 +13,7 @@
 
 	/** CodeMirror for a NULL/DEFAULT/text value. The parent owns the value; edits report document text. */
 	let {
-		value, onchange, language = 'text', tabIndent = false, readonly = false, label, id, placeholder = '', class: className = '',
+		value, onchange, language = 'text', tabIndent = false, readonly = false, completion = true, sqlSchema, label, id, placeholder = '', class: className = '',
 		state: editorState = $bindable<EditorState | null>(null), ref = $bindable<EditorView | null>(null)
 	}: {
 		value: CellValue | undefined;
@@ -22,6 +22,9 @@
 		language?: 'text' | 'json' | 'sql';
 		/** The SQL workspace opts in; form editors keep native Tab focus navigation. */
 		tabIndent?: boolean;
+		/** SQL autocompletion: keywords, plus schemas/tables/columns from `sqlSchema`. */
+		completion?: boolean;
+		sqlSchema?: SQLNamespace;
 		readonly?: boolean;
 		label: string;
 		id?: string;
@@ -65,8 +68,9 @@
 	function extensions() {
 		return [
 			language === 'sql' ? [
-				sql({ dialect: PostgreSQL }), autocompletion(),
-				...(tabIndent ? [keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab])] : []),
+				sql({ dialect: PostgreSQL, schema: sqlSchema, defaultSchema: 'public' }),
+				...(completion ? [autocompletion()] : []),
+				...(tabIndent ? [keymap.of([...(completion ? [{ key: 'Tab', run: acceptCompletion }] : []), indentWithTab])] : []),
 				lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting
 			]
 				: language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],

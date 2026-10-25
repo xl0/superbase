@@ -3,9 +3,24 @@ import type { SqlRunResult, SqlTransaction } from '#lib/sql.js';
 import { message } from '#lib/utils.js';
 import type { ConnectionInfo } from '#lib/types.js';
 
-/** One SQL workspace. Only the draft text persists (per database, shared by tabs); sessions stay in memory. */
+/** A saved SQL snippet, shared by every database and tab of this browser (localStorage). */
+export interface SqlSnippet {
+	id: string;
+	name: string;
+	sql: string;
+	favorite: boolean;
+}
+const LIBRARY_KEY = 'superbase.sql-snippets';
+const COMPLETION_KEY = 'superbase.sql-completion';
+
+/** One SQL workspace. The draft (and which snippet it came from) persists per database; sessions stay in memory. */
 export class SqlState {
 	draft = $state('');
+	/** Saved snippet the draft was opened from or saved as; null for untitled text. */
+	snippet = $state<string | null>(null);
+	snippets = $state.raw<SqlSnippet[]>([]);
+	/** Autocomplete preference for this browser. */
+	completion = $state(true);
 	session = $state<string | null>(null);
 	transaction = $state<SqlTransaction>('closed');
 	busy = $state(false);
@@ -15,12 +30,23 @@ export class SqlState {
 	error = $state('');
 	readonly connection: string;
 	readonly #draftKey: string;
+	/** Text as last opened (e.g. an example), so an untouched copy is not "unsaved". */
+	#opened = '';
 
 	constructor(connection: ConnectionInfo) {
 		this.connection = connection.id;
-		this.#draftKey = `superbase.sql:${connection.user}@${connection.host}:${connection.port}/${connection.database}`;
-		try { this.draft = localStorage.getItem(this.#draftKey) ?? ''; } catch { /* Storage denied: drafts are not kept. */ }
+		this.#draftKey = `superbase.sql-draft:${connection.user}@${connection.host}:${connection.port}/${connection.database}`;
+		try {
+			const saved = JSON.parse(localStorage.getItem(this.#draftKey) ?? 'null');
+			if (saved) ({ sql: this.draft, snippet: this.snippet } = saved);
+			this.completion = localStorage.getItem(COMPLETION_KEY) !== 'false';
+		} catch { /* Storage denied or unreadable: start empty. */ }
+		this.loadLibrary();
 	}
+
+	get current() { return this.snippets.find((snippet) => snippet.id === this.snippet) ?? null; }
+	/** Text that would be lost by opening something else. */
+	get unsaved() { return this.current ? this.current.sql !== this.draft : !!this.draft.trim() && this.draft !== this.#opened; }
 
 	/** Open or failed transactions and lost sessions are worth a reload warning; saved drafts are not. */
 	get protectedWork() { return this.busy || this.transaction === 'transaction' || this.transaction === 'failed' || this.needsReset; }
@@ -28,10 +54,58 @@ export class SqlState {
 
 	updateDraft(value: string) {
 		this.draft = value;
+		this.#storeDraft();
+	}
+
+	#storeDraft() {
 		try {
-			if (value) localStorage.setItem(this.#draftKey, value);
+			if (this.draft || this.snippet) localStorage.setItem(this.#draftKey, JSON.stringify({ sql: this.draft, snippet: this.snippet }));
 			else localStorage.removeItem(this.#draftKey);
 		} catch { /* Quota or denied storage: keep editing in memory. */ }
+	}
+
+	setCompletion(enabled: boolean) {
+		this.completion = enabled;
+		try { localStorage.setItem(COMPLETION_KEY, String(enabled)); } catch { /* Keep the choice for this page only. */ }
+	}
+
+	/** Load text into the editor (never runs it); `snippet` links it for later saves. */
+	open(sql: string, snippet: string | null) {
+		this.draft = this.#opened = sql;
+		this.snippet = snippet;
+		this.#storeDraft();
+	}
+
+	loadLibrary() {
+		try { this.snippets = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? '[]'); } catch { this.snippets = []; }
+	}
+
+	/** Re-read before writing so changes made in other tabs survive. */
+	#updateLibrary(change: (snippets: SqlSnippet[]) => SqlSnippet[]) {
+		this.loadLibrary();
+		this.snippets = change(this.snippets).sort((a, b) => a.name.localeCompare(b.name));
+		localStorage.setItem(LIBRARY_KEY, JSON.stringify(this.snippets));
+	}
+
+	/** Save the draft into the open snippet, or as a new snippet when a name is given. */
+	save(name?: string) {
+		if (name) {
+			const id = crypto.randomUUID();
+			this.#updateLibrary((snippets) => [...snippets, { id, name, sql: this.draft, favorite: false }]);
+			this.snippet = id;
+			this.#storeDraft();
+		} else if (this.current) {
+			this.#updateLibrary((snippets) => snippets.map((item) => item.id === this.snippet ? { ...item, sql: this.draft } : item));
+		}
+	}
+
+	editSnippet(id: string, change: Partial<Pick<SqlSnippet, 'name' | 'favorite'>>) {
+		this.#updateLibrary((snippets) => snippets.map((item) => item.id === id ? { ...item, ...change } : item));
+	}
+
+	removeSnippet(id: string) {
+		this.#updateLibrary((snippets) => snippets.filter((item) => item.id !== id));
+		if (this.snippet === id) { this.snippet = null; this.#storeDraft(); }
 	}
 
 	async run(sql: string) {

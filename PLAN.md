@@ -20,6 +20,8 @@ PostgreSQL validates. Keep code and tests minimal.
 - Database workspace: all indexes (drop), query performance (pg_stat_statements), extensions (enable/update/disable) and curated
   database/role defaults, as previewed SQL.
 - CLI: `npx|bunx @xl0/superbase [url] [--port] [--host] [--no-open]` (unscoped name rejected by npm).
+- Releases: `bun run release` → CI stages npm (2FA approve), pushes ghcr.io/xl0/superbase and
+  xl0xl0/superbase images, and creates the GitHub Release. 0.1.1 shipped this way.
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
@@ -27,9 +29,7 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] First CI release (0.1.1): `bun run release` → tag → `.github/workflows/release.yml` stages npm
-  (approve with 2FA), pushes GHCR + Docker Hub images and creates the GitHub Release.
-  Needs npm trusted publishing for the repo and a GitHub `npm` environment; set the GHCR package public.
+Nothing queued; pick from the list below.
 
 ## Later / maybe
 

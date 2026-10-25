@@ -30,14 +30,16 @@ From a checkout: `bun install --frozen-lockfile && bun run build && bun run star
 ## Run as a database viewer (Docker / Kubernetes)
 
 ```sh
-docker run -p 127.0.0.1:3000:3000 -e DATABASE_URL=postgres://user:pass@db:5432/app ghcr.io/xl0/superbase
+docker run -p 127.0.0.1:3000:3000 -e DATABASE_URL=postgres://user:pass@db:5432/app xl0xl0/superbase
 ```
+
+The same image is on GitHub's registry as `ghcr.io/xl0/superbase`.
 
 ```yaml
 # docker-compose.yml
 services:
   superbase:
-    image: ghcr.io/xl0/superbase       # or build: https://github.com/xl0/superbase.git
+    image: xl0xl0/superbase            # or build: https://github.com/xl0/superbase.git
     environment:
       DATABASE_URL: postgres://app:secret@db:5432/app
       ORIGIN: https://db.example.com   # the public URL, when behind a TLS proxy

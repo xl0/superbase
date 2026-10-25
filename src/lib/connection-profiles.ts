@@ -7,6 +7,7 @@ export interface ConnectionProfile extends ConnectionOptions {
 	name: string;
 }
 const KEY = 'superbase.connection-profiles.v1';
+const LAST_KEY = 'superbase.last-profile';
 
 export function loadProfiles(): ConnectionProfile[] {
 	try { return JSON.parse(localStorage.getItem(KEY) ?? '[]'); } catch { return []; }
@@ -14,6 +15,21 @@ export function loadProfiles(): ConnectionProfile[] {
 
 export function storeProfiles(profiles: ConnectionProfile[]): void {
 	localStorage.setItem(KEY, JSON.stringify(profiles));
+}
+
+/** The saved profile last switched to, reconnected automatically when the server has no connection. */
+export function lastProfile(): ConnectionProfile | undefined {
+	try {
+		const id = localStorage.getItem(LAST_KEY);
+		return loadProfiles().find((profile) => profile.id === id);
+	} catch { return undefined; }
+}
+
+export function rememberProfile(id: string | null): void {
+	try {
+		if (id) localStorage.setItem(LAST_KEY, id);
+		else localStorage.removeItem(LAST_KEY);
+	} catch { /* Storage denied: no automatic reconnect. */ }
 }
 
 /** Password-free label: host:port/database · user. */

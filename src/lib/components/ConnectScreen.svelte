@@ -3,7 +3,7 @@
 	import type { ConnectionStatus } from '#lib/types.js';
 	import ConnectionDialog from './ConnectionDialog.svelte';
 
-	let { status }: { status: ConnectionStatus } = $props();
+	let { status, error = '' }: { status: ConnectionStatus; error?: string } = $props();
 </script>
 
 <main class="grid min-h-dvh place-items-center bg-background p-6 text-foreground">
@@ -14,6 +14,7 @@
 		</div>
 		<h1 class="text-xl font-semibold tracking-tight">Connect to Postgres</h1>
 		<p class="mt-2 mb-5 text-xs leading-relaxed text-muted-foreground">Choose a saved connection or add a Postgres URL.</p>
+		{#if error}<p role="alert" class="mb-4 text-xs break-words text-destructive">{error}</p>{/if}
 		<ConnectionDialog {status} />
 	</div>
 </main>

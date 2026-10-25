@@ -3,7 +3,7 @@
 	import { connect } from '#lib/db.remote.js';
 	import type { ConnectionStatus } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
-	import { connectionTarget, loadProfiles, profileTarget, storeProfiles, type ConnectionProfile } from '#lib/connection-profiles.js';
+	import { connectionTarget, loadProfiles, profileTarget, rememberProfile, storeProfiles, type ConnectionProfile } from '#lib/connection-profiles.js';
 	import { connectionOptions, SSL_MODES, type SslMode } from '#lib/connection-options.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
@@ -46,12 +46,14 @@
 		dialogOpen = true;
 	}
 
-	async function change(choice: { url: string; sslMode: SslMode }) {
+	/** Saved profiles are remembered for automatic reconnection; one-off URLs never are. */
+	async function change(choice: { url: string; sslMode: SslMode; id?: string }) {
 		if (pending || !approve()) return;
 		pending = true;
 		error = '';
 		try {
 			await connect({ ...choice, expected: status.connection?.id ?? null });
+			rememberProfile(choice.id ?? null);
 			onswitch();
 			window.location.reload();
 		} catch (cause) {

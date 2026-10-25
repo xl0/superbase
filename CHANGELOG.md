@@ -6,6 +6,8 @@
 
 - A live demo that runs PostgreSQL in the browser (PGlite) on sample data, published to GitHub Pages.
 
+- Schema diagram (Database → Schema): tables, columns and foreign keys of one schema, laid out automatically; ↗ opens a table.
+
 ### Changed
 
 - Array values are shown and edited as JSON (`["a","b"]`), like Supabase; numbers keep their exact spelling.

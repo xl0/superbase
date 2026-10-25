@@ -174,7 +174,7 @@
 					</main>
 				</div>
 				{#if workspace === 'database'}
-					<main class="min-w-0 flex-1"><DatabaseWorkspace /></main>
+					<main class="min-w-0 flex-1"><DatabaseWorkspace onopen={(table) => { switchWorkspace('tables'); void editor.selectTable(table.schema, table.name); }} /></main>
 				{/if}
 				{#if sqlOpened}
 					<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'}>

@@ -100,6 +100,8 @@ only loads its text; nothing runs until you press Run.
 
 ## Database
 
+- **Schema:** a diagram of one schema's tables and foreign keys (including references to other
+  schemas); ↗ opens a table.
 - **Indexes:** every index per schema, with definitions; drop with a preview.
 - **Performance:** the most expensive statements from `pg_stat_statements`, sortable, with
   cache hit rates; enables the extension for you if it's missing (the server must preload it).

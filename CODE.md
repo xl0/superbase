@@ -77,6 +77,12 @@ toolbar checkbox) also offers schema/table/column names from the loaded metadata
 
 ## Database workspace
 
+`SchemaDiagram` draws the loaded table metadata (no extra query) with Svelte Flow and lays it out
+with dagre (left to right, referenced tables first). Cards have fixed header/row heights so the
+layout knows node sizes; edges attach to per-column handles. Tables referenced from other schemas
+appear faded. Nodes are `$derived` from the metadata and bound to Svelte Flow, so dragging works
+until the next metadata reload re-lays out. Positions are not saved.
+
 `queries/database.ts` lists all indexes (key columns/expressions, owning constraint), top
 `pg_stat_statements` entries for the current database (PG 13+; missing extension or preload is
 reported, not thrown), extensions (`pg_available_extensions` + installed version/schema,

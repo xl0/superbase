@@ -1,5 +1,6 @@
 import type { DeleteArgs, FilterOperator, RowIdentity, RowQuery, RowsArgs, SaveArgs, Sort, TableTarget, Values } from './types.js';
 import { FILTER_OPERATORS, MAX_FILTERS, MAX_SORTS } from './types.js';
+import { connectionOptions } from './connection-options.js';
 
 /** Small Standard Schema adapter for the remote boundary; no validation dependency needed. */
 export function schema<T>(parse: (input: unknown) => T): {
@@ -80,8 +81,8 @@ export const connectionSchema = schema((input) => {
 });
 
 export const connectSchema = schema((input) => {
-	const value = object(input, ['url', 'expected']);
-	return { url: text(value.url, 8192), expected: value.expected === null ? null : text(value.expected, 100) };
+	const value = object(input, ['url', 'sslMode', 'expected']);
+	return { ...connectionOptions(text(value.url, 8192), value.sslMode), expected: value.expected === null ? null : text(value.expected, 100) };
 });
 
 export const switchSchema = schema((input) => {

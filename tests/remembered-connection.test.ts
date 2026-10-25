@@ -25,11 +25,12 @@ afterAll(() => {
 
 test('pause retains exact credentials without restoring; remembering again resumes; forget removes them', () => {
 	const url = 'postgresql://user:p%40ss@localhost/test?sslmode=verify-full';
+	const saved = { url: 'postgresql://user:p%40ss@localhost/test', sslMode: 'verify-full' };
 	expect(rememberedConnection()).toBeNull();
 	rememberConnection(url, pauseRememberedConnection());
-	expect(rememberedConnection()).toEqual({ url, autoConnect: true });
+	expect(rememberedConnection()).toEqual({ ...saved, autoConnect: true });
 	pauseRememberedConnection();
-	expect(rememberedConnection()).toEqual({ url, autoConnect: false });
+	expect(rememberedConnection()).toEqual({ ...saved, autoConnect: false });
 	rememberConnection(url, pauseRememberedConnection());
 	expect(rememberedConnection()?.autoConnect).toBe(true);
 	forgetConnection();
@@ -81,7 +82,7 @@ test('a late connection response cannot overwrite a newer choice or undo Forget 
 	rememberConnection('postgresql://localhost/new', newer);
 	rememberConnection('postgresql://localhost/old', older);
 	forgetConnection(older);
-	expect(rememberedConnection()).toEqual({ url: 'postgresql://localhost/new', autoConnect: true });
+	expect(rememberedConnection()).toEqual({ url: 'postgresql://localhost/new', sslMode: 'require', autoConnect: true });
 	const pending = pauseRememberedConnection();
 	forgetConnection();
 	rememberConnection('postgresql://localhost/pending', pending);

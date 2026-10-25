@@ -43,6 +43,7 @@ async function fixture(defaultUrl = '') {
 		.replace("import { SqlSessions } from './sql.js';", '')
 		.replace("import { getRequestEvent } from '$app/server';", '')
 		.replace("import { DATABASE_URL } from '$app/env/private';", '')
+		.replace("'#lib/connection-options.js'", JSON.stringify(new URL('../src/lib/connection-options.ts', import.meta.url).href))
 		.replaceAll('Date.now()', 'testState.now');
 	const compiled = ts.transpileModule(`const testState = globalThis[${JSON.stringify(key)}];\nconst { pg, getRequestEvent, DATABASE_URL, setInterval, SqlSessions } = testState;\n${source}`, {
 		compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
@@ -223,7 +224,7 @@ test('strict URL option allowlist and TLS policy; failures neither allocate pool
 		...['abc', '1.5', '1e3', '65536'].map((port) => `postgresql://db.example:${port}/db`),
 		'postgresql://db.example/%00', 'postgresql://reader:%zz@db.example/db',
 		...['sslcert=/etc/passwd', 'sslkey=/etc/passwd', 'sslrootcert=/etc/passwd', 'host=elsewhere',
-			'password=secret', 'options=-csearch_path=public', 'sslmode=no-verify', 'sslmode=prefer',
+			'password=secret', 'options=-csearch_path=public', 'sslmode=no-verify', 'sslmode=allow',
 			'sslmode=disable&sslmode=require', 'ssl=true'].map((option) => `postgresql://db.example/db?${option}`)
 	];
 	for (const value of invalid) await assert.rejects(request(jar, () => api.connect({ url: value, expected: null })));
@@ -250,6 +251,51 @@ test('strict URL option allowlist and TLS policy; failures neither allocate pool
 		await request(jar, () => api.connect({ url: `postgresql://db.example/app${query}`, expected }));
 		assert.deepEqual(state.pools.at(-1).config.ssl, ssl);
 	}
+	const expected = request(jar, api.connectionStatus).connection.id;
+	await request(jar, () => api.connect({ url: 'postgresql://db.example/app', sslMode: 'disable', expected }));
+	assert.equal(state.pools.at(-1).config.ssl, false);
+	await assert.rejects(request(jar, () => api.connect({
+		url: 'postgresql://db.example/app?sslmode=verify-full', sslMode: 'disable',
+		expected: request(jar, api.connectionStatus).connection.id
+	})), /conflicts/);
+});
+
+test('prefer negotiates plaintext only for unsupported SSL, preserving generation fences and SQL transport', async () => {
+	const { api, state, browser, request, defer } = await fixture();
+	const jar = browser();
+	const unsupported = defer();
+	const connecting = request(jar, () => api.connect({ url: 'postgresql://db.example/app', sslMode: 'prefer', expected: null }));
+	unsupported.reject(new Error('The server does not support SSL connections'));
+	const connected = await connecting;
+	assert.equal(state.pools.length, 2);
+	assert.equal(state.pools[0].ended, true);
+	assert.deepEqual(state.pools[0].config.ssl, { rejectUnauthorized: false });
+	assert.equal(state.pools[1].config.ssl, false);
+	assert.equal(request(jar, () => api.activeSql(connected.connection.id)).config.ssl, false);
+
+	for (const [mode, error] of [
+		['require', new Error('The server does not support SSL connections')],
+		['verify-full', new Error('self-signed certificate')],
+		['prefer', new Error('TLS handshake failed')],
+		['prefer', new pg.DatabaseError('The server does not support SSL connections', 0, 'error')],
+		['prefer', Object.assign(new Error('The server does not support SSL connections'), { code: '28P01' })]
+	] as const) {
+		const before = state.pools.length;
+		const failed = defer();
+		const attempt = request(jar, () => api.connect({ url: 'postgresql://db.example/app', sslMode: mode, expected: connected.connection.id }));
+		failed.reject(error);
+		await assert.rejects(attempt);
+		assert.equal(state.pools.length, before + 1, 'must not downgrade on authentication, TLS or SQL errors');
+		assert.equal(request(jar, api.connectionStatus).connection.id, connected.connection.id);
+	}
+	const before = state.pools.length;
+	const late = defer();
+	const attempt = request(jar, () => api.connect({ url: 'postgresql://db.example/app', sslMode: 'prefer', expected: connected.connection.id }));
+	await request(jar, () => api.disconnect({ expected: connected.connection.id }));
+	late.reject(new Error('The server does not support SSL connections'));
+	await assert.rejects(attempt, /Connection changed/);
+	assert.equal(state.pools.length, before + 1, 'stale candidate must not allocate a fallback pool');
+	assert.equal(request(jar, api.connectionStatus).connection, null);
 });
 
 test('trusted environment metadata uses pg parsing, not URL-only guesses', async () => {

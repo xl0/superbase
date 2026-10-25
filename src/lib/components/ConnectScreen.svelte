@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Database } from '@lucide/svelte';
 	import type { ConnectionStatus } from '#lib/types.js';
-	import ConnectForm from './ConnectForm.svelte';
+	import ConnectionDialog from './ConnectionDialog.svelte';
 
 	let { status, restoreError = '' }: { status: ConnectionStatus; restoreError?: string } = $props();
 </script>
@@ -14,8 +14,7 @@
 		</div>
 		<h1 class="text-xl font-semibold tracking-tight">Connect to Postgres</h1>
 		<p class="mt-2 mb-5 text-xs leading-relaxed text-muted-foreground">
-			Browse your tables and edit rows. The server keeps credentials only in memory.
-			Optionally remember your connection in this browser.
+			Choose a saved connection or add a Postgres URL.
 		</p>
 		{#if restoreError}
 			<p role="alert" class="mb-4 rounded-md border border-destructive/30 p-3 text-xs text-destructive">{restoreError}</p>
@@ -28,10 +27,8 @@
 				Your database session expired. Reconnect to continue.
 			</p>
 		{/if}
-		<ConnectForm {status} />
+		<ConnectionDialog {status} />
 		<p class="mt-5 text-xs leading-relaxed text-muted-foreground">
-			Server sessions expire after two idle hours or a restart. Remembered connections
-			reconnect when you reload. Disconnect pauses this; Forget erases the saved URL.
 			Set <code class="text-foreground">DATABASE_URL</code> for an optional default.
 		</p>
 	</div>

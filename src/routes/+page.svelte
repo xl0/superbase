@@ -2,6 +2,7 @@
 	import { connect, connectionStatus } from '#lib/db.remote.js';
 	import type { ConnectionStatus } from '#lib/types.js';
 	import { rememberedConnection, restorationAllowed } from '#lib/remembered-connection.js';
+	import { connectionProfiles, recordActiveProfile } from '#lib/connection-profiles.js';
 	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import ConnectScreen from '#lib/components/ConnectScreen.svelte';
@@ -26,7 +27,13 @@
 			if (restorationAllowed() && (!current.connection || current.connection.source === 'env')) {
 				const saved = rememberedConnection();
 				if (saved?.autoConnect) {
-					await connect({ url: saved.url, expected: current.connection?.id ?? null });
+					const profile = saved.profile ? connectionProfiles().find((profile) => profile.id === saved.profile &&
+						profile.url === saved.url && profile.sslMode === saved.sslMode) : null;
+					if (saved.profile && !profile) {
+						throw new Error('The saved profile was removed or changed. Choose a connection explicitly.');
+					}
+					const result = await connect({ url: saved.url, sslMode: saved.sslMode, expected: current.connection?.id ?? null });
+					recordActiveProfile(result.connection?.id, profile ?? null);
 					await status.refresh();
 				}
 			}

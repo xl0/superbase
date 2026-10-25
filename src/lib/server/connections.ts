@@ -5,6 +5,7 @@ import { getRequestEvent } from '$app/server';
 import { DATABASE_URL } from '$app/env/private';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { ConnectionInfo, ConnectionStatus } from '#lib/types.js';
+import { connectionOptions, type SslMode } from '#lib/connection-options.js';
 import { SqlSessions } from './sql.js';
 
 const COOKIE = 'superbase_connection';
@@ -14,6 +15,7 @@ const MAX_PENDING = 8;
 
 type Settings = {
 	config: pg.PoolConfig;
+	sslMode?: SslMode;
 	info: Omit<ConnectionInfo, 'id' | 'source'>;
 	password: string;
 };
@@ -34,7 +36,7 @@ const pools = new WeakMap<pg.Pool, { clients: Set<pg.PoolClient>; retired: boole
 let pending = 0;
 let defaultSettings: Settings | undefined;
 
-function settings(url: string, browser: boolean): Settings {
+function settings(url: string, browser: boolean, sslMode?: SslMode): Settings {
 	let config: pg.PoolConfig;
 	let password = '';
 	if (browser) {
@@ -53,14 +55,7 @@ function settings(url: string, browser: boolean): Settings {
 			throw new Error('Connection URL must have a valid host and no fragment.');
 		}
 		if (!parsed.pathname.slice(1)) throw new Error('Connection URL must name a database.');
-		const options = [...parsed.searchParams];
-		if (options.some(([key]) => key !== 'sslmode') || options.length > 1) {
-			throw new Error('Only the sslmode URL option is supported; certificate files are not allowed.');
-		}
-		const sslmode = parsed.searchParams.get('sslmode') ?? 'require';
-		if (!['require', 'verify-full', 'disable'].includes(sslmode)) {
-			throw new Error('sslmode must be require, verify-full, or disable.');
-		}
+		sslMode = connectionOptions(url, sslMode).sslMode;
 		try {
 			password = decodeURIComponent(parsed.password);
 			config = {
@@ -71,7 +66,7 @@ function settings(url: string, browser: boolean): Settings {
 				// An empty password must not silently inherit the server's PGPASSWORD.
 				password: password || (() => ''),
 				// Encryption and certificate verification are separate, explicit choices.
-				ssl: sslmode === 'disable' ? false : { rejectUnauthorized: sslmode === 'verify-full' }
+				ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode === 'verify-full' }
 			};
 		} catch {
 			throw new Error('Connection URL has invalid percent encoding.');
@@ -88,6 +83,7 @@ function settings(url: string, browser: boolean): Settings {
 		const client = new pg.Client(config);
 		return {
 			config,
+			sslMode,
 			info: { host: client.host, port: String(client.port), database: client.database ?? '', user: client.user ?? '' },
 			password: password || (typeof client.password === 'string' ? client.password : '')
 		};
@@ -249,11 +245,27 @@ async function replace(event: RequestEvent, expected: string | null, next: Setti
 	const session = checked(event, expected);
 	if (pending >= MAX_PENDING) throw new Error('Too many connection attempts. Try again shortly.');
 	const revision = session.revision;
-	const pool = newPool(next.config);
+	let pool = newPool(next.config);
 	pending++;
 	session.pending.add(pool);
 	try {
-		await pool.query('select 1');
+		try {
+			await pool.query('select 1');
+		} catch (error) {
+			// pg 8.23 emits this plain Error only for an SSLRequest 'N', before authentication/SQL.
+			// Negotiate once per generation; pool and dedicated SQL clients keep the chosen transport.
+			if (next.sslMode !== 'prefer' || !(error instanceof Error) || error.constructor !== Error || 'code' in error ||
+				error.message !== 'The server does not support SSL connections') throw error;
+			if (checked(event, expected) !== session || session.revision !== revision) {
+				throw new Error('Connection changed in another tab. Refresh and try again.');
+			}
+			retire(pool);
+			session.pending.delete(pool);
+			next = { ...next, config: { ...next.config, ssl: false } };
+			pool = newPool(next.config);
+			session.pending.add(pool);
+			await pool.query('select 1');
+		}
 		if (checked(event, expected) !== session || session.revision !== revision) {
 			throw new Error('Connection changed in another tab. Refresh and try again.');
 		}
@@ -275,10 +287,10 @@ async function replace(event: RequestEvent, expected: string | null, next: Setti
 	}
 }
 
-export async function connect(args: { url: string; expected: string | null }): Promise<ConnectionStatus> {
+export async function connect(args: { url: string; sslMode?: SslMode; expected: string | null }): Promise<ConnectionStatus> {
 	const event = getRequestEvent();
 	checked(event, args.expected);
-	return replace(event, args.expected, settings(args.url, true), 'session');
+	return replace(event, args.expected, settings(args.url, true, args.sslMode), 'session');
 }
 
 export async function disconnect(args: { expected: string | null }): Promise<ConnectionStatus> {

@@ -388,23 +388,61 @@ a periodic sweep releases idle sessions. Limits: 32 sessions, 8 pending connecti
 5 clients per pool, 10-second connect and 30-second query/statement timeouts.
 
 Browser URLs are parsed into explicit pg settings, not passed through as driver options.
-Only postgres/postgresql URLs and sslmode=require/verify-full/disable are accepted. Default
-and require encrypt without certificate verification; verify-full opts into verification.
-Disable explicitly selects plaintext; there is no automatic downgrade. The verification
-checkbox reads/writes sslmode in the URL, keeping one source of truth, and is disabled for
-plaintext URLs. Certificate file options, ambiguous settings, and environment-password
+`connection-options.ts` separates the URL and `sslMode`: disable/prefer/require/verify-full.
+The SSL dropdown never modifies the URL. Pasted sslmode options initialize the dropdown and
+are stripped without reserializing credentials; unknown/duplicate/conflicting options fail.
+Required is the default (encrypted, no certificate verification); verify-full verifies identity.
+Disabled permits plaintext for any host. If available first tries encryption and permits one
+plaintext candidate only for pg's exact plain Error for an SSLRequest 'N', before authentication
+or SQL. TLS/authentication/query errors never downgrade. The fallback rechecks generation/revision
+and retires the original candidate; the negotiated transport stays fixed for that generation's
+pool and dedicated SQL clients. Reconnect to renegotiate after server SSL capability changes.
+Certificate file options, ambiguous settings, and environment-password
 inheritance are rejected. Environment URLs are trusted and retain pg's parsing behavior.
 
+`lib/connection-profiles.ts` stores up to 50 named profiles in browser localStorage, separate
+from the active server connection and the automatic-reconnect entry. Profiles capture a UUID,
+revision token, case-insensitively unique name, credential-bearing URL and separate SSL mode.
+URLs are trimmed only at their edges, except an imported sslmode query is extracted.
+Explicit Save includes credentials; there is no separate password field or storage checkbox.
+Existing profiles/reconnect records with embedded sslmode normalize on read without losing
+their chosen transport or rewriting stored data until an explicit write.
+URL/name bounds and stored-record validation
+fail explicitly without overwriting malformed data or echoing credentials.
+Web Locks serialize local writes, re-read the current list and compare the selected revision.
+Unrelated profiles survive concurrent saves; stale edits/removals fail instead of resurrecting
+records. No-op saves retain their revision and reconnect entry. Updating/removing a profile
+revokes its linked reconnect entry before writing, not its live session; a storage failure can
+therefore disable reconnect while leaving the original profile intact.
+The same lock/revision check fences post-connect credential persistence against profile removal.
+Network connections never hold this storage lock. No profile operation sends database DDL.
+
+`ConnectionDialog` owns the header switcher and separate management dialog, also reused on
+onboarding. Its searchable popover uses password-free labels, keyboard navigation, checked
+active rows and Add/Manage actions. Choosing a saved row switches directly through the existing
+generation-checked command/reload, with transaction/draft guards. Save/Remove remain local.
+The table/SQL workspace is inert during a switch; polling and SQL shortcuts pause while the
+connection UI is open. The shared header remains available in either workspace.
+Storage events refresh choices without replacing editing drafts; stale saves require reload.
+Function bindings reject cancelled dialog transitions before Bits UI changes its local state.
+The active-profile label is a non-secret storage hint fenced by connection generation and profile
+revision. It never selects a database or authorizes a command; missing/stale hints show actual
+server-reported connection details instead.
+
 `lib/remembered-connection.ts` stores one opt-in URL/password in browser localStorage,
-scoped to the app origin (including port). It is not encrypted. ConnectForm saves only after
-a successful connection; manual connection changes first pause automatic restoration.
-Disconnect retains the URL with restoration disabled; Forget removes it without disconnecting.
-Connecting without Remember removes the saved credential. A separate non-secret consent
+scoped to the app origin (including port). A separate boolean preference enables automatic
+reconnection. Successful saved-profile switches capture the latest URL when enabled; turning
+it on can also capture the current unchanged profile. One-off connections never persist a URL.
+Disconnect pauses restoration without changing the preference; disabling it clears the
+reconnect entry. A separate non-secret consent
 cookie, scoped by protocol/port in its name, also gates restoration. Manual changes turn it
 off before touching localStorage; this allows nonpersistent use when localStorage is denied
 without reviving stale credentials once access returns. An intent nonce also prevents a late
-connect response from overwriting a newer choice or undoing Forget in another tab.
-Missing/expired consent fails closed.
+connect response from overwriting a newer choice or undoing disabled reconnection in another tab.
+Queued preference enables capture their intent before awaiting the profile lock, so a newer
+opt-out wins. Corrupt reconnect data exposes an explicit clearing action without erasing profiles.
+Missing/expired consent fails closed. Reconnect entries may link a saved profile; bootstrap
+checks that both URL and SSL mode still match. Profile URLs are erased only by explicit editing/removal.
 Other storage failures are explicit; failed post-connect persistence does not undo a connection.
 
 On page bootstrap, an enabled saved URL restores a missing session or replaces an implicit
@@ -539,8 +577,9 @@ No new storage or resizing dependency is involved.
 The shell uses generated shadcn-svelte buttons, inputs, labels, dialogs, selects and badges.
 ReferencePicker uses shadcn Table; its outer scroll container
 owns scrolling so the table header remains sticky. The spreadsheet remains custom.
-Dialogs provide focus containment/restoration. Connection URLs are masked with optional
-reveal; discard confirmation and beforeunload guards protect open editors/forms and writes. The dark
+Dialogs provide focus containment/restoration. Connection URLs use ordinary text inputs,
+not password fields, to avoid browser password-save prompts. Discard confirmation and
+beforeunload guards protect open editors/forms and writes. The dark
 charcoal palette in `app.css` is shared by shadcn and the grid. Inputs are inset/darker,
 buttons and selections neutral; only Connect and small status accents use brand green.
 JSON syntax uses a muted editor palette rather than green strings.
@@ -623,8 +662,20 @@ SQL and paginated grid reads, including multi-sort/NULLs/tie-breaks, FK tuples, 
 RLS, custom operator/search-path semantics, empty matches and native comparison errors. SQL-console tests cover exact/duplicate-name multiple
 results, preview bounds without truncating writes, transaction errors/ReadyForQuery ordering,
 session isolation, cancellation races, disposal/expiry, unsupported COPY and unknown outcomes.
-Connection and runes-state tests verify generation ownership, draft retention and no replay;
-production HTTP checks exercise every SQL command's generation/CSRF boundary and cleanup origin.
+Connection and runes-state tests verify generation ownership, draft retention and no replay.
+Connection tests cover separate SSL modes, controlled prefer negotiation and no downgrade on
+TLS/authentication/query failures. Isolated browsers verify dropdown/URL independence, plaintext
+fallback, encrypted Prefer/Required, rejection of an untrusted certificate without downgrade,
+and restoration of both embedded and separate SSL settings.
+Profile tests cover SSL imports, exact credential storage,
+password-free labels, generation-fenced active hints,
+reconnect preferences, serialized writes, stale revisions, no-op saves and storage failures.
+Isolated browsers verify actual
+A/B connections, retained per-database SQL drafts/transactions, stale tabs and late deletion races,
+search/keyboard switching, cancelled dismissals, retained drafts, queued preference races,
+corrupt reconnect recovery, quota/denied storage and narrow scrollable dialogs.
+Profile saves never execute or connect.
+Production HTTP checks exercise every SQL command's generation/CSRF boundary and cleanup origin.
 Isolated SQL browser checks cover selection/keyboard execution, preview versus real write counts,
 transactions/cancellation/reset, navigation state, cross-tab isolation, reload/beacon/bfcache
 cleanup, connection-discard confirmations, unsupported protocols and narrow/short layouts.

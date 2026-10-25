@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { Database, Settings2, SquareTerminal, Table2 } from '@lucide/svelte';
+	import { Database, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionStatus, Table, TableTarget } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -19,6 +19,8 @@
 
 	let { status }: { status: ConnectionStatus } = $props();
 	let connectOpen = $state(false);
+	let connectionsActive = $state(false);
+	let connectionsPending = $state(false);
 	let exportOpen = $state(false);
 	let csvExport: CsvExport;
 	let workspace = $state<'tables' | 'sql'>('tables');
@@ -46,7 +48,7 @@
 		schemaEdit = { mode, anchor: trigger, target };
 	}
 
-	const liveActive = () => document.visibilityState === 'visible' && !connectOpen && !exportOpen && workspace === 'tables' && !sql.busy;
+	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && !exportOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
 		void sql.restoreDraft().then(() => {
@@ -77,10 +79,20 @@
 }} onpageshow={(event) => { if (event.persisted) void sql.restoreDraft(true); }}
 onstorage={(event) => sql.checkDraft(event.key)} />
 
+<div class="flex h-dvh flex-col">
+	<header class="flex h-12 shrink-0 items-center border-b bg-card">
+		<div class="grid w-12 shrink-0 place-items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
+		<div class="min-w-0 max-w-full pr-3">
+			<ConnectionDialog bind:open={connectOpen} bind:active={connectionsActive} bind:pending={connectionsPending} {status}
+				sqlProtected={() => { sql.checkDraft(); return sql.protectedWork; }} sqlBusy={sql.busy || sql.cancelling}
+				onsuccess={() => sql.prepareReload()} />
+		</div>
+	</header>
+	<div class="min-h-0 flex-1" inert={connectionsPending}>
 {#if !editor.ready && !editor.error}
-	<LoadingShell />
+	<LoadingShell contained />
 {:else if !editor.ready}
-	<main class="grid h-dvh place-items-center bg-background p-6 text-foreground">
+	<main class="grid h-full place-items-center bg-background p-6 text-foreground">
 		<div class="w-full max-w-lg space-y-3">
 			<h1 class="text-lg font-semibold">Cannot load database</h1>
 			<p role="alert" class="text-xs break-words text-destructive">{editor.error}</p>
@@ -89,15 +101,12 @@ onstorage={(event) => sql.checkDraft(event.key)} />
 		</div>
 	</main>
 {:else}
-	<div class="flex h-dvh bg-background text-foreground">
+	<div class="flex h-full bg-background text-foreground">
 		<nav aria-label="Workspace" class="flex w-12 shrink-0 flex-col items-center gap-2 border-r bg-card py-2">
-			<div class="mb-2 flex h-8 items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
 			<Button variant={workspace === 'tables' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Table editor" title="Table editor"
 				aria-pressed={workspace === 'tables'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('tables')}><Table2 /></Button>
 			<Button variant={workspace === 'sql' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="SQL editor" title={sql.busy ? 'SQL editor — running' : 'SQL editor'}
 				aria-pressed={workspace === 'sql'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('sql')}><SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} /></Button>
-			<Button variant="ghost" size="icon-sm" class="mt-auto" aria-label="Database connection" title="Database connection"
-				disabled={editor.busy || sql.busy} onclick={() => connectOpen = true}><Settings2 /></Button>
 		</nav>
 		<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'} hidden={workspace !== 'tables'}>
 		<Sidebar connection={status.connection!} oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />
@@ -157,13 +166,12 @@ onstorage={(event) => sql.checkDraft(event.key)} />
 		</div>
 		{#if sqlOpened}
 			<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'} hidden={workspace !== 'sql'}>
-				<SqlEditor state={sql} active={workspace === 'sql' && !connectOpen} database={status.connection!.database} />
+				<SqlEditor state={sql} active={workspace === 'sql' && !connectionsActive} database={status.connection!.database} />
 			</main>
 		{/if}
 	</div>
 {/if}
-
-<ConnectionDialog bind:open={connectOpen} {status} sqlProtected={() => { sql.checkDraft(); return sql.protectedWork; }} sqlBusy={sql.busy || sql.cancelling}
-	onsuccess={() => sql.prepareReload()} />
+	</div>
+</div>
 <CsvExport bind:this={csvExport} bind:open={exportOpen} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} target={schemaEdit.target} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}

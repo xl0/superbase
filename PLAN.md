@@ -166,16 +166,19 @@ resizing with viewport bounds. Resizing preserves drafts, focus/history and grid
 workspace switches and temporary viewport narrowing. Browser checks verify all four handles,
 mouse/touch cancellation, long-name layouts, reachable short-panel footers and ordinary dismissal.
 
-### [ ] Connections: multiple database profiles
+### [x] Connections: multiple database profiles
 
-Give Connections its own UI, separate from Settings. Manage named profiles for multiple
-servers/databases: add, edit, remove, connect and switch targets. Keep credential persistence
-opt-in, with the existing unencrypted-storage warning and Remember/Forget protections.
-Preserve database-scoped SQL drafts/snippets and guard open transactions, unsaved work,
-stale generations and cross-tab changes so commands never reach a replacement target.
-Start with multiple saved profiles and one active target per workspace; decide separately
-whether simultaneous connected workspaces are needed. A profile is not a PostgreSQL database:
-adding/removing a connection must not create/drop a database.
+The header has a searchable connection switcher, with checked active rows and Add/Manage
+actions. Switching is direct but guarded; a separate editor uses a plain-text URL field,
+saves credentials, and renames/removes profiles. A separate SSL dropdown offers Disabled,
+If available, Required and Verify certificate without adding URL parameters.
+Automatic reconnection is a separate preference. Profile changes never alter databases;
+changed/removed profiles revoke linked reconnect entries without disconnecting the live session.
+Serialized revision checks preserve concurrent saves and reject stale drafts. Independent review,
+regression tests and isolated browsers verify credential cleanup, denied/quota storage, late
+responses, discard guards, cross-tab generations, per-database SQL drafts/transactions and narrow
+layouts. The searchable switcher, separate editor, reconnect races and narrow layouts passed
+independent review and isolated browser verification.
 
 ### [ ] Settings: database administration, not connection credentials
 

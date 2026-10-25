@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+	let { contained = false }: { contained?: boolean } = $props();
 </script>
 
-<div role="status" aria-busy="true" class="flex h-dvh bg-background text-foreground">
+<div role="status" aria-busy="true" class={['flex bg-background text-foreground', contained ? 'h-full' : 'h-dvh']}>
 	<span class="sr-only">Loading database…</span>
 	<div aria-hidden="true" class="flex w-12 shrink-0 flex-col items-center gap-4 border-r bg-card py-4">
 		<Skeleton class="mb-3 size-5" /><Skeleton class="size-6" /><Skeleton class="size-6" /><Skeleton class="mt-auto size-6" />

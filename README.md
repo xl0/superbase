@@ -25,25 +25,33 @@ For a local database without TLS:
 postgresql://user:password@127.0.0.1:5432/mydb?sslmode=disable
 ```
 
-Connections entered in the UI use TLS without certificate verification by default.
-Enable **Verify server certificate** (`sslmode=verify-full`) to authenticate the server;
-without it, traffic is encrypted but the server's identity is not verified.
-`sslmode=disable` explicitly selects plaintext. There is no automatic plaintext fallback.
+The **SSL** dropdown is separate from the URL:
+- **Disabled:** unencrypted, allowed for any host.
+- **If available:** use encryption unless the server reports SSL is unsupported.
+- **Required** (default): encryption required, without certificate verification.
+- **Verify certificate:** encryption with a valid certificate matching the server.
+
+Changing SSL never appends anything to the URL. A pasted `sslmode` option initializes the
+dropdown and is removed from the URL field. TLS/authentication errors never trigger a downgrade.
 Percent-encode URL punctuation in credentials.
 
-The connection button at the bottom of the navigation rail switches databases, disconnects,
-or returns to an optional default.
-To provide that default, copy `.env.example` to `.env` and set `DATABASE_URL`.
-Browser-entered credentials stay in server memory; sessions expire after two idle hours or a
-restart. **Remember on this browser** optionally saves your URL/password in browser storage
-and reconnects on page load. **Disconnect** pauses automatic reconnection; **Forget saved
-connection** erases the stored URL without disconnecting. Connecting without Remember also
-erases it. No automatic reconnection runs underneath an active editor; reload after expiry.
-Connection changes and reloads warn about unsaved work.
+Click the connection name in the app header to search and switch databases. The active
+connection is checked; rows show host/database and user, never passwords.
+**Add connection** and **Manage connections** open a separate editor. **Save** stores the
+complete URL—including its password—locally and unencrypted, without connecting.
+**Connect without saving** is available for one-off connections.
 
-Saved credentials are **unencrypted** and readable by scripts on this site or anyone with
-access to your browser profile. Use Remember only on a trusted browser. Storage belongs to
-the exact app address, including its port; `localhost` and `127.0.0.1` are separate.
+Automatic reconnection is a separate setting in **Manage connections**. Disconnect pauses it;
+editing/removing its saved connection clears the reconnect entry without changing the live
+session or database. Server sessions expire after two idle hours or a restart. Restoration
+runs only on page load, never underneath an active editor. To provide an optional default,
+copy `.env.example` to `.env` and set `DATABASE_URL`.
+Connection changes and reloads warn about local unsaved work. Switching connections closes
+SQL sessions in other tabs sharing the browser session too, rolling back their uncommitted
+transactions; those tabs must reload before using the new connection.
+
+Browser storage belongs to the exact app address, including its port;
+`localhost` and `127.0.0.1` are separate.
 
 **Keep the app local.** Do not expose it to the network or a public reverse proxy.
 Use a database role with only the permissions you need.

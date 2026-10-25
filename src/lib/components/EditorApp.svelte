@@ -16,6 +16,7 @@
 	import LoadingShell from './LoadingShell.svelte';
 	import SqlEditor from './SqlEditor.svelte';
 	import DatabaseWorkspace from './DatabaseWorkspace.svelte';
+	import Workspace from './Workspace.svelte';
 	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
@@ -115,13 +116,13 @@
 						aria-pressed={workspace === 'sql'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('sql')}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
-					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: indexes, extensions, configuration"
+					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, performance, extensions, configuration"
 						aria-pressed={workspace === 'database'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('database')}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->
 				<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'}>
-					<Sidebar oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />
-					<main class="flex min-w-0 flex-1 flex-col">
+					<Workspace label="Tables">
+						{#snippet sidebar()}<Sidebar oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />{/snippet}
 						{#if editor.tables.length === 0}
 							<div class="grid flex-1 place-items-center p-6">
 								<div class="max-w-md space-y-3 text-center">
@@ -171,15 +172,15 @@
 							</div>
 							<GridFooter />
 						{/if}
-					</main>
+					</Workspace>
 				</div>
 				{#if workspace === 'database'}
-					<main class="min-w-0 flex-1"><DatabaseWorkspace onopen={(table) => { switchWorkspace('tables'); void editor.selectTable(table.schema, table.name); }} /></main>
+					<div class="flex min-w-0 flex-1"><DatabaseWorkspace onopen={(table) => { switchWorkspace('tables'); void editor.selectTable(table.schema, table.name); }} /></div>
 				{/if}
 				{#if sqlOpened}
-					<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'}>
+					<div class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'flex' : 'none'}>
 						<SqlEditor state={sql} active={workspace === 'sql' && !connectionsActive} />
-					</main>
+					</div>
 				{/if}
 			</div>
 		{/if}

@@ -74,40 +74,38 @@
 	</li>
 {/snippet}
 
-<aside aria-label="SQL snippets" class="flex h-full w-60 shrink-0 flex-col border-r bg-card">
-	<div class="space-y-2 border-b p-3">
-		<Button variant="outline" size="sm" class="w-full justify-start text-xs" onclick={() => open('', null)}><FilePlus />New query</Button>
-		<div class="relative">
-			<Search class="pointer-events-none absolute top-2 left-2.5 size-3.5 text-muted-foreground" />
-			<Input bind:value={query} aria-label="Search snippets" placeholder="Search snippets" spellcheck={false} class="h-8 pl-8 text-xs" />
-		</div>
+<div class="space-y-2 border-b p-3">
+	<Button variant="outline" size="sm" class="w-full justify-start text-xs" onclick={() => open('', null)}><FilePlus />New query</Button>
+	<div class="relative">
+		<Search class="pointer-events-none absolute top-2 left-2.5 size-3.5 text-muted-foreground" />
+		<Input bind:value={query} aria-label="Search snippets" placeholder="Search snippets" spellcheck={false} class="h-8 pl-8 text-xs" />
 	</div>
-	<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-2">
-		{#if favorites.length}
-			<section>
-				<h2 class="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Favourites</h2>
-				<ul>{#each favorites as snippet (snippet.id)}{@render row(snippet)}{/each}</ul>
-			</section>
-		{/if}
+</div>
+<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-2">
+	{#if favorites.length}
 		<section>
-			<h2 class="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Snippets</h2>
-			<ul>{#each others as snippet (snippet.id)}{@render row(snippet)}{:else}
-				<li class="px-2 py-1 text-xs text-muted-foreground">{query ? 'No matches.' : 'Save queries with Ctrl/⌘+S.'}</li>
-			{/each}</ul>
+			<h2 class="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Favourites</h2>
+			<ul>{#each favorites as snippet (snippet.id)}{@render row(snippet)}{/each}</ul>
 		</section>
-		<!-- Collapsed by default; searching opens it so matches are visible. -->
-		<details open={!!query.trim()}>
-			<summary class="cursor-pointer px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Examples</summary>
-			<ul>
-				{#each examples as example (example.name)}
-					<li>
-						<button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-							title={example.description} onclick={() => open(example.sql, null)}>
-							<FileText class="size-3.5 shrink-0" /><span class="truncate">{example.name}</span>
-						</button>
-					</li>
-				{/each}
-			</ul>
-		</details>
-	</div>
-</aside>
+	{/if}
+	<section>
+		<h2 class="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Snippets</h2>
+		<ul>{#each others as snippet (snippet.id)}{@render row(snippet)}{:else}
+			<li class="px-2 py-1 text-xs text-muted-foreground">{query ? 'No matches.' : 'Save queries with Ctrl/⌘+S.'}</li>
+		{/each}</ul>
+	</section>
+	<!-- Collapsed by default; searching opens it so matches are visible. -->
+	<details open={!!query.trim()}>
+		<summary class="cursor-pointer px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">Examples</summary>
+		<ul>
+			{#each examples as example (example.name)}
+				<li>
+					<button class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						title={example.description} onclick={() => open(example.sql, null)}>
+						<FileText class="size-3.5 shrink-0" /><span class="truncate">{example.name}</span>
+					</button>
+				</li>
+			{/each}
+		</ul>
+	</details>
+</div>

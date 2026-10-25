@@ -119,7 +119,11 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
 - `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
   the editor reports document edits only, so opening and applying unchanged never rewrites a
   value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).
-- `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for the sidebar and sheets.
+- `EditorApp` switches three workspaces from the left rail (Tables, SQL, Database; hidden ones
+  stay mounted). Each is a `Workspace`: a resizable side panel (one width shared by all) and a
+  main area. Database sections (schema, indexes, performance, extensions, configuration) are
+  side panel items.
+- `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for side panels and sheets.
 - Theme: dark charcoal palette in `app.css`, shared by shadcn components and the grid.
 
 ## Demo build

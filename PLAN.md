@@ -12,17 +12,18 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## Done
 
-- Table editor: exact values, cell/range/paste edits with optimistic row-version conflicts,
-  insert form, FK picker/navigation, filters, multi-sort, live polling, CSV export.
+- Table editor: exact values (arrays shown/edited as JSON), cell/range/paste edits with optimistic
+  row-version conflicts, insert form, FK picker/navigation, filters, multi-sort, live polling, CSV export.
 - Schema editing via previewed SQL: tables, columns, PK, indexes, UNIQUE/CHECK/FK.
 - SQL console with per-tab sessions, transactions, cancel, autosaved draft; snippet library with
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
-- Database workspace: schema diagram, all indexes (drop), query performance (pg_stat_statements), extensions (enable/update/disable) and curated
-  database/role defaults, as previewed SQL.
+- Database workspace: schema diagram, all indexes (drop), query performance (pg_stat_statements),
+  extensions (enable/update/disable) and curated database/role defaults, as previewed SQL.
+- Layout: left rail with three workspaces sharing one resizable side panel.
 - CLI: `npx|bunx @xl0/superbase [url] [--port] [--host] [--no-open]` (unscoped name rejected by npm).
 - Live demo: static build with PGlite in the browser on sample data (GitHub Pages).
 - Releases: `bun run release` → CI stages npm (2FA approve), pushes ghcr.io/xl0/superbase and
-  xl0xl0/superbase images, and creates the GitHub Release. 0.1.1 shipped this way.
+  xl0xl0/superbase images, creates the GitHub Release and redeploys the demo.
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL

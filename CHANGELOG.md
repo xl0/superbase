@@ -5,12 +5,13 @@
 ### Added
 
 - A live demo that runs PostgreSQL in the browser (PGlite) on sample data, published to GitHub Pages.
-
 - Schema diagram (Database → Schema): tables, columns and foreign keys of one schema, laid out automatically; ↗ opens a table.
 
 ### Changed
 
 - Array values are shown and edited as JSON (`["a","b"]`), like Supabase; numbers keep their exact spelling.
+- Database sections (schema, indexes, performance, extensions, configuration) moved from top tabs into the side panel.
+- The SQL editor's snippet panel is resizable; all workspaces share one side panel width.
 
 ## [0.1.1] - 2026-10-25
 

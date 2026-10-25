@@ -100,6 +100,8 @@ only loads its text; nothing runs until you press Run.
 
 ## Database
 
+The side panel lists the sections:
+
 - **Schema:** a diagram of one schema's tables and foreign keys (including references to other
   schemas); ↗ opens a table.
 - **Indexes:** every index per schema, with definitions; drop with a preview.
@@ -107,6 +109,8 @@ only loads its text; nothing runs until you press Run.
   cache hit rates; enables the extension for you if it's missing (the server must preload it).
 - **Extensions:** enable (choosing the schema), update or disable.
 - **Configuration:** search_path, timezone, timeouts and work_mem as database or role defaults.
+
+![Schema diagram of the shop tables](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/schema-diagram.png)
 
 ![Query performance](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/performance.png)
 

@@ -200,11 +200,12 @@
 					{@const sortIndex = editor.sort.findIndex((rule) => rule.column === column.name)}
 					{@const sort = editor.sort[sortIndex]}
 					<div class="header-cell flex items-center" role="columnheader" aria-sort={sortIndex === 0 ? sort.direction === 'asc' ? 'ascending' : 'descending' : undefined}>
-						<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={editor.navigationBlocked || editor.loading}
+						<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={editor.navigationBlocked || editor.loading}
 							aria-label={sort ? `${column.name} ${column.type}, sort priority ${sortIndex + 1}, ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}
 							onclick={() => editor.toggleSort(column.name)} title={columnTitle(column)}>
 							{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-muted-foreground" />{:else if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" />{/if}
-							<span class="truncate font-semibold">{column.name}</span><span class="truncate text-muted-foreground">{column.type}</span>
+							<!-- The type gives way first; the name only truncates once the type is gone. -->
+							<span class="max-w-full shrink-0 truncate font-semibold">{column.name}</span><span class="min-w-0 truncate text-muted-foreground">{column.type}</span>
 							{#if sort}
 								{#if sort.direction === 'asc'}<ArrowUp class="size-3 shrink-0" />{:else}<ArrowDown class="size-3 shrink-0" />{/if}
 								{#if editor.sort.length > 1}<span class="text-[10px] text-muted-foreground">{sortIndex + 1}</span>{/if}

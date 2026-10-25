@@ -78,7 +78,7 @@
 		{#if editor.version}<span class="shrink-0 font-mono text-[11px] text-muted-foreground">PG {editor.version}</span>{/if}
 		{#if workspace === 'tables' && editor.table.name}
 			<div class="ml-4 flex min-w-0 items-baseline gap-1.5 font-mono text-xs">
-				<span class="max-w-[40%] truncate text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
+				<span class="max-w-48 truncate text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
 				<span class="truncate font-medium" title={`${editor.table.schema}.${editor.table.name}`}>{editor.table.name}</span>
 			</div>
 			{#if !editor.hasFilters && editor.table.rowCount >= 0}

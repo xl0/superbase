@@ -67,6 +67,15 @@ library (`superbase.sql-snippets`, shared by databases/tabs; writes re-read firs
 Opening anything only loads text; replacing modified text asks first. Autocomplete (a
 toolbar checkbox) also offers schema/table/column names from the loaded metadata.
 
+## Database workspace
+
+`server/database.ts` lists all indexes (key columns/expressions, owning constraint), extensions (`pg_available_extensions` + installed version/schema,
+required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
+session's value plus database and current-role defaults from `pg_db_role_setting`.
+`DatabaseIndexes`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
+`alter database|role … set|reset` SQL and run it through `executeDdl`. `search_path` values are
+written as SQL lists; other values are quoted literals.
+
 ## CSV export
 
 `/export` takes one form-POSTed JSON `CsvExportArgs` into a hidden iframe so the browser streams

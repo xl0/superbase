@@ -17,6 +17,8 @@ PostgreSQL validates. Keep code and tests minimal.
 - Schema editing via previewed SQL: tables, columns, PK, indexes, UNIQUE/CHECK/FK.
 - SQL console with per-tab sessions, transactions, cancel, autosaved draft; snippet library with
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
+- Database workspace: all indexes (drop), extensions (enable/update/disable) and curated
+  database/role defaults, as previewed SQL.
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
@@ -27,8 +29,6 @@ PostgreSQL validates. Keep code and tests minimal.
 - [ ] CLI launcher: `bunx superbase` / `npx superbase` starts the server and opens the browser.
   Needs runtime deps in `dependencies`, a `bin`, bundled build output, and a Node-only path.
 - [ ] Docker image for the locked/viewer mode (document `DATABASE_URL`, `HOST`, `ORIGIN`).
-- [ ] Settings: extensions (install/update/remove) and a few session/role settings
-  (search_path, timezone, timeouts) — as previewed SQL, like schema forms.
 
 ## Later / maybe
 

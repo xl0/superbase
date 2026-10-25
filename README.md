@@ -74,6 +74,13 @@ The left panel holds your snippets and built-in examples. **Ctrl/Cmd+S** saves t
 favourites; the ⋮ menu renames or deletes. Snippets are shared by all databases in this browser.
 Opening a snippet or example only loads its text — nothing runs until you press Run.
 
+## Database
+
+The rail's database icon opens **Indexes** (every index per schema, with definitions; drop), **Extensions** (enable in a chosen schema, optionally
+with required extensions; update; disable) and **Configuration**: search_path, timezone,
+statement/lock/idle-in-transaction timeouts and work_mem, set or reset as defaults for the
+database or your role. Each change shows its SQL first and applies to new connections.
+
 ## CSV export
 
 The toolbar download button exports every row matching the current filters, in grid order;

@@ -2,6 +2,7 @@ import { command, query } from '$app/server';
 import * as connections from '#lib/server/connections.js';
 import * as db from '#lib/server/db.js';
 import * as schemaDb from '#lib/server/schema.js';
+import * as databaseDb from '#lib/server/database.js';
 import type { ConnectionOptions } from '#lib/connection-options.js';
 import type { DeleteArgs, RowsArgs, SaveArgs, TableTarget } from '#lib/types.js';
 import type { SqlRunArgs, SqlTarget } from '#lib/sql.js';
@@ -21,6 +22,9 @@ export const saveTable = command('unchecked', (args: SaveArgs) => db.saveTable(c
 export const deleteRows = command('unchecked', (args: DeleteArgs) => db.deleteRows(connections.activePool(args.connection), args));
 export const schemaCatalog = query('unchecked', ({ connection }: Target) => schemaDb.listSchemaCatalog(connections.activePool(connection)));
 export const schemaDefinition = query('unchecked', (args: TableTarget) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
+export const indexes = query('unchecked', ({ connection }: Target) => databaseDb.listIndexes(connections.activePool(connection)));
+export const extensions = query('unchecked', ({ connection }: Target) => databaseDb.listExtensions(connections.activePool(connection)));
+export const settings = query('unchecked', ({ connection }: Target) => databaseDb.listSettings(connections.activePool(connection)));
 export const changeSchema = command('unchecked', ({ connection, sql }: Target & { sql: string }) => schemaDb.executeDdl(connections.activePool(connection), sql));
 
 // Console SQL runs on dedicated per-tab sessions, never on table-editor pool clients.

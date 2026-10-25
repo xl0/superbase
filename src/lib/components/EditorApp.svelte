@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { Check, Database, SquareTerminal, Table2 } from '@lucide/svelte';
+	import { Check, Database, Server, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionStatus, Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -15,6 +15,7 @@
 	import TableToolbar from './TableToolbar.svelte';
 	import LoadingShell from './LoadingShell.svelte';
 	import SqlEditor from './SqlEditor.svelte';
+	import DatabaseWorkspace from './DatabaseWorkspace.svelte';
 	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
@@ -23,11 +24,11 @@
 	let leaving = false;
 	let exportOpen = $state(false);
 	let csvExport: CsvExport;
-	let workspace = $state<'tables' | 'sql'>('tables');
+	let workspace = $state<'tables' | 'sql' | 'database'>('tables');
 	let sqlOpened = $state(false);
 	const sql = new SqlState(untrack(() => status.connection!));
 
-	function switchWorkspace(next: 'tables' | 'sql') {
+	function switchWorkspace(next: typeof workspace) {
 		if (editor.navigationBlocked || exportOpen) return;
 		workspace = next;
 		if (next === 'sql') sqlOpened = true;
@@ -110,6 +111,8 @@
 						aria-pressed={workspace === 'sql'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('sql')}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
+					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: indexes, extensions, configuration"
+						aria-pressed={workspace === 'database'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('database')}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->
 				<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'}>
@@ -166,6 +169,9 @@
 						{/if}
 					</main>
 				</div>
+				{#if workspace === 'database'}
+					<main class="min-w-0 flex-1"><DatabaseWorkspace /></main>
+				{/if}
 				{#if sqlOpened}
 					<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'}>
 						<SqlEditor state={sql} active={workspace === 'sql' && !connectionsActive} />

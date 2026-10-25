@@ -27,7 +27,7 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] Docker image for the locked/viewer mode (document `DATABASE_URL`, `HOST`, `ORIGIN`).
+- [ ] Publish the Docker image (e.g. ghcr.io/xl0/superbase) — the Dockerfile exists.
 
 ## Later / maybe
 

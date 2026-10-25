@@ -29,11 +29,27 @@ From a checkout: `bun install --frozen-lockfile && bun run build && bun run star
 
 ## Run as a database viewer (Docker / Kubernetes)
 
-Set `DATABASE_URL` (or pass the URL as an argument) to pin the app to one database; connection
-switching disappears. `HOST=0.0.0.0` listens on all interfaces and disables the localhost
-check, so put the app behind your own authentication (e.g. an auth proxy). Behind a TLS proxy
-set `ORIGIN=https://your.host`. Anyone who can open the app can do everything the database role
-can, including arbitrary SQL — choose the role accordingly.
+```sh
+docker build -t superbase .
+docker run -p 3000:3000 -e DATABASE_URL=postgres://user:pass@db:5432/app superbase
+```
+
+```yaml
+# docker-compose.yml
+services:
+  superbase:
+    build: https://github.com/xl0/superbase.git
+    environment:
+      DATABASE_URL: postgres://app:secret@db:5432/app
+      ORIGIN: https://db.example.com   # the public URL, when behind a TLS proxy
+    ports: ["127.0.0.1:3000:3000"]     # expose through your auth proxy, not directly
+```
+
+`DATABASE_URL` pins the app to one database; connection switching disappears. The image
+listens on all interfaces (`HOST=0.0.0.0`), which disables the localhost check, so put it behind
+your own authentication (e.g. an auth proxy) and set `ORIGIN` to the public URL. Anyone who can
+open the app can do everything the database role can, including arbitrary SQL — choose the role
+accordingly.
 
 ## Table editor
 

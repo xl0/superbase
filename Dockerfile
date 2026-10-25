@@ -1,0 +1,19 @@
+# Build with Bun (the repo's lockfile), run on plain Node with only the built app and pg.
+FROM oven/bun:1.3.13-alpine AS build
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+FROM node:24-alpine
+WORKDIR /app
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+COPY package.json ./
+RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+COPY bin ./bin
+COPY --from=build /app/build ./build
+USER node
+EXPOSE 3000
+# Set DATABASE_URL to pin the app to one database; put authentication in front of it.
+CMD ["node", "bin/superbase.js", "--no-open"]

@@ -4,7 +4,7 @@ A Postgres table editor in the spirit of Supabase Studio, without the Supabase s
 Browse and edit rows, change schemas through previewed SQL, follow foreign keys, run SQL,
 manage indexes and extensions, and find slow queries. One command, any Postgres. MIT licensed.
 
-![Table editor with a filter and sort applied](docs/screenshots/table-editor.png)
+![Table editor with a filter and sort applied](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/table-editor.png)
 
 ## Run it
 
@@ -30,15 +30,14 @@ From a checkout: `bun install --frozen-lockfile && bun run build && bun run star
 ## Run as a database viewer (Docker / Kubernetes)
 
 ```sh
-docker build -t superbase .
-docker run -p 3000:3000 -e DATABASE_URL=postgres://user:pass@db:5432/app superbase
+docker run -p 127.0.0.1:3000:3000 -e DATABASE_URL=postgres://user:pass@db:5432/app ghcr.io/xl0/superbase
 ```
 
 ```yaml
 # docker-compose.yml
 services:
   superbase:
-    build: https://github.com/xl0/superbase.git
+    image: ghcr.io/xl0/superbase       # or build: https://github.com/xl0/superbase.git
     environment:
       DATABASE_URL: postgres://app:secret@db:5432/app
       ORIGIN: https://db.example.com   # the public URL, when behind a TLS proxy
@@ -66,9 +65,9 @@ accordingly.
 - **Live** re-reads the visible page every five seconds without disturbing your edits.
 - The download button exports all rows matching the filters as CSV, in grid order.
 
-![Editing a JSON cell](docs/screenshots/cell-editor.png)
+![Editing a JSON cell](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/cell-editor.png)
 
-![Choosing a referenced customer for an order](docs/screenshots/reference-picker.png)
+![Choosing a referenced customer for an order](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/reference-picker.png)
 
 ## Schema editing
 
@@ -80,7 +79,7 @@ Every form shows the SQL it will run. **Apply** runs it in one transaction with 
 timeout; errors keep the form open. Deleting a table or column requires typing its name.
 Anything more advanced belongs in the SQL editor.
 
-![Editing a column with its SQL preview](docs/screenshots/schema-editor.png)
+![Editing a column with its SQL preview](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/schema-editor.png)
 
 ## SQL editor
 
@@ -92,7 +91,7 @@ statement. Autocomplete knows your schemas, tables and columns.
 The left panel holds saved snippets (Ctrl/Cmd+S), favourites and built-in examples. Opening one
 only loads its text; nothing runs until you press Run.
 
-![SQL editor with snippets and results](docs/screenshots/sql-editor.png)
+![SQL editor with snippets and results](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/sql-editor.png)
 
 ## Database
 
@@ -102,7 +101,7 @@ only loads its text; nothing runs until you press Run.
 - **Extensions:** enable (choosing the schema), update or disable.
 - **Configuration:** search_path, timezone, timeouts and work_mem as database or role defaults.
 
-![Query performance](docs/screenshots/performance.png)
+![Query performance](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/performance.png)
 
 ---
 

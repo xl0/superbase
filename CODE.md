@@ -111,6 +111,14 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
 - `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for the sidebar and sheets.
 - Theme: dark charcoal palette in `app.css`, shared by shadcn components and the grid.
 
+## Releases
+
+`bun run release [patch|minor|major|x.y.z]` (from `pi-lovely-codex`): checks branch, origin,
+npm and the changelog, runs `bun run verify`, rolls `CHANGELOG.md` [Unreleased] and bumps the
+version, pauses for review, then commits, tags and pushes. The tag runs `release.yml`: verify,
+`npm stage publish` with provenance (approved by the script with a 2FA code), Docker images for
+amd64/arm64 to GHCR and Docker Hub, and a GitHub Release from the changelog section.
+
 ## Development
 
 ```sh

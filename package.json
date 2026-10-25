@@ -29,7 +29,9 @@
 		"prepare": "svelte-kit sync",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"prepack": "bun run build"
+		"prepack": "bun run build",
+		"verify": "bun run check && bun run test && bun run test:production",
+		"release": "bun run scripts/release.ts"
 	},
 	"imports": {
 		"#lib/*": "./src/lib/*"

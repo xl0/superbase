@@ -27,7 +27,9 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] Publish the Docker image (e.g. ghcr.io/xl0/superbase) — the Dockerfile exists.
+- [ ] First CI release (0.1.1): `bun run release` → tag → `.github/workflows/release.yml` stages npm
+  (approve with 2FA), pushes GHCR + Docker Hub images and creates the GitHub Release.
+  Needs npm trusted publishing for the repo and a GitHub `npm` environment; set the GHCR package public.
 
 ## Later / maybe
 

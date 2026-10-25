@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { DatabaseIndex, DatabaseSetting, Extension } from '../database.js';
+import type { DatabaseIndex, DatabaseSetting, Extension, QueryStats } from '../database.js';
 import { CONFIG_SETTINGS } from '../database.js';
 
 export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
@@ -13,6 +13,31 @@ export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
 		join pg_namespace n on n.oid = t.relnamespace
 		where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
 		order by n.nspname, t.relname, c.relname`)).rows;
+}
+
+/** Top statements of the current database by total execution time (PostgreSQL 13+ column names). */
+export async function queryStats(pool: pg.Pool): Promise<QueryStats> {
+	const schema = (await pool.query<{ schema: string }>(
+		"select extnamespace::regnamespace::text as schema from pg_extension where extname = 'pg_stat_statements'")).rows[0]?.schema;
+	if (!schema) return { available: false, reason: 'The pg_stat_statements extension is not enabled.' };
+	try {
+		const [queries, database] = await Promise.all([
+			pool.query(`
+				select s.query, r.rolname as role, s.calls::float8 as calls, s.total_exec_time::float8 as "totalTime",
+				       s.mean_exec_time::float8 as "meanTime", s.max_exec_time::float8 as "maxTime", s.rows::float8 as rows,
+				       (s.shared_blks_hit / nullif(s.shared_blks_hit + s.shared_blks_read, 0))::float8 as "hitRate"
+				from ${schema}.pg_stat_statements s
+				left join pg_roles r on r.oid = s.userid
+				where s.dbid = (select oid from pg_database where datname = current_database())
+				order by s.total_exec_time desc limit 500`),
+			pool.query(`select (blks_hit / nullif(blks_hit + blks_read, 0)::float8) as "hitRate"
+				from pg_stat_database where datname = current_database()`)
+		]);
+		return { available: true, queries: queries.rows, hitRate: database.rows[0]?.hitRate ?? null };
+	} catch (error) {
+		// Installed but not in shared_preload_libraries: the view raises instead of returning rows.
+		return { available: false, reason: (error as Error).message };
+	}
 }
 
 export async function listExtensions(pool: pg.Pool): Promise<Extension[]> {

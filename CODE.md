@@ -27,7 +27,9 @@ Connect test-queries a candidate pool before replacing the old one. SSL is a sep
 stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
 on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
 Profiles (`connection-profiles.ts`) are a plain localStorage list; the active one is matched by
-host/port/db/user. A successful switch reloads the page.
+host/port/db/user. A successful switch reloads the page. Switching to a saved profile records its
+id; on load, an unconnected (non-locked) server is reconnected to it (`+page.svelte`).
+One-off URLs are never stored.
 
 ## Rows (`server/db.ts`)
 
@@ -69,7 +71,9 @@ toolbar checkbox) also offers schema/table/column names from the loaded metadata
 
 ## Database workspace
 
-`server/database.ts` lists all indexes (key columns/expressions, owning constraint), extensions (`pg_available_extensions` + installed version/schema,
+`server/database.ts` lists all indexes (key columns/expressions, owning constraint), top
+`pg_stat_statements` entries for the current database (PG 13+; missing extension or preload is
+reported, not thrown), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
 `DatabaseIndexes`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and

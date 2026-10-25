@@ -20,7 +20,8 @@ Click **Choose connection → Add connection**, paste a `postgres://` URL and pi
 (a pasted `sslmode=` is moved into the SSL selector). **Save** keeps the connection in this
 browser's localStorage, password included and unencrypted; **Connect** connects without saving.
 
-The server holds one database connection, shared by every tab. Switching databases in one tab
+The browser remembers the saved connection you last switched to and reconnects to it when
+the server has restarted. The server holds one database connection, shared by every tab. Switching databases in one tab
 makes other tabs ask for a reload. By default the server listens on 127.0.0.1 and refuses
 requests whose Host is not localhost/loopback, so other websites cannot drive it.
 
@@ -76,7 +77,8 @@ Opening a snippet or example only loads its text — nothing runs until you pres
 
 ## Database
 
-The rail's database icon opens **Indexes** (every index per schema, with definitions; drop), **Extensions** (enable in a chosen schema, optionally
+The rail's database icon opens **Indexes** (every index per schema, with definitions; drop),
+**Performance** (top statements from `pg_stat_statements`, sortable; reset), **Extensions** (enable in a chosen schema, optionally
 with required extensions; update; disable) and **Configuration**: search_path, timezone,
 statement/lock/idle-in-transaction timeouts and work_mem, set or reset as defaults for the
 database or your role. Each change shows its SQL first and applies to new connections.

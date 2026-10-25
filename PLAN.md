@@ -17,7 +17,7 @@ PostgreSQL validates. Keep code and tests minimal.
 - Schema editing via previewed SQL: tables, columns, PK, indexes, UNIQUE/CHECK/FK.
 - SQL console with per-tab sessions, transactions, cancel, autosaved draft; snippet library with
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
-- Database workspace: all indexes (drop), extensions (enable/update/disable) and curated
+- Database workspace: all indexes (drop), query performance (pg_stat_statements), extensions (enable/update/disable) and curated
   database/role defaults, as previewed SQL.
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.

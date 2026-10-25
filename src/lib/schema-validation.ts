@@ -1,5 +1,5 @@
-import { INDEX_METHODS } from './schema.js';
-import type { ColumnDefault, ColumnSpec, SchemaChangeArgs, SchemaOperation } from './schema.js';
+import { INDEX_METHODS, REFERENTIAL_ACTIONS } from './schema.js';
+import type { ColumnConstraintOperation, ColumnDefault, ColumnSpec, ConstraintOperation, ConstraintSpec, SchemaChangeArgs, SchemaOperation } from './schema.js';
 import type { CsvExportArgs, TableTarget } from './types.js';
 import { object, rowQuery, schema, target, text } from './validation.js';
 
@@ -54,6 +54,7 @@ function column(input: unknown, fresh: boolean): ColumnSpec {
 		|| !Array.from(value.typeModifiers).every(Number.isSafeInteger)) {
 		throw new Error('Type options require at most two whole, safe integer values');
 	}
+	plainArray(value.typeModifiers);
 	if (typeOid === null && value.typeModifiers.length) throw new Error('Keeping the existing type requires empty type options');
 	const result: ColumnSpec = {
 		name: name(value.name), typeOid, typeModifiers: [...value.typeModifiers], nullable: flag(value.nullable),
@@ -73,9 +74,53 @@ function unique<T>(input: unknown, parse: (value: unknown) => T, key: (value: T)
 	if (!Array.isArray(input) || input.length < 1 || input.length > max) {
 		throw new Error(`Expected between 1 and ${max} columns`);
 	}
+	plainArray(input);
 	const result = Array.from(input, parse);
 	if (new Set(result.map(key)).size !== result.length) throw new Error('Duplicate column name');
 	return result;
+}
+
+function plainArray(input: unknown[]): void {
+	if (Object.getPrototypeOf(input) !== Array.prototype || Reflect.ownKeys(input).length !== input.length + 1
+		|| !Array.from({ length: input.length }, (_, i) => Object.hasOwn(input, i)).every(Boolean)) {
+		throw new Error('Expected a plain, dense array');
+	}
+}
+
+function constraint(input: unknown): ConstraintSpec {
+	const value = object(input);
+	if (value.kind === 'foreignKey') {
+		exact(value, ['kind', 'name', 'columns', 'reference', 'match', 'onUpdate', 'onDelete', 'notValid', 'deferrable', 'initiallyDeferred']);
+		const reference = exact(value.reference, ['schema', 'table', 'oid', 'version', 'columns']);
+		const oid = text(reference.oid, 10), version = text(reference.version, 64);
+		if (!/^[1-9]\d*$/.test(oid) || !/^[a-f0-9]{64}$/.test(version)) throw new Error('Foreign keys require a captured target OID and fingerprint');
+		const columns = unique(value.columns, name, (v) => v, 32);
+		const referencedColumns = unique(reference.columns, name, (v) => v, 32);
+		if (columns.length !== referencedColumns.length) throw new Error('Foreign key column counts must match');
+		const onUpdate = REFERENTIAL_ACTIONS.find((action) => action === value.onUpdate);
+		const onDelete = REFERENTIAL_ACTIONS.find((action) => action === value.onDelete);
+		if (!onUpdate || !onDelete || (value.match !== 'simple' && value.match !== 'full')) throw new Error('Unsupported foreign key action or match');
+		const deferrable = flag(value.deferrable), initiallyDeferred = flag(value.initiallyDeferred);
+		if (initiallyDeferred && !deferrable) throw new Error('Initially deferred requires a deferrable constraint');
+		return { kind: value.kind, name: name(value.name), columns,
+			reference: { schema: name(reference.schema), table: name(reference.table), oid, version, columns: referencedColumns },
+			match: value.match, onUpdate, onDelete, notValid: flag(value.notValid), deferrable, initiallyDeferred };
+	}
+	if (value.kind === 'unique') {
+		exact(value, ['kind', 'name', 'columns', 'nullsNotDistinct', 'deferrable', 'initiallyDeferred']);
+		const deferrable = flag(value.deferrable), initiallyDeferred = flag(value.initiallyDeferred);
+		if (initiallyDeferred && !deferrable) throw new Error('Initially deferred requires a deferrable constraint');
+		return { kind: value.kind, name: name(value.name), columns: unique(value.columns, name, (v) => v, 32),
+			nullsNotDistinct: flag(value.nullsNotDistinct), deferrable, initiallyDeferred };
+	}
+	if (value.kind === 'check') {
+		exact(value, ['kind', 'name', 'expression', 'notValid', 'noInherit']);
+		const expression = text(value.expression, 10_000);
+		if (!expression.trim() || !expression.isWellFormed()) throw new Error('CHECK requires a valid Unicode expression');
+		return { kind: value.kind, name: name(value.name), expression,
+			notValid: flag(value.notValid), noInherit: flag(value.noInherit) };
+	}
+	throw new Error('Unsupported constraint kind');
 }
 
 function operation(input: unknown): SchemaOperation {
@@ -96,9 +141,24 @@ function operation(input: unknown): SchemaOperation {
 		case 'addColumn':
 			exact(value, ['kind', 'column']);
 			return { kind: value.kind, column: column(value.column, true) };
-		case 'alterColumn':
-			exact(value, ['kind', 'column', 'changes']);
-			return { kind: value.kind, column: name(value.column), changes: column(value.changes, false) };
+		case 'alterColumn': {
+			const batched = Object.hasOwn(value, 'constraints');
+			exact(value, ['kind', 'column', 'changes', ...(batched ? ['constraints'] : [])]);
+			let constraints: ColumnConstraintOperation[] | undefined;
+			if (batched) {
+				if (!Array.isArray(value.constraints) || value.constraints.length > 20) throw new Error('At most 20 column constraint operations');
+				plainArray(value.constraints);
+				constraints = Array.from(value.constraints, (input) => {
+					const op = constraintOperation(input);
+					if (op.kind === 'renameConstraint' || op.kind === 'validateConstraint') throw new Error('Column constraints only support add, alter and drop');
+					return op;
+				});
+				const oids = constraints.flatMap((op) => 'constraintOid' in op ? [op.constraintOid] : []);
+				if (new Set(oids).size !== oids.length) throw new Error('Duplicate constraint OID');
+			}
+			return { kind: value.kind, column: name(value.column), changes: column(value.changes, false),
+				...(constraints ? { constraints } : {}) };
+		}
 		case 'dropColumn':
 			exact(value, ['kind', 'column']);
 			return { kind: value.kind, column: name(value.column) };
@@ -112,6 +172,8 @@ function operation(input: unknown): SchemaOperation {
 			return { kind: value.kind, name: name(value.name), method, unique: flag(value.unique),
 				columns: unique(value.columns, name, (v) => v, 32) };
 		}
+		case 'addConstraint': case 'alterConstraint': case 'renameConstraint': case 'dropConstraint': case 'validateConstraint':
+			return constraintOperation(value);
 		case 'dropIndex': {
 			exact(value, ['kind', 'indexOid']);
 			const indexOid = text(value.indexOid, 10);
@@ -121,6 +183,25 @@ function operation(input: unknown): SchemaOperation {
 		default: throw new Error('Invalid schema operation');
 	}
 }
+
+function constraintOperation(input: unknown): ConstraintOperation {
+	const value = object(input);
+	if (value.kind === 'addConstraint') {
+		exact(value, ['kind', 'constraint']);
+		return { kind: value.kind, constraint: constraint(value.constraint) };
+	}
+	if (value.kind === 'alterConstraint' || value.kind === 'renameConstraint' || value.kind === 'dropConstraint' || value.kind === 'validateConstraint') {
+		exact(value, ['kind', 'constraintOid', ...(value.kind === 'alterConstraint' ? ['constraint'] : value.kind === 'renameConstraint' ? ['name'] : [])]);
+		const constraintOid = text(value.constraintOid, 10);
+		if (!/^[1-9]\d*$/.test(constraintOid)) throw new Error('Invalid constraint OID');
+		if (value.kind === 'alterConstraint') return { kind: value.kind, constraintOid, constraint: constraint(value.constraint) };
+		if (value.kind === 'renameConstraint') return { kind: value.kind, constraintOid, name: name(value.name) };
+		return { kind: value.kind, constraintOid };
+	}
+	throw new Error('Invalid constraint operation');
+}
+
+export const constraintOperationSchema = schema<ConstraintOperation>(constraintOperation);
 
 export const schemaTargetSchema = schema<TableTarget>((input) =>
 	schemaTarget(exact(input, ['connection', 'schema', 'table']))

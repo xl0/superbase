@@ -6,19 +6,21 @@
 	import { HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 	import { json } from '@codemirror/lang-json';
 	import { PostgreSQL, sql } from '@codemirror/lang-sql';
-	import { acceptCompletion, autocompletion } from '@codemirror/autocomplete';
+	import { acceptCompletion, autocompletion, closeCompletion } from '@codemirror/autocomplete';
 	import { tags } from '@lezer/highlight';
 	import { jsonValue, prettyJSON, setJSONValue } from '#lib/json.js';
 	import type { CellValue } from '#lib/types.js';
 
 	let {
-		value, onchange, language = 'text', readonly = false, label, id, placeholder = '', class: className = '',
+		value, onchange, language = 'text', tabIndent = false, readonly = false, label, id, placeholder = '', class: className = '',
 		state: editorState = $bindable<EditorState | null>(null), ref = $bindable<EditorView | null>(null)
 	}: {
 		value: CellValue | undefined;
 		onchange: (value: CellValue | undefined) => void;
 		/** Chosen from column metadata, never inferred from the document. */
 		language?: 'text' | 'json' | 'sql';
+		/** Full SQL workspace opts in; form editors retain native Tab focus navigation. */
+		tabIndent?: boolean;
 		readonly?: boolean;
 		label: string;
 		id?: string;
@@ -62,7 +64,7 @@
 		return [
 			language === 'sql' ? [
 				sql({ dialect: PostgreSQL }), autocompletion(),
-				keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab]),
+				...(tabIndent ? [keymap.of([{ key: 'Tab', run: acceptCompletion }, indentWithTab])] : []),
 				lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting
 			]
 				: language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],
@@ -105,7 +107,17 @@
 		});
 		mounted = ref = view;
 		editorState = view.state;
+		// Bits UI clones Escape events, losing defaultPrevented. Consume completion
+		// dismissal before it reaches an enclosing layer, not the next Escape.
+		const escapeCompletion = (event: KeyboardEvent) => {
+			if (!event.defaultPrevented && !event.isComposing && ref === view
+				&& event.key === 'Escape' && closeCompletion(view)) {
+				event.preventDefault(); event.stopPropagation();
+			}
+		};
+		view.dom.addEventListener('keydown', escapeCompletion, true);
 		return () => {
+			view.dom.removeEventListener('keydown', escapeCompletion, true);
 			if (ref === view) ref = null;
 			view.destroy();
 		};

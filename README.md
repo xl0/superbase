@@ -108,7 +108,7 @@ and Live updates; changing tables resets it.
 
 Use **+** in the sidebar to create a table. Open a column header’s chevron menu to **Edit
 column**, **Delete column**, or copy its name. The **+** header adds a column. Each table’s **⋮**
-menu in the sidebar offers copy name/schema, duplication, CSV export, indexes, rename/delete and
+menu in the sidebar offers copy name/schema, duplication, CSV export, indexes, constraints, rename/delete and
 adding a primary key to a keyless table.
 Everything stays in the grid; there is no separate Definition view. New tables start with
 an identity `id` primary key; you can change the columns and select a composite key.
@@ -116,6 +116,8 @@ an identity `id` primary key; you can change the columns and select a composite 
 Changes stay local until **Apply** or Ctrl/Cmd+Enter. Errors retain your form; Cancel asks
 before discarding changes. Existing-column type changes use PostgreSQL casts and require
 confirmation: conversions can round values, rewrite the table and block other work.
+Foreign-key column casts also lock related tables and need their native LOCK permissions;
+customized internal FK triggers require SQL rather than being silently reset.
 Search base types, then choose integer size, timezone, array, length or precision/scale options.
 The resulting SQL type is shown below. Existing settings stay exact until changed; incompatible
 options/defaults are flagged rather than silently reset. A timestamp with timezone stores an
@@ -130,8 +132,8 @@ Concurrent schema changes conflict rather than overwrite. After a lost connectio
 database before retrying an operation.
 
 Only ordinary standalone tables are supported, not inheritance or partitions. Existing
-generated expressions and identity defaults are preserved. FK/UNIQUE/CHECK constraint editing,
-enum/namespace management and replacing existing primary keys are not supported.
+generated expressions and identity defaults are preserved. Enum/namespace management and
+replacing existing primary keys are not supported.
 
 ## Indexes
 
@@ -144,6 +146,33 @@ removal rather than being dropped automatically.
 Index changes lock the table and can block reads and writes. Creation uses plain columns and
 PostgreSQL’s default ordering, collations and operator classes. Use SQL for concurrent builds,
 expressions, partial indexes, INCLUDE columns and other advanced options.
+
+## Constraints
+
+**Edit column** includes a simple UNIQUE checkbox, related CHECK constraints and foreign keys.
+Composite constraints show their complete keys; removing one removes the whole constraint,
+not just this column's membership. All drafts save together with the column's **Apply**; a
+failure rolls back all column/constraint changes. When renaming a column, use its current name
+in constraint drafts.
+
+**⋮ → Constraints** retains the complete table overview, including checks with no column references,
+and supports create, edit, rename, drop and validation. UNIQUE supports ordered keys,
+NULLS NOT DISTINCT (PostgreSQL 15+) and transaction deferral. CHECK accepts a PostgreSQL boolean
+expression; NULL passes. **NOT VALID** skips existing rows but still checks new writes;
+**Validate** checks the remaining rows later.
+
+Foreign keys map complete tuples to an existing primary or nondeferrable unique key, with
+update/delete actions, MATCH SIMPLE/FULL and optional deferral. Referenced tables must also be
+ordinary standalone tables. **Reload target** refreshes its captured definition without clearing
+the mapping. New-column/create-table forms do not yet embed constraint controls.
+
+Apply is explicit, locks the table and retains the form on errors. Edits replace the constraint
+atomically, preserving comments; dependencies block replacement/removal. Dropping requires its
+name. Replica-identity constraints are protected. Foreign-key replacement also exclusively locks
+the old referenced table and needs its native LOCK permissions beyond REFERENCES. Advanced native
+options, including customized internal FK triggers, remain inspectable and renameable;
+changing them requires SQL. PostgreSQL functions, type-input routines and DDL
+event triggers are not sandboxed and may have side effects during parsing or validation.
 
 ## Copying and exporting tables
 

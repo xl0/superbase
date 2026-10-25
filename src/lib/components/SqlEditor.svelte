@@ -91,7 +91,7 @@
 	</div>
 	{#if sql.draftError}<p role="alert" class="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{sql.draftError}</p>{/if}
 	<div class="shrink-0 px-3 pt-3" style:height={`${height}px`}>
-		<TextEditor value={sql.draft} onchange={(value) => sql.updateDraft(value ?? '')} readonly={!sql.draftReady} language="sql" label="SQL query"
+		<TextEditor value={sql.draft} onchange={(value) => sql.updateDraft(value ?? '')} readonly={!sql.draftReady} language="sql" tabIndent label="SQL query"
 			placeholder="SELECT current_database();" class="h-full rounded-b-none" bind:ref={view} />
 	</div>
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard-adjustable separator.) -->

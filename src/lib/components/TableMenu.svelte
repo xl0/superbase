@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Copy, Download, EllipsisVertical, KeyRound, ListTree, Pencil, Trash2 } from '@lucide/svelte';
+	import { Copy, Download, EllipsisVertical, KeyRound, ListTree, Pencil, ShieldCheck, Trash2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { editable, type Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -39,6 +39,7 @@
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'renameTable' }, trigger, table)}><Pencil />Rename table</DropdownMenu.Item>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'duplicateTable' }, trigger, table)}><Copy />Duplicate table</DropdownMenu.Item>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'indexes' }, trigger, table)}><ListTree />Indexes</DropdownMenu.Item>
+		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'constraints' }, trigger, table)}><ShieldCheck />Constraints</DropdownMenu.Item>
 		{#if !editable(table)}
 			<DropdownMenu.Item disabled={blocked || !table.columns.length} onSelect={() => onedit({ kind: 'addPrimaryKey' }, trigger, table)}><KeyRound />Add primary key</DropdownMenu.Item>
 		{/if}

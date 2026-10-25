@@ -3,7 +3,7 @@
 	import { ArrowDown, ArrowUp, Copy, Plus, Trash2, X } from '@lucide/svelte';
 	import { schemaCatalog, schemaDefinition, tableSchema } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { DUPLICATE_NOTICE, INDEX_METHODS, type ColumnSpec, type SchemaCatalog, type SchemaDefinition, type SchemaEditMode, type SchemaExport, type SchemaIndex, type SchemaOperation } from '#lib/schema.js';
+	import { DUPLICATE_NOTICE, INDEX_METHODS, type ColumnSpec, type ColumnConstraintOperation, type ConstraintOperation, type SchemaCatalog, type SchemaDefinition, type SchemaEditMode, type SchemaExport, type SchemaIndex, type SchemaOperation } from '#lib/schema.js';
 	import type { TableTarget } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { columnOptionsError } from '#lib/schema-options.js';
@@ -15,6 +15,10 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import SchemaColumnFields from './SchemaColumnFields.svelte';
+	import SchemaConstraints from './SchemaConstraints.svelte';
+	import ColumnConstraints from './ColumnConstraints.svelte';
+	import { constraintOperationSchema } from '#lib/schema-validation.js';
+	import { schemaDraftSnapshot } from '#lib/schema-forms.js';
 	import TextEditor from './TextEditor.svelte';
 
 	let { mode, target: initialTarget, onclose, returnFocus }: {
@@ -27,8 +31,9 @@
 	const id = $props.id();
 	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: 'Delete table',
 		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key',
-		duplicateTable: 'Duplicate table', copySchema: 'Copy table schema', indexes: 'Indexes' }[intent.kind];
+		duplicateTable: 'Duplicate table', copySchema: 'Copy table schema', indexes: 'Indexes', constraints: 'Constraints' }[intent.kind];
 	const indexing = intent.kind === 'indexes';
+	const constraining = intent.kind === 'constraints';
 	const copying = intent.kind === 'copySchema';
 	let exported = $state<SchemaExport | null>(null);
 	let copied = $state(false);
@@ -43,6 +48,16 @@
 	let indexDraft = $state<Extract<SchemaOperation, { kind: 'createIndex' }> | null>(null);
 	let indexToDrop = $state<SchemaIndex | null>(null);
 	let indexPicked = $state('');
+	let constraintDraft = $state<ConstraintOperation | null>(null);
+	let columnConstraints = $state<ColumnConstraintOperation[]>([]);
+	let columnConstraintsValid = $state(true);
+	const constraintTitle = $derived(constraintDraft ? ('constraint' in constraintDraft
+		? `${constraintDraft.kind === 'addConstraint' ? 'Create' : 'Edit'} ${constraintDraft.constraint.kind === 'foreignKey' ? 'FOREIGN KEY' : constraintDraft.constraint.kind.toUpperCase()} constraint`
+		: { renameConstraint: 'Rename constraint', validateConstraint: 'Validate constraint', dropConstraint: 'Drop constraint' }[constraintDraft.kind]) : title);
+	const selectedConstraint = $derived.by(() => {
+		const operation = constraintDraft;
+		return operation && 'constraintOid' in operation ? definition?.constraints.find((constraint) => constraint.oid === operation.constraintOid) : undefined;
+	});
 	let confirmation = $state('');
 	let conversionApproved = $state(false);
 	let baseline = $state('');
@@ -55,20 +70,24 @@
 	let resize: { x: number; width: number } | null = null;
 	const panelWidth = $derived(Math.min(windowWidth, Math.max(320, width)));
 	const existing = $derived(intent.kind === 'alterColumn' ? definition?.columns.find((column) => column.name === intent.column) : undefined);
-	const destructive = $derived(intent.kind === 'dropColumn' || intent.kind === 'dropTable' || !!indexToDrop);
+	const destructive = $derived(intent.kind === 'dropColumn' || intent.kind === 'dropTable' || !!indexToDrop || constraintDraft?.kind === 'dropConstraint');
 	const confirmationName = $derived(indexToDrop?.name ?? (intent.kind === 'dropColumn' ? intent.column : target.table));
 	const typeChanged = $derived(intent.kind === 'alterColumn' && columns.length > 0 && columns[0].typeOid !== null);
 	const readOnly = $derived(intent.kind !== 'createTable' && !definition?.editable);
-	const snapshot = () => JSON.stringify({ schema, name, columns, keys, includeRows, indexDraft, indexToDrop: indexToDrop?.oid, confirmation: indexing ? confirmation : undefined });
+	const snapshot = () => schemaDraftSnapshot({ schema, name, columns, keys, includeRows, indexDraft, indexToDrop: indexToDrop?.oid, constraintDraft, columnConstraints, confirmation: indexing || constraining ? confirmation : undefined });
 	const dirty = $derived(!!baseline && snapshot() !== baseline);
-	const valid = $derived(indexing ? (indexDraft ? !!indexDraft.name && indexDraft.columns.length > 0
+	const constraintValid = $derived(!!constraintDraft && 'value' in constraintOperationSchema['~standard'].validate(constraintDraft)
+		&& (constraintDraft.kind === 'alterConstraint' ? dirty
+		: constraintDraft.kind === 'renameConstraint' ? constraintDraft.name !== selectedConstraint?.name
+		: constraintDraft.kind === 'dropConstraint' ? !!selectedConstraint && confirmation === selectedConstraint.name : true));
+	const valid = $derived(constraining ? constraintValid : indexing ? (indexDraft ? !!indexDraft.name && indexDraft.columns.length > 0
 		: !!indexToDrop && confirmation === indexToDrop.name) : intent.kind === 'createTable' ? !!schema && !!name && columns.length > 0 && columns.every((column) => !!column.name && !!column.typeOid)
 		: intent.kind === 'duplicateTable' ? !!name && name !== target.table && duplicateApproved
 		: intent.kind === 'renameTable' ? !!name && name !== target.table
 		: intent.kind === 'addColumn' ? !!columns[0]?.name && !!columns[0]?.typeOid
 		: intent.kind === 'alterColumn' ? !!columns[0]?.name && dirty
 		: intent.kind === 'addPrimaryKey' ? keys.length > 0 : confirmation === confirmationName);
-	const canApply = $derived(!loading && !saving && (!!catalog || indexing) && !readOnly && valid && (!typeChanged || conversionApproved)
+	const canApply = $derived(!loading && !saving && (!!catalog || indexing || constraining) && !readOnly && valid && columnConstraintsValid && (!typeChanged || conversionApproved)
 		&& columns.every((column) => !columnOptionsError(column, catalog?.types ?? [], existing)));
 
 	function newColumn(identity = false): ColumnSpec {
@@ -92,13 +111,13 @@
 					exported = result.current;
 					return;
 				}
-				const choices = indexing ? null : schemaCatalog({ connection: target.connection });
+				const choices = indexing || constraining ? null : schemaCatalog({ connection: target.connection });
 				const details = intent.kind === 'createTable' ? null : schemaDefinition(target);
 				await Promise.all([choices?.refresh(), details?.refresh()]);
 				if (cancelled) return;
 				if (choices?.error) throw choices.error;
 				if (details?.error) throw details.error;
-				if ((!indexing && !choices?.current) || (details && !details.current)) throw new Error('No schema response from the database');
+				if ((!indexing && !constraining && !choices?.current) || (details && !details.current)) throw new Error('No schema response from the database');
 				catalog = choices?.current ?? null;
 				definition = details?.current ?? null;
 				if (intent.kind === 'createTable') {
@@ -158,9 +177,14 @@
 			case 'renameTable': operation = { kind: intent.kind, name }; break;
 			case 'dropTable': operation = { kind: intent.kind }; break;
 			case 'addColumn': operation = { kind: intent.kind, column: columns[0] }; break;
-			case 'alterColumn': operation = { kind: intent.kind, column: intent.column, changes: columns[0] }; break;
+			case 'alterColumn': operation = { kind: intent.kind, column: intent.column, changes: columns[0],
+				...(columnConstraints.length ? { constraints: columnConstraints } : {}) }; break;
 			case 'dropColumn': operation = { kind: intent.kind, column: intent.column }; break;
 			case 'addPrimaryKey': operation = { kind: intent.kind, columns: keys }; break;
+			case 'constraints':
+				if (!constraintDraft) return;
+				operation = constraintDraft;
+				break;
 			case 'indexes':
 				if (indexDraft) operation = indexDraft;
 				else if (indexToDrop) operation = { kind: 'dropIndex', indexOid: indexToDrop.oid };
@@ -221,7 +245,7 @@
 			onpointerup={() => resize = null} onlostpointercapture={() => resize = null}></div>
 		<Sheet.Header class="shrink-0 border-b px-6 py-5">
 			<div class="flex items-center gap-3">
-				<Sheet.Title class="min-w-0 flex-1 break-words text-base font-medium">{indexDraft ? 'Create index' : indexToDrop ? 'Drop index' : title}{#if 'column' in intent}{' '}<code>{intent.column}</code>{/if}</Sheet.Title>
+				<Sheet.Title class="min-w-0 flex-1 break-words text-base font-medium">{indexDraft ? 'Create index' : indexToDrop ? 'Drop index' : constraintTitle}{#if 'column' in intent}{' '}<code>{intent.column}</code>{/if}</Sheet.Title>
 				<Button variant="ghost" size="icon-sm" disabled={saving} aria-label="Close schema editor" onclick={cancel}><X /></Button>
 			</div>
 			<Sheet.Description class="break-all font-mono text-xs">{intent.kind === 'createTable' ? 'New table' : `${target.schema}.${target.table}`}</Sheet.Description>
@@ -235,6 +259,9 @@
 					{#each exported.warnings as warning}<li>{warning}</li>{/each}
 				</ul>
 				<TextEditor value={exported.sql} language="text" readonly label="Table schema SQL" onchange={() => {}} class="h-[50dvh]" />
+			{:else if constraining && definition}
+				<SchemaConstraints {definition} connection={target.connection} bind:draft={constraintDraft} bind:confirmation disabled={saving || readOnly}
+					onbegin={(operation) => { constraintDraft = operation; confirmation = ''; error = null; baseline = snapshot(); void focusField(); }} />
 			{:else if indexing && definition}
 				{#if readOnly}<p role="status" class="text-sm text-muted-foreground">{definition.reason}</p>{/if}
 				{#if indexDraft}
@@ -358,8 +385,12 @@
 				{#if typeChanged}
 					<div class="flex items-start gap-2 rounded-md border border-amber-500/30 p-3">
 						<Checkbox id={`${id}-convert`} bind:checked={conversionApproved} disabled={saving || readOnly} class="mt-0.5" />
-						<Label for={`${id}-convert`} class="text-xs leading-relaxed">Convert existing values using a PostgreSQL cast. This can round or truncate values and may rewrite and lock the table.</Label>
+						<Label for={`${id}-convert`} class="text-xs leading-relaxed">Convert existing values using a PostgreSQL cast. This can round or truncate values and may rewrite and lock the table. Foreign-key columns also require native LOCK permissions on related tables.</Label>
 					</div>
+				{/if}
+				{#if intent.kind === 'alterColumn' && definition && columns[0]}
+					<ColumnConstraints {definition} column={intent.column} renamedColumn={columns[0].name} primaryKey={columns[0].primaryKey}
+						connection={target.connection} bind:operations={columnConstraints} bind:valid={columnConstraintsValid} disabled={saving || readOnly} />
 				{/if}
 				{#if intent.kind === 'addPrimaryKey'}
 					{#if definition?.primaryKey.length}<p class="text-xs text-muted-foreground">This table already has a primary key.</p>
@@ -388,11 +419,11 @@
 		<div class="shrink-0 space-y-3 border-t px-5 py-4">
 			{#if error}<p role="alert" class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-destructive">{error}</p>{/if}
 			<div class="flex justify-end gap-2">
-				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>{copying || (indexing && !indexDraft && !indexToDrop) ? 'Close' : 'Cancel'}</Button>
+				<Button variant="outline" size="sm" disabled={saving} onclick={cancel}>{copying || (indexing && !indexDraft && !indexToDrop) || (constraining && !constraintDraft) ? 'Close' : 'Cancel'}</Button>
 				{#if copying}
 					<Button data-copy-schema size="sm" disabled={loading || saving || !exported} onclick={copySQL}><Copy /><span aria-live="polite">{saving ? 'Copying…' : copied ? 'Copied' : 'Copy SQL'}</span></Button>
-				{:else if !indexing || indexDraft || indexToDrop}
-					<Button variant={destructive ? 'destructive' : 'default'} size="sm" disabled={!canApply} onclick={apply}>{saving ? 'Applying…' : 'Apply'}</Button>
+				{:else if (!indexing || indexDraft || indexToDrop) && (!constraining || constraintDraft)}
+					<Button variant={destructive || columnConstraints.some((operation) => operation.kind === 'dropConstraint') ? 'destructive' : 'default'} size="sm" disabled={!canApply} onclick={apply}>{saving ? 'Applying…' : 'Apply'}</Button>
 				{/if}
 			</div>
 		</div>

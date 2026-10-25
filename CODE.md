@@ -118,7 +118,9 @@ namespace/type renames: transaction-start/end catalog tuple versions fence those
 verify the actual target.
 These use namespace/type xmin, never table xmin or statistics. Transactions explicitly use
 READ COMMITTED so catalog checks stay fresh even with a stricter role default. Introspection
-and writes share a trusted search path. Each Apply is one transaction; errors roll back and retain the form.
+and structured writes use a trusted search path; CHECK expressions retain the connection's
+original path for native operator/function resolution, then restore the trusted path. Explicit
+pg_temp last prevents temporary objects from shadowing catalog reads. Each Apply is one transaction; errors roll back and retain the form.
 There is no CASCADE, trial rollback, custom USING expression or automatic conversion fallback.
 Only standalone ordinary tables are editable; inheritance and partition targets are rejected.
 
@@ -137,6 +139,8 @@ can remove its own indexes/constraints; external dependencies block restricted d
 `SchemaDefinition.indexes` exposes the same index metadata already included in the fingerprint:
 native definitions, method, uniqueness/PK, validity/readiness, clustering, replica identity,
 comments and owning PK/UNIQUE/exclusion constraints. Referencing FKs are not index owners.
+Ordered key columns exclude INCLUDE attributes; `referenceable` identifies valid, immediate,
+nonpartial, nonexpression unique keys usable by the FK form. PK membership also excludes INCLUDE.
 The table menu's Indexes Sheet inspects every definition and stages create/drop intents.
 Creation accepts 1–32 ordered, distinct plain columns, the six standard access methods and an
 optional unique flag. PostgreSQL supplies default ordering, collations and operator classes;
@@ -148,9 +152,85 @@ parent OID. Drops resolve an index OID against the locked table snapshot, protec
 and replica-identity indexes, use RESTRICT, then verify the original index OID is absent. This
 postcondition rolls back a name-resolved DROP if a concurrent rename redirected it elsewhere.
 
+`SchemaDefinition.constraints` exposes owned UNIQUE/CHECK/FK definitions, expression/ordered keys,
+validation/enforcement and deferral/NULL flags, comments and owned backing-index identity.
+FK metadata includes the full source/target mapping, target OID, match and referential actions;
+its referenced index is never treated as owned or given the FK's comments. Flags
+introduced in newer PostgreSQL versions are read through `to_jsonb` catalog properties.
+`SchemaConstraints.svelte` supplies local create/edit/rename/drop/validate forms inside the
+same Sheet. UNIQUE accepts ordered plain columns, NULLS NOT DISTINCT and native deferral.
+CHECK accepts one bounded boolean expression with NOT VALID/NO INHERIT options. NOT VALID skips
+old rows, not new-write enforcement; NULL passes CHECK unless the expression rejects it.
+
+CHECK input is not interpolated unchecked. A small `pg.Query.submit` adapter sends unnamed
+Parse → Close → Sync for a SELECT/WHERE wrapper; it never binds, plans or executes that SELECT.
+Parse rejects multiple statements, WHERE grammar rejects extra ALTER actions, and identical
+newline wrappers protect trailing comments. PostgreSQL then validates actual CHECK semantics.
+The adapter uses the normal driver queue; parse errors can precede ReadyForQuery, so rollback
+must finish before release. There is no named prepared state to leak. Native type-input routines
+can run during parsing, and real constraint validation evaluates functions: this is not a SQL
+function sandbox. Original search_path is restored separately for parsing and actual CHECK
+DDL; trusted search_path/standard_conforming_strings are restored before catalog/identity checks.
+
+Editing replaces a constraint atomically and preserves constraint/backing-index comments.
+Ordinary enforced CHECK/FK constraints and standard valid UNIQUE indexes are replaceable.
+Temporal, unenforced and column-subset referential actions require SQL to replace, as do
+custom internal RI-trigger names, modes or comments. Trigger configuration on both relations
+participates in the fingerprint. For UNIQUE, INCLUDE,
+nondefault operator classes/collations/order, index storage/tablespace options, clustering and
+replica identity require SQL. Rename retains advanced definitions without replacement. Replica
+identity also blocks drops, and native RESTRICT protects FK dependencies. Every existing target
+is resolved by OID against the locked snapshot; DROP verifies the original OID disappeared,
+rename/validate verify the original OID's new state, and creation verifies its parent and current
+transaction xmin. This also fences constraint renames induced by backing-index renames.
+UNIQUE replacement additionally locks its backing index: PostgreSQL cannot LOCK TABLE an index,
+so a no-op ALTER INDEX SET TABLESPACE to the actual database default obtains the index lock.
+A short-lived catalog-xmin check and refreshed semantic fingerprint reject changes before the
+lock; comments/options cannot change afterward. This xmin is not in the public fingerprint.
+The normal command does no physical work, but a raced tablespace move can cause work before
+rollback. It is real DDL and can fire event triggers. Rebuilds retain the database-default
+location rather than adopting a different role default_tablespace; the resulting index must
+still have reltablespace = 0, fencing tablespace-name reuse.
+
+FK forms select an existing primary/immediate unique key, map complete composite tuples and
+support MATCH SIMPLE/FULL, native update/delete actions, deferral and NOT VALID/validation.
+They capture the referenced definition's OID/fingerprint. Parse-only ACCESS SHARE acquisition
+protects target identity without requiring SELECT beyond native REFERENCES privileges; real ADD
+upgrades the lock. FK replacement additionally takes an explicit ACCESS EXCLUSIVE lock on the
+old referenced relation and rechecks the source fingerprint before removing anything. This
+blocks RI-trigger comments as well as mode/name changes, including when retargeting another table.
+It requires native LOCK permissions beyond REFERENCES; there is no weaker fallback. External
+FK creation still needs no SELECT privilege; rename and deliberate whole-constraint drops keep
+native permissions.
+Namespace versions, index identities, referenced attnums and the actual created FK are rechecked. External target fingerprints exclude only the locked source's incoming FKs,
+which our own batch can change. Eligible self-reference indexes use the native no-op index
+lock, including before type rebuilds.
+Timeouts/deadlocks fail explicitly, without retries. Both tables must be ordinary standalone tables.
+Type casts can implicitly rebuild owned or incoming FKs. Casts of FK key attributes therefore
+check their RI-trigger configuration and exclusively lock all related tables before mutation,
+with the same identity/fingerprint fences and native LOCK permission requirement. Customized
+triggers or nonstandalone related tables require SQL. Unrelated casts, rename/nullability changes
+and explicitly staged whole-FK removals do not acquire these additional cast protections.
+
 `SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
-serves create/add/alter forms. The sidebar creates tables; each table row's `TableMenu` exposes
-copy name/schema, duplicate, CSV export, indexes, rename, delete and keyless-table PK creation.
+serves create/add/alter forms. `ColumnConstraints.svelte` embeds UNIQUE, relevant CHECKs and
+outgoing FKs directly in Edit column, reusing `SchemaConstraints` and `SchemaForeignKey` fields.
+Joined table/key labels quote punctuation so dotted namespaces and comma-containing columns
+cannot look identical to different targets/tuples; selection values remain raw identity tuples.
+Simple single-column uniqueness has a checkbox; composite/advanced membership stays explicit.
+Collapsed draft forms remain mounted, preserving editor history. Opening an unchanged edit or
+loading a target fingerprint does not dirty the form. Removal requires the whole constraint's name;
+undoing removal restores any earlier local edit. Table overviews retain checks with no column refs.
+
+Up to 20 column constraint additions/replacements/removals share the outer Apply transaction.
+All captured targets/index locks are checked first; explicit FK removals precede UNIQUE removals,
+then column changes run, UNIQUE keys are created before FKs, and the column rename runs last.
+CHECK text and mappings use original column names; PostgreSQL propagates the final rename.
+Failures roll back every column/constraint change and retain drafts. No nested save is issued.
+Referenced keys must already exist in the captured definition; creating a new self-reference key
+requires applying that key first. New-column/create-table forms do not yet embed these controls. The sidebar creates tables; each table row's `TableMenu` exposes
+copy name/schema, duplicate, CSV export, indexes, constraints, rename, delete and keyless-table
+PK creation.
 Breadcrumbs are display-only. Opening a menu/form
 captures its own table target without changing the active grid; cancelling preserves that view.
 Deleting another table leaves the current table selected. Grid header menus expose column edit/delete, and a trailing
@@ -278,9 +358,12 @@ draft. Local SQL is unencrypted; sessions/results/history are never restored, an
 records remain until their editor is cleared or the site's storage is removed.
 `SqlEditor` uses TextEditor's PostgreSQL CodeMirror mode, keyword completion, line numbers,
 selection-or-buffer Run/Ctrl+Enter, a keyboard/pointer resizer and paged read-only result sets.
-Tab accepts a selected SQL completion or indents; Shift+Tab outdents without leaving the editor.
-CodeMirror's Escape-then-Tab accessibility escape hatch remains available. Cell editors retain
-native Tab navigation.
+The SQL workspace opts into `TextEditor.tabIndent`: Tab accepts a selected SQL completion or
+indents; Shift+Tab outdents without leaving the editor. SQL-language CHECK forms keep native
+Tab focus navigation.
+CodeMirror's Escape-then-Tab accessibility escape hatch remains available. Autocomplete consumes
+its own Escape before enclosing panels handle dismissal; the next Escape follows normal container
+behavior. Cell editors retain native Tab navigation.
 Compact status reports idle/open/failed transactions. Commit/Rollback buttons send only their
 literal command through the existing run path, preserving the draft/selection and session;
 Commit is disabled in a failed transaction. There is no transaction wrapper or mode switch.
@@ -496,6 +579,22 @@ concurrent fingerprints and catalog-name reuse, dependency restrictions, PKs, lo
 and metadata invalidation. Index tests cover native definitions/status, ordered B-tree/GIN
 creation, invalid combinations and duplicate-data rollback, owner/replica-identity protection,
 FK dependencies, cross-table OIDs, permissions and actual index/namespace rename races.
+Constraint tests cover exact metadata, native deferral/NULL semantics, atomic replacement and
+comments, NOT VALID/validation, parse-only injection boundaries, custom search paths, permissions,
+advanced-option/replica/dependency protections and constraint/namespace rename races. Index
+locking regressions cover concurrent options/comments and ordinary-owner replacement.
+Column/FK tests cover atomic multi-constraint type/rename batches, complete rollback, composite
+and self-reference mappings, eligibility (including INCLUDE versus key attributes), referential
+semantics, REFERENCES-only creation versus stronger replacement/cast locks, target/index/namespace
+races, comment preservation and explicit/implicit RI-trigger rebuild protections.
+Constraint browser checks verify native writes/errors, validation, comment-preserving edits,
+advanced/replica/dependency protections, stale metadata, permissions and inactive targeting.
+Column/FK browser checks additionally verify one outer Apply with combined rollback/recovery,
+complete composite mappings, validation/actions, delayed target responses, explicit target reload,
+typed whole-constraint removal/undo, no-op dirty detection and collapsed-editor history.
+Dotted identifiers and comma-containing keys remain distinct and bind to actual expected OIDs/attnums.
+They also cover autocomplete Escape layering, SQL/cell Tab behavior, focus, polling/navigation
+protection, resizing and short/narrow layouts with long errors.
 Index browser checks verify native writes/errors, draft correction, protected/dependent drops,
 inactive targeting, stale metadata, permissions, focus, resizing and narrow layouts.
 Isolated schema browser checks exercise all DDL flows, native-error
@@ -540,7 +639,7 @@ rejection through the production launcher.
 - `src/app.css`, `components.json` — shared theme and shadcn configuration.
 
 No server-side credential persistence, hosted authentication, multi-process sessions, views,
-SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes FK/unique/check
-constraint editing, advanced/concurrent index creation, enum/namespace management and replacing
-existing primary keys. Offset pagination is not a
+SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes
+advanced constraint replacement, advanced/concurrent index creation, enum/namespace management
+and replacing existing primary keys. Offset pagination is not a
 cross-page snapshot under concurrent changes. The app is intentionally a loopback-only tool.

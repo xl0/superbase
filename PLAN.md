@@ -236,10 +236,17 @@ Each feature must pass focused tests and browser checks before the next starts.
   explicit Apply, typed drop confirmation, ownership/replica guards and catalog/name-reuse
   fences are verified by PostgreSQL tests and isolated browser QA. Advanced definitions and
   concurrent builds remain SQL-only; concurrent operations need a separate failure model.
-- [ ] UNIQUE and CHECK constraint tools: inspect/create/change/drop, with explicit Apply,
-  native validation, dependency handling and catalog/concurrency protections.
-- [ ] Foreign-key tools: inspect/create/change/drop, including composite tuples, referenced-key
-  eligibility and referential actions. Keep controls table-scoped and preserve the same guards.
+- [x] UNIQUE/CHECK tools inspect/create/rename/edit/drop and validate existing checks, with
+  explicit Apply, retained native errors and atomic comment-preserving replacement. Native
+  expression boundaries, index/catalog identity fences, dependencies/replica identity, deferral
+  and NULL semantics are covered by PostgreSQL tests and isolated browser QA. Advanced native
+  replacement options remain SQL-only; shared editor Escape/Tab and narrow layouts are verified.
+- [x] Edit column embeds a simple UNIQUE checkbox, relevant CHECKs and full FK mappings,
+  while table overviews retain every constraint. Composite membership/removal shows the whole
+  constraint; column and constraint drafts share one atomic Apply. Native tests, independent
+  review and isolated browsers verify rollback, referential actions/validation, target races,
+  RI-trigger preservation, permissions, typed removal, retained history, unambiguous identifier
+  labels, keyboard handling and narrow layouts.
 - [ ] Publish a zero-config CLI launcher: `bunx superbase@latest` starts the local server
   and opens the browser. Bundle production assets and verify the Bun launch path.
 

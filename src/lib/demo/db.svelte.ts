@@ -111,7 +111,7 @@ class DemoQuery<T> {
 const query = <A, T>(load: (args: A) => Promise<T>) => (args: A) => new DemoQuery(() => load(args));
 
 export const connectionStatus = () => new DemoQuery<ConnectionStatus>(async () => ({
-	connection: { id: 'demo', host: 'PGlite', port: '', database: 'postgres', user: 'postgres' }, locked: true
+	connection: { id: 'demo', host: 'PGlite', port: '', database: 'postgres', user: 'postgres' }, locked: false
 }));
 export const connect = async (): Promise<ConnectionStatus> => { throw new Error('The demo has one built-in database.'); };
 

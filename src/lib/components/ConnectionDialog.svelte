@@ -32,6 +32,9 @@
 	let name = $state('');
 	let url = $state('');
 	let sslMode = $state<SslMode>('require');
+	// The demo keeps the connection UI to show how it works, but has only its in-browser database.
+	const demo = import.meta.env.MODE === 'demo';
+	let demoBlocked = $state(false);
 	const target = $derived(status.connection ? connectionTarget(status.connection) : '');
 	const current = $derived(profiles.find((profile) => profileTarget(profile.url) === target));
 	$effect(() => { active = pickerOpen || dialogOpen || pending; });
@@ -42,12 +45,14 @@
 		url = profile?.url ?? '';
 		sslMode = profile?.sslMode ?? 'require';
 		error = '';
+		demoBlocked = false;
 		pickerOpen = false;
 		dialogOpen = true;
 	}
 
 	/** Saved profiles are remembered for automatic reconnection; one-off URLs never are. */
 	async function change(choice: { url: string; sslMode: SslMode; id?: string }) {
+		if (demo) { demoBlocked = true; return; }
 		if (pending || !approve()) return;
 		pending = true;
 		error = '';
@@ -63,6 +68,7 @@
 	}
 
 	function save() {
+		if (demo) { demoBlocked = true; return; }
 		error = '';
 		try {
 			const options = connectionOptions(url, sslMode);
@@ -156,6 +162,11 @@
 				</Select.Root>
 			</div>
 			{#if error}<p role="alert" class="text-xs break-words text-destructive">{error}</p>{/if}
+			{#if demoBlocked}
+				<p role="alert" class="text-xs text-destructive">This demo runs PostgreSQL inside your browser and cannot connect to other databases.
+					To use your own, run superbase locally (<code>npx @xl0/superbase</code>):
+					<a href="https://github.com/xl0/superbase" target="_blank" rel="noreferrer" class="underline">github.com/xl0/superbase</a></p>
+			{/if}
 		</form>
 		<Dialog.Footer>
 			{#if editing}<Button variant="destructive" size="sm" class="mr-auto" disabled={pending} onclick={remove}>Remove</Button>{/if}

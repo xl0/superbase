@@ -113,7 +113,8 @@ bun run dev                 # 127.0.0.1:5173 (loads .env)
 bun run check
 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55433/postgres bun run test
 bun run test:production     # builds, then checks the real launcher (CSRF, Host guard)
-docker run -d --name sb-dev-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55433:5432 postgres:18.3-alpine
+docker run -d --name sb-dev-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55433:5432 postgres:18.3-alpine \
+  -c shared_preload_libraries=pg_stat_statements   # enables the Performance tab
 ```
 
 DB tests create and drop their own schema and need an explicit `TEST_DATABASE_URL`.

@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { Database, SquareTerminal, Table2 } from '@lucide/svelte';
+	import { Check, Database, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { ConnectionStatus, Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import ConnectionDialog from './ConnectionDialog.svelte';
 	import DataGrid from './DataGrid.svelte';
 	import SchemaEditor from './SchemaEditor.svelte';
@@ -56,6 +57,8 @@
 	});
 
 	const unsavedWork = () => editor.navigationBlocked || sql.protectedWork;
+	// A complete, unfiltered first page is an exact count; otherwise show the catalog estimate.
+	const exactCount = $derived(!editor.loading && !editor.error && editor.rowsPage === 0 && !editor.hasMore ? editor.rows.length : null);
 </script>
 
 <svelte:window onbeforeunload={(event) => { if (!leaving && unsavedWork()) event.preventDefault(); }} onpagehide={(event) => {
@@ -64,13 +67,28 @@
 }} />
 
 <div class="flex h-dvh flex-col">
-	<header class="flex h-12 shrink-0 items-center border-b bg-card">
+	<header class="flex h-12 shrink-0 items-center gap-2 border-b bg-card pr-3">
 		<div class="grid w-12 shrink-0 place-items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
-		<div class="min-w-0 max-w-full pr-3">
+		<div class="min-w-0">
 			<ConnectionDialog bind:active={connectionsActive} {status} disabled={editor.busy || sql.busy}
 				approve={() => !unsavedWork() || window.confirm('Discard unsaved edits and close SQL sessions (rolling back uncommitted work)?')}
 				onswitch={() => leaving = true} />
 		</div>
+		{#if editor.version}<span class="shrink-0 font-mono text-[11px] text-muted-foreground">PG {editor.version}</span>{/if}
+		{#if workspace === 'tables' && editor.table.name}
+			<div class="ml-4 flex min-w-0 items-baseline gap-1.5 font-mono text-xs">
+				<span class="max-w-[40%] truncate text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
+				<span class="truncate font-medium" title={`${editor.table.schema}.${editor.table.name}`}>{editor.table.name}</span>
+			</div>
+			{#if !editor.hasFilters && editor.table.rowCount >= 0}
+				<Badge variant="outline" class="shrink-0 text-[10px] font-normal text-muted-foreground"
+					title={exactCount === null ? 'PostgreSQL row estimate; statistics may be stale.' : 'Exact row count.'}>
+					{exactCount === null ? `~${editor.table.rowCount.toLocaleString()}` : exactCount.toLocaleString()} rows
+				</Badge>
+			{/if}
+			{#if editor.busy}<span role="status" class="ml-auto shrink-0 text-[11px] text-muted-foreground">Saving…</span>
+			{:else if editor.savedAt}<span class="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-primary"><Check class="size-3" />Saved</span>{/if}
+		{/if}
 	</header>
 	<div class="min-h-0 flex-1">
 		{#if !editor.ready && !editor.error}
@@ -150,7 +168,7 @@
 				</div>
 				{#if sqlOpened}
 					<main class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'block' : 'none'}>
-						<SqlEditor state={sql} active={workspace === 'sql' && !connectionsActive} database={status.connection!.database} />
+						<SqlEditor state={sql} active={workspace === 'sql' && !connectionsActive} />
 					</main>
 				{/if}
 			</div>

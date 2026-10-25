@@ -6,7 +6,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import TextEditor from './TextEditor.svelte';
 
-	let { state: sql, active, database }: { state: SqlState; active: boolean; database: string } = $props();
+	let { state: sql, active }: { state: SqlState; active: boolean } = $props();
 	let view = $state.raw<EditorView | null>(null);
 	let selectedResult = $state(0);
 	let page = $state(0);
@@ -51,10 +51,6 @@
 <svelte:window onkeydown={keydown} bind:innerHeight={windowHeight} />
 
 <section aria-label="SQL workspace" class="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
-	<header class="flex h-12 shrink-0 items-center gap-3 border-b px-4" title="Runs the selection or whole buffer unchanged on a dedicated session; transactions span runs. Previews show up to 1,000 rows per result.">
-		<h1 class="shrink-0 text-sm font-semibold">SQL editor</h1>
-		<span class="truncate font-mono text-xs text-muted-foreground" title={database}>{database}</span>
-	</header>
 	<div class="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
 		<Button size="sm" disabled={sql.busy || sql.needsReset || !sql.draft.trim()} onclick={run}
 			title="Run selection, or the entire buffer when nothing is selected (Ctrl/Cmd+Enter)">

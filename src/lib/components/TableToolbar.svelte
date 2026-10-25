@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { Check, Download, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
+	import { Download, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import InsertRow from './InsertRow.svelte';
 	import FilterBar from './FilterBar.svelte';
@@ -14,8 +13,6 @@
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
-	const exactCount = $derived(!editor.loading && !editor.error && editor.rowsPage === 0 && !editor.hasMore
-		? editor.rows.length : null);
 
 	function exportRows(options: boolean, anchor: HTMLElement) {
 		onedit({ kind: 'exportCsv', options, query: {
@@ -33,25 +30,6 @@
 </script>
 
 <header class="shrink-0 border-b border-border bg-background">
-	<div class="flex min-h-12 flex-wrap items-center gap-2 px-3 py-2">
-		<div class="flex min-w-0 max-w-full items-baseline gap-1.5 font-mono text-xs">
-			<span class="max-w-[50%] truncate text-muted-foreground" title={editor.table.schema}>{editor.table.schema}</span><span class="shrink-0 text-muted-foreground">/</span>
-			<span class="truncate font-medium" title={editor.table.name}>{editor.table.name}</span>
-		</div>
-		{#if !editor.hasFilters && editor.table.rowCount >= 0}
-			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground"
-				title={exactCount === null ? 'PostgreSQL row estimate; statistics may be stale.' : 'Exact row count from the last loaded page.'}>
-				{exactCount === null ? `~${editor.table.rowCount.toLocaleString()}` : exactCount.toLocaleString()} rows
-			</Badge>
-		{/if}
-		<div class="ml-auto flex items-center gap-2">
-			{#if editor.busy}
-				<span role="status" class="text-[11px] text-muted-foreground">Saving…</span>
-			{:else if editor.savedAt}
-				<span class="flex items-center gap-1 text-[11px] text-primary"><Check class="size-3" /> Saved</span>
-			{/if}
-		</div>
-	</div>
 		<div class="flex flex-wrap items-start gap-2 px-3 py-2">
 			<FilterBar />
 			<div class="ml-auto flex flex-wrap items-center gap-2">

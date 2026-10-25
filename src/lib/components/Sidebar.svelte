@@ -28,9 +28,6 @@
 
 <aside class="relative flex h-full shrink-0 flex-col border-r border-border bg-card" style:width={`${panelWidth}px`}>
 	<PanelResizer bind:width min={160} max={maxWidth} edge="right" label="Resize table sidebar" />
-	<header class="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
-		<span class="text-sm font-semibold tracking-tight">Table editor</span>
-	</header>
 	<div class="space-y-3 p-3">
 		<div class="space-y-1.5">
 			<Label for={`${id}-schema`} class="text-[10px] tracking-wider text-muted-foreground uppercase">Schema</Label>
@@ -71,7 +68,4 @@
 			<p class="px-2 py-3 text-xs text-muted-foreground">{tableSearch ? 'No matching tables.' : 'No tables in this schema.'}</p>
 		{/each}
 	</nav>
-	<footer class="truncate border-t border-border px-3 py-3 text-[11px] text-muted-foreground" title={editor.version}>
-		PostgreSQL {editor.version}
-	</footer>
 </aside>

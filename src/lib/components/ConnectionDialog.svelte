@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ChevronsUpDown, Database, Pencil, Plus } from '@lucide/svelte';
+	import { Check, ChevronsUpDown, Pencil, Plus } from '@lucide/svelte';
 	import { connect } from '#lib/db.remote.js';
 	import type { ConnectionStatus } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
@@ -90,13 +90,12 @@
 </script>
 
 {#if status.locked}
-	<span class="flex items-center gap-2 px-2 text-sm" title={target}><Database class="size-4 text-muted-foreground" />{status.connection?.database}</span>
+	<span class="truncate px-2 text-sm font-medium" title={target}>{status.connection?.database}</span>
 {:else}
 	<Popover.Root bind:open={() => pickerOpen, (value) => { if (!pending) { pickerOpen = value; error = ''; } }}>
 		<Popover.Trigger>
 			{#snippet child({ props })}
 				<Button {...props} variant="ghost" {disabled} class="max-w-full justify-start gap-2 px-2" title={target}>
-					<Database class="size-4 shrink-0 text-muted-foreground" />
 					<span class="truncate">{current?.name ?? status.connection?.database ?? 'Choose connection'}</span>
 					<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground" />
 				</Button>

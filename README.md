@@ -76,6 +76,9 @@ and Live updates; changing tables resets it.
 
 ## Editing
 
+Drag the sidebar’s right edge or an editor panel’s left edge to resize. With the edge focused,
+Left/Right adjusts the width; Home/End selects its minimum/maximum. Drafts stay intact.
+
 - Double-click a cell or press Enter/F2 to edit. **Expand** opens a resizable side panel.
   Text and JSON columns use CodeMirror regardless of content length; other types keep native
   controls. Text stays literal. JSON/JSONB gets highlighting and indentation without rounding

@@ -181,6 +181,8 @@
 </script>
 
 <svelte:window onpointerdowncapture={(event) => {
+	// Layout resizing must not clear the current cell/range selection.
+	if (event.target instanceof Element && event.target.closest('[role="separator"][aria-valuenow]')) return;
 	if (event.button === 0 && !editing && event.target instanceof Node && !viewport?.contains(event.target)) deselect();
 }} />
 

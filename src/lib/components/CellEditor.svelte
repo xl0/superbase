@@ -40,7 +40,7 @@
 	let error = $state<string | null>(null);
 	let saving = $state(false);
 	let referenceChanges = $state<Record<string, CellValue> | null>(null);
-	let resize: { x: number; width: number } | null = null;
+	let resize: { x: number; width: number; pointerId: number } | null = null;
 	let selection: { start: number; end: number } | null = null;
 	const temporal = $derived(/^(date|timestamp|time)(?:\(|\s|$)/.test(column.type));
 	const options = $derived(column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? []);
@@ -223,12 +223,20 @@
 		onCloseAutoFocus={(event) => event.preventDefault()} onkeydown={keydown}>
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
 		<div role="separator" tabindex="0" aria-label="Resize cell side panel" aria-orientation="vertical"
-			aria-valuemin={Math.min(320, windowWidth)} aria-valuemax={windowWidth} aria-valuenow={panelWidth}
-			class="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none hover:bg-primary/40 focus-visible:bg-primary focus-visible:outline-none"
+			aria-controls={panel?.id} aria-valuemin={Math.min(320, windowWidth)} aria-valuemax={windowWidth} aria-valuenow={panelWidth}
+			aria-valuetext={`${Math.round(panelWidth)} pixels`}
+			class="panel-resize absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none outline-none"
 			onkeydown={resizeKey}
-			onpointerdown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); resize = { x: event.clientX, width: panelWidth }; }}
-			onpointermove={(event) => { if (resize) width = Math.min(windowWidth, Math.max(320, resize.width + resize.x - event.clientX)); }}
-			onpointerup={() => resize = null} onlostpointercapture={() => resize = null}></div>
+			title="Drag or use Left/Right, Home/End to resize"
+			onpointerdown={(event) => {
+				if (event.button !== 0 || !event.isPrimary || resize) return;
+				event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+				resize = { x: event.clientX, width: panelWidth, pointerId: event.pointerId };
+			}}
+			onpointermove={(event) => { if (resize?.pointerId === event.pointerId) width = Math.min(windowWidth, Math.max(320, resize.width + resize.x - event.clientX)); }}
+			onpointerup={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
+			onpointercancel={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
+			onlostpointercapture={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}></div>
 		{@render contents()}
 	</Sheet.Content>
 </Sheet.Root>

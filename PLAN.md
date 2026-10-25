@@ -159,11 +159,12 @@ Native streaming, exact projections, retained error state, concurrent large down
 notification timing and keyboard/narrow layouts are verified. Use modals for interaction options like this; reserve
 right-hand panels for database manipulation.
 
-### [ ] Resizable left and right panels
+### [x] Resizable left and right panels
 
-Make the left navigation panel and right-hand editor/details panels resizable with pointer
-and keyboard controls. Reuse existing right-sheet resizing where applicable. Keep sensible
-width bounds and controls reachable on narrow screens; resizing must preserve drafts and focus.
+The sidebar and existing editor Sheets use small neutral grips for pointer and keyboard
+resizing with viewport bounds. Resizing preserves drafts, focus/history and grid ranges; sidebar width survives
+workspace switches and temporary viewport narrowing. Browser checks verify all four handles,
+mouse/touch cancellation, long-name layouts, reachable short-panel footers and ordinary dismissal.
 
 ### [ ] Connections: multiple database profiles
 

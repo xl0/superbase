@@ -34,9 +34,9 @@
 
 <header class="shrink-0 border-b border-border bg-background">
 	<div class="flex min-h-12 flex-wrap items-center gap-2 px-3 py-2">
-		<div class="flex min-w-0 items-baseline gap-1.5 font-mono text-xs">
-			<span class="text-muted-foreground">{editor.table.schema}</span><span class="text-muted-foreground">/</span>
-			<span class="truncate font-medium">{editor.table.name}</span>
+		<div class="flex min-w-0 max-w-full items-baseline gap-1.5 font-mono text-xs">
+			<span class="max-w-[50%] truncate text-muted-foreground" title={editor.table.schema}>{editor.table.schema}</span><span class="shrink-0 text-muted-foreground">/</span>
+			<span class="truncate font-medium" title={editor.table.name}>{editor.table.name}</span>
 		</div>
 		{#if !editor.hasFilters && editor.table.rowCount >= 0}
 			<Badge variant="outline" class="text-[10px] font-normal text-muted-foreground"

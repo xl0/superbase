@@ -55,6 +55,35 @@
 	--radius-xl: calc(var(--radius) * 1.4);
 }
 
+/* Keep the full edge draggable; only the small grip is visually emphasized. */
+.panel-resize::before,
+.panel-resize::after {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 0;
+	transform: translate(-50%, -50%);
+}
+.panel-resize::before {
+	width: 12px;
+	height: 22px;
+	border: 1px solid var(--input);
+	border-radius: 4px;
+	background: var(--muted);
+}
+.panel-resize::after {
+	width: 8px;
+	height: 12px;
+	background: radial-gradient(circle, var(--muted-foreground) 0.75px, transparent 1px) 0 0 / 4px 4px;
+}
+.panel-resize-end::before,
+.panel-resize-end::after { left: 100%; }
+.panel-resize:hover::before { background: var(--accent); }
+.panel-resize:focus-visible::before {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
 @layer base {
 	* { @apply border-border outline-ring/50; scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
 	html, body { height: 100%; }

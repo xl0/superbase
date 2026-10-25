@@ -448,8 +448,9 @@ and editing. Bounds and full paste rectangles are validated before local mutatio
 child controls own their keyboard events; the grid exposes active-cell focus through ARIA.
 There is no permanent usage-hint/status strip above the column headers.
 Cells open by double-click, Enter or F2. Escape, blank grid clicks and outside-grid clicks
-clear cell/range focus without changing checkbox row selections. Outside clicks never steal
-focus from controls or clear selection underneath an open cell editor.
+clear cell/range focus without changing checkbox row selections. Adjustable separators are
+excluded so layout resizing keeps the current range. Outside clicks never steal focus from
+controls or clear selection underneath an open cell editor.
 
 `CellEditor.svelte` owns one exact text/NULL/DEFAULT buffer shared between a shadcn Popover
 and a resizable Sheet. Apply saves existing rows immediately; Escape cancels the buffer.
@@ -524,6 +525,17 @@ storage is denied at mount. Resizing works with pointer or keyboard. shadcn prov
 `format.ts` keeps display text lossless and implements quoted TSV, including NULL/default
 markers. Opening and closing a cell without input does not coerce its original value.
 
+The table sidebar has an adjustable right-edge separator: drag or use Left/Right and Home/End.
+Its local preferred width survives Tables/SQL switching; viewport clamping does not overwrite it.
+Bounds are 160–480px, capped at half the viewport when space permits. Existing cell/reference,
+insert and schema Sheets retain their left-edge controls and 320px-to-viewport bounds.
+All four handles capture only the primary pointer, ignore secondary pointers/buttons, and stop
+on release, cancellation or lost capture. Pointer resizing preserves the focused field and never
+remounts editors or changes drafts. Shared CSS draws small neutral dotted grips instead of
+highlighting the entire edge; keyboard focus outlines the grip. Grips stay on the border,
+including at full Sheet width, where the viewport intentionally clips their outside half.
+No new storage or resizing dependency is involved.
+
 The shell uses generated shadcn-svelte buttons, inputs, labels, dialogs, selects and badges.
 ReferencePicker uses shadcn Table; its outer scroll container
 owns scrolling so the table header remains sticky. The spreadsheet remains custom.
@@ -565,6 +577,8 @@ The application can also start without any environment URL and connect through o
 Integration tests require explicit `TEST_DATABASE_URL`, create a unique schema and remove it
 afterward. They never fall back to the application's database URL. Use a disposable database.
 Browser QA likewise uses isolated browser sessions and disposable databases.
+Resize checks cover all four handles, native mouse/touch and keyboard bounds, pointer cancellation,
+viewport/workspace restoration, retained ranges/drafts/caret/history and narrow long-name layouts.
 
 `bun run check` typechecks application code. `bun run test` exercises actual compiled runes
 state with mocked remote I/O, connection lifecycle with mocked sockets/request context, and

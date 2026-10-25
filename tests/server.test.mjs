@@ -9,7 +9,7 @@ import { manifest } from '../build/server/manifest.js';
 // The production launcher must accept same-origin HTTP commands and reject cross-origin/rebinding requests.
 test('production server: same-origin commands work; foreign origins and Host headers are rejected', async () => {
 	const port = 30000 + Math.floor(Math.random() * 20000);
-	const server = spawn(process.execPath, ['server.mjs'], {
+	const server = spawn(process.execPath, ['bin/superbase.js', '--no-open'], {
 		cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: String(port), DATABASE_URL: '', HOST: '', ORIGIN: '' },
 		stdio: ['ignore', 'pipe', 'inherit']
 	});

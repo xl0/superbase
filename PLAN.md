@@ -19,6 +19,7 @@ PostgreSQL validates. Keep code and tests minimal.
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
 - Database workspace: all indexes (drop), query performance (pg_stat_statements), extensions (enable/update/disable) and curated
   database/role defaults, as previewed SQL.
+- CLI: `npx|bunx @xl0/superbase [url] [--port] [--host] [--no-open]` (unscoped name rejected by npm).
 - Connections: global server connection, saved browser profiles, SSL modes, locked mode via
   `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
@@ -26,8 +27,6 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] CLI launcher: `bunx superbase` / `npx superbase` starts the server and opens the browser.
-  Needs runtime deps in `dependencies`, a `bin`, bundled build output, and a Node-only path.
 - [ ] Docker image for the locked/viewer mode (document `DATABASE_URL`, `HOST`, `ORIGIN`).
 
 ## Later / maybe
@@ -36,3 +35,5 @@ PostgreSQL validates. Keep code and tests minimal.
 - Roles/grants/RLS inspection; schema relationship diagram; activity (running queries, locks).
 - Views; enum/schema management; nested/OR filters; virtualization if large pages need it.
 - Event-driven refresh instead of polling, only with a real delivery path.
+- Load-over-time charts: sample pg_stat_database/pg_stat_statements counters in the server
+  process (in-memory ring buffer, no database objects); history only while the server runs.

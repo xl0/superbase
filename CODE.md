@@ -10,7 +10,10 @@ shadcn-svelte, Tailwind v4, `pg` directly. One Node process, one database target
   (DNS rebinding). SvelteKit's origin check guards commands and form POSTs.
 - **Locked** (`DATABASE_URL` set): pinned to that database; `connect` refuses.
   `HOST` other than loopback disables the Host check: auth is expected in front.
-  `server.mjs` marks requests as HTTP unless `ORIGIN` is set (adapter-node assumes HTTPS).
+  `bin/superbase.js` (the published CLI and `bun run start`) marks requests as HTTP unless
+  `ORIGIN` is set (adapter-node assumes HTTPS), tries ports 3000+ when none is given, and opens
+  a browser. A positional postgres URL sets `DATABASE_URL`. The npm package ships `bin` and the
+  built `build/` (no source maps); `pg` is its only runtime dependency, everything else is bundled.
 
 Whoever reaches the app can run arbitrary SQL with the configured role. So remote functions are
 `'unchecked'` (no schema validation layer) and there is no DDL/SQL "hardening". SQL builders
@@ -37,7 +40,8 @@ One-off URLs are never stored.
 - `loadMetadata` reads tables/columns/PK/FK/enum info; cached per pool for 30 s, refreshed by
   `listTables` and invalidated after DDL. Column `kind` is only a rendering hint.
 - `rowSelection` builds the shared WHERE (exact FK filter, structured filters, picker search)
-  and deterministic ORDER BY (`reference` = exact FK-navigation match, `filters` = user conditions) (user sorts NULLS LAST, then PK, tableoid, ctid). Grid pages use
+  and deterministic ORDER BY (`reference` = exact FK-navigation match, `filters` = user conditions)
+  (user sorts NULLS LAST, then PK, tableoid, ctid). Grid pages use
   OFFSET/LIMIT+1 (`hasMore`); counts are catalog estimates.
 - Writes run in one transaction with a ROW EXCLUSIVE lock and fresh metadata. Updates/deletes
   match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.

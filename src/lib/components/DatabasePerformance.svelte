@@ -13,6 +13,7 @@
 		['totalTime', 'Time consumed'], ['calls', 'Calls'], ['meanTime', 'Mean'], ['maxTime', 'Max'], ['rows', 'Rows'], ['hitRate', 'Cache hit']
 	] as const;
 	const RESET_SQL = 'select pg_stat_statements_reset();';
+	const ENABLE_SQL = 'create extension if not exists pg_stat_statements;';
 	let stats = $state.raw<QueryStats | null>(null);
 	let error = $state('');
 	let query = $state('');
@@ -41,11 +42,11 @@
 		return item[column].toLocaleString();
 	}
 
-	async function reset() {
+	async function run(sql: string) {
 		applying = true;
 		applyError = '';
 		try {
-			await changeSchema({ connection: editor.connection, sql: RESET_SQL });
+			await changeSchema({ connection: editor.connection, sql });
 			resetting = false;
 			await load();
 		} catch (cause) { applyError = message(cause); }
@@ -59,8 +60,13 @@
 		<div class="max-w-2xl space-y-2 rounded-md border p-4 text-xs">
 			<p class="font-medium">Query statistics are unavailable</p>
 			<p class="text-muted-foreground">{stats.reason}</p>
-			<p class="text-muted-foreground">Enable <code>pg_stat_statements</code> in the Extensions tab. The server must also load it:
-				set <code>shared_preload_libraries = 'pg_stat_statements'</code> in its configuration and restart PostgreSQL.</p>
+			{#if !stats.installed}
+				<pre class="rounded-md bg-muted p-2 font-mono">{ENABLE_SQL}</pre>
+				{#if applyError}<p role="alert" class="break-words text-destructive">{applyError}</p>{/if}
+				<Button size="xs" disabled={applying} onclick={() => run(ENABLE_SQL)}>{applying ? 'Enabling…' : 'Enable extension'}</Button>
+			{/if}
+			<p class="text-muted-foreground">The server must also preload it: set <code>shared_preload_libraries = 'pg_stat_statements'</code>
+				in its configuration (or <code>alter system set …</code>) and restart PostgreSQL.</p>
 			<Button variant="outline" size="xs" onclick={load}>Check again</Button>
 		</div>
 	{:else if stats}
@@ -121,7 +127,7 @@
 		{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
 		<Dialog.Footer>
 			<Button variant="outline" size="sm" disabled={applying} onclick={() => resetting = false}>Cancel</Button>
-			<Button variant="destructive" size="sm" disabled={applying} onclick={reset}>{applying ? 'Resetting…' : 'Reset'}</Button>
+			<Button variant="destructive" size="sm" disabled={applying} onclick={() => run(RESET_SQL)}>{applying ? 'Resetting…' : 'Reset'}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

@@ -24,8 +24,8 @@ export interface QueryStat {
 }
 export type QueryStats =
 	| { available: true; queries: QueryStat[]; hitRate: number | null }
-	/** The extension is missing or not preloaded; `reason` says which. */
-	| { available: false; reason: string };
+	/** The extension is missing (`installed` false) or installed but not preloaded by the server. */
+	| { available: false; installed: boolean; reason: string };
 
 export interface Extension {
 	name: string;

@@ -108,3 +108,7 @@ only loads its text; nothing runs until you press Run.
 Not affiliated with Supabase. Most built-in SQL examples are adapted from Supabase Studio
 (Apache-2.0, see [licenses/supabase-apache-2.0.txt](licenses/supabase-apache-2.0.txt)).
 Development and architecture: [CODE.md](CODE.md).
+
+---
+
+Like this work? [Hire me](https://alexey.work/cv?ref=superbase)

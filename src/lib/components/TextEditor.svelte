@@ -8,27 +8,28 @@
 	import { PostgreSQL, sql } from '@codemirror/lang-sql';
 	import { acceptCompletion, autocompletion, closeCompletion } from '@codemirror/autocomplete';
 	import { tags } from '@lezer/highlight';
-	import { jsonValue, prettyJSON, setJSONValue } from '#lib/json.js';
+	import { prettyJSON } from '#lib/json.js';
 	import type { CellValue } from '#lib/types.js';
 
+	/** CodeMirror for a NULL/DEFAULT/text value. The parent owns the value; edits report document text. */
 	let {
 		value, onchange, language = 'text', tabIndent = false, readonly = false, label, id, placeholder = '', class: className = '',
 		state: editorState = $bindable<EditorState | null>(null), ref = $bindable<EditorView | null>(null)
 	}: {
 		value: CellValue | undefined;
-		onchange: (value: CellValue | undefined) => void;
+		onchange: (value: string) => void;
 		/** Chosen from column metadata, never inferred from the document. */
 		language?: 'text' | 'json' | 'sql';
-		/** Full SQL workspace opts in; form editors retain native Tab focus navigation. */
+		/** The SQL workspace opts in; form editors keep native Tab focus navigation. */
 		tabIndent?: boolean;
 		readonly?: boolean;
 		label: string;
 		id?: string;
 		placeholder?: string;
 		class?: string;
-		/** Persist across remounts to retain the displayed document, selection and undo history. */
+		/** Bind to keep the document, selection and undo history across remounts (cell editor expand). */
 		state?: EditorState | null;
-		/** The current mounted view, for focus and selection commands. */
+		/** The mounted view, for focus and selection commands. */
 		ref?: EditorView | null;
 	} = $props();
 
@@ -36,6 +37,7 @@
 	let mounted = $state.raw<EditorView | null>(null);
 	let lastValue: CellValue | undefined;
 	const external = Annotation.define<boolean>();
+	const toDoc = (value: CellValue | undefined) => language === 'json' ? prettyJSON(value ?? '') : value ?? '';
 	const theme = EditorView.theme({
 		'&': { height: '100%', minHeight: '0', color: 'var(--foreground)', backgroundColor: 'var(--card)', fontSize: '12px' },
 		'&.cm-focused': { outline: 'none' },
@@ -68,10 +70,10 @@
 				lineNumbers(), indentUnit.of('  '), indentOnInput(), highlighting
 			]
 				: language === 'json' ? [json(), indentUnit.of('  '), indentOnInput(), highlighting] : [EditorView.lineWrapping],
-			// Split only LF, retaining CR characters even in mixed line endings.
+			// Split only on LF so CR characters survive (and are shown) in mixed line endings.
 			EditorState.lineSeparator.of('\n'), highlightSpecialChars({ addSpecialChars: /\r/g }),
-			jsonValue, history(), drawSelection(), theme,
-			// Cell editors keep native Tab navigation; apply/cancel belong to their enclosing editor.
+			history(), drawSelection(), theme,
+			// Mod-Enter and Escape belong to the enclosing editor (apply/cancel).
 			keymap.of([...defaultKeymap.filter(({ key }) => key !== 'Mod-Enter' && key !== 'Escape'), ...historyKeymap]),
 			EditorState.readOnly.of(readonly),
 			EditorView.contentAttributes.of({ ...(id ? { id } : {}), 'aria-label': label, 'aria-readonly': String(readonly), spellcheck: 'false' }),
@@ -81,37 +83,28 @@
 
 	onMount(() => {
 		lastValue = value;
-		const initialValue = value;
 		const configured = extensions();
 		const view = new EditorView({
 			parent: host,
 			state: editorState
 				? editorState.update({ effects: StateEffect.reconfigure.of(configured) }).state
-				: EditorState.create({
-					doc: language === 'json' ? prettyJSON(initialValue ?? '') : initialValue ?? '',
-					extensions: [configured, jsonValue.init(() => initialValue)]
-				}),
-			// A view-local dispatcher avoids retaining callbacks from a destroyed component in state.
+				: EditorState.create({ doc: toDoc(value), extensions: configured }),
 			dispatchTransactions(transactions, view) {
 				view.update(transactions);
-				// Animated outgoing editors may still receive blur/selection transactions.
+				// An outgoing (animating) editor may still receive transactions.
 				if (ref !== view) return;
-				if (editorState !== view.state) editorState = view.state;
-				if (transactions.some((transaction) => !transaction.annotation(external) && (
-					transaction.docChanged || transaction.startState.field(jsonValue) !== transaction.state.field(jsonValue)
-				))) {
-					lastValue = view.state.field(jsonValue);
+				editorState = view.state;
+				if (transactions.some((transaction) => transaction.docChanged && !transaction.annotation(external))) {
+					lastValue = view.state.doc.toString();
 					onchange(lastValue);
 				}
 			}
 		});
 		mounted = ref = view;
 		editorState = view.state;
-		// Bits UI clones Escape events, losing defaultPrevented. Consume completion
-		// dismissal before it reaches an enclosing layer, not the next Escape.
+		// Let Escape close the completion list before an enclosing popover/sheet sees it.
 		const escapeCompletion = (event: KeyboardEvent) => {
-			if (!event.defaultPrevented && !event.isComposing && ref === view
-				&& event.key === 'Escape' && closeCompletion(view)) {
+			if (event.key === 'Escape' && !event.isComposing && closeCompletion(view)) {
 				event.preventDefault(); event.stopPropagation();
 			}
 		};
@@ -123,16 +116,16 @@
 		};
 	});
 
+	// External value changes (Set to NULL/empty, form resets) replace the document as one undo step.
 	$effect(() => {
 		const view = mounted;
 		const next = value;
 		if (!view || ref !== view || next === lastValue) return;
 		lastValue = next;
 		untrack(() => {
-			const doc = language === 'json' ? prettyJSON(next ?? '') : next ?? '';
-			view.dispatch({
-				changes: doc === view.state.doc.toString() ? undefined : { from: 0, to: view.state.doc.length, insert: doc },
-				effects: setJSONValue.of({ value: next }),
+			const doc = toDoc(next);
+			if (doc !== view.state.doc.toString()) view.dispatch({
+				changes: { from: 0, to: view.state.doc.length, insert: doc },
 				annotations: [external.of(true), isolateHistory.of('full')]
 			});
 		});

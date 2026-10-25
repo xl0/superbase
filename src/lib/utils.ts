@@ -1,4 +1,5 @@
 import { isHttpError } from '@sveltejs/kit';
+import type { RemoteQuery } from '$app/server';
 
 export { cn } from 'cn';
 
@@ -6,6 +7,13 @@ export { cn } from 'cn';
 export function message(error: unknown): string {
 	if (isHttpError(error)) return error.body.message;
 	return error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
+}
+
+/** Remote queries are cached by argument; table data must always be read again. */
+export async function fresh<T>(query: RemoteQuery<T>): Promise<T> {
+	await query.refresh();
+	if (query.error) throw query.error;
+	return query.current as T;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

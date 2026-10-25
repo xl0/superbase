@@ -4,6 +4,7 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { writable, type CellValue, type Column, type Row, type Table, type Values } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
+	import { isTemporal, optionLabel, valueOptions, valueState } from '#lib/format.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -12,6 +13,7 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import CellEditor from './CellEditor.svelte';
+	import ResizableSheet from './ResizableSheet.svelte';
 	import TextEditor from './TextEditor.svelte';
 
 	let { table, onclose }: { table: Table; onclose: () => void } = $props();
@@ -22,11 +24,7 @@
 	let createMore = $state(false);
 	let error = $state<string | null>(null);
 	let nested = $state.raw<{ column: Column; anchor: HTMLElement } | null>(null);
-	let panel = $state<HTMLDivElement | null>(null);
-	let width = $state(800);
-	let windowWidth = $state(1024);
-	let resize: { x: number; width: number; pointerId: number } | null = null;
-	const panelWidth = $derived(Math.min(windowWidth, Math.max(320, width)));
+	let panel = $state<HTMLElement | null>(null);
 	const row: Row = $derived({ key: `${id}-draft`, values, identity: null, draft: true });
 
 	function change(name: string, value: CellValue | undefined) {
@@ -81,39 +79,11 @@
 			void save();
 		}
 	}
-
-	function resizeKey(event: KeyboardEvent) {
-		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-		event.preventDefault();
-		width = event.key === 'Home' ? 320 : event.key === 'End' ? windowWidth : panelWidth + (event.key === 'ArrowLeft' ? 32 : -32);
-		width = Math.min(windowWidth, Math.max(320, width));
-	}
 </script>
 
-<svelte:window bind:innerWidth={windowWidth} />
-
-<Sheet.Root open onOpenChange={(open) => { if (!open) cancel(); }}>
-	<Sheet.Content bind:ref={panel} side="right" showCloseButton={false} class="@container gap-0 p-0"
-		style={`width:${panelWidth}px;max-width:100vw;height:100dvh;`}
-		onInteractOutside={(event) => event.preventDefault()}
-		onEscapeKeydown={(event) => { if (event.defaultPrevented) return; event.preventDefault(); cancel(); }}
-		onOpenAutoFocus={focusField} onkeydown={keydown}>
-		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Adjustable separators support keyboard resizing.) -->
-		<div role="separator" tabindex="0" aria-label="Resize new row panel" aria-orientation="vertical"
-			aria-controls={panel?.id} aria-valuemin={Math.min(320, windowWidth)} aria-valuemax={windowWidth} aria-valuenow={panelWidth}
-			aria-valuetext={`${Math.round(panelWidth)} pixels`}
-			class="panel-resize absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none outline-none"
-			onkeydown={resizeKey}
-			title="Drag or use Left/Right, Home/End to resize"
-			onpointerdown={(event) => {
-				if (event.button !== 0 || !event.isPrimary || resize) return;
-				event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-				resize = { x: event.clientX, width: panelWidth, pointerId: event.pointerId };
-			}}
-			onpointermove={(event) => { if (resize?.pointerId === event.pointerId) width = Math.min(windowWidth, Math.max(320, resize.width + resize.x - event.clientX)); }}
-			onpointerup={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
-			onpointercancel={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
-			onlostpointercapture={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}></div>
+<ResizableSheet bind:ref={panel} width={800} label="Resize new row panel" class="@container gap-0 p-0" onOpenChange={(open) => { if (!open) cancel(); }}
+	onEscapeKeydown={(event) => { if (event.defaultPrevented) return; event.preventDefault(); cancel(); }}
+	onOpenAutoFocus={focusField} onkeydown={keydown}>
 		<Sheet.Header class="shrink-0 border-b px-6 py-5">
 			<Sheet.Title class="text-base font-medium">Add new row to <code class="rounded border break-all bg-muted px-1.5 py-0.5 text-sm">{target.name}</code></Sheet.Title>
 			<Sheet.Description class="sr-only">Insert into {target.schema}.{target.name}. Unspecified fields use their database defaults.</Sheet.Description>
@@ -124,8 +94,7 @@
 				{@const value = Object.hasOwn(values, column.name) ? values[column.name] : undefined}
 				{@const readOnly = !writable(column)}
 				{@const richText = column.kind === 'json' || column.kind === 'text'}
-				{@const options = column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? []}
-				{@const optionLabel = (option: string) => column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)'}
+				{@const options = valueOptions(column)}
 				{@const placeholder = value === null ? 'SQL NULL' : value === undefined ? `Default: ${column.defaultValue ?? (column.identity ? 'generated identity' : column.nullable ? 'NULL' : 'none — required')}` : ''}
 				<div class="grid grid-cols-[minmax(0,1fr)] gap-3 @min-[500px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)]">
 					<div class="min-w-0 space-y-2">
@@ -142,9 +111,9 @@
 								value={value == null || !options.includes(value) ? '' : String(options.indexOf(value))}
 								onValueChange={(selected) => { if (selected !== '') change(column.name, options[Number(selected)]); }}>
 								<Select.Trigger id={`${id}-field-${i}`} aria-labelledby={`${id}-label-${i}`} class="w-full">
-									{value == null ? placeholder : options.includes(value) ? optionLabel(value) : value}
+									{value == null ? placeholder : options.includes(value) ? optionLabel(column, value) : value}
 								</Select.Trigger>
-								<Select.Content>{#each options as option, index}<Select.Item value={String(index)} label={optionLabel(option)} />{/each}</Select.Content>
+								<Select.Content>{#each options as option, index}<Select.Item value={String(index)} label={optionLabel(column, option)} />{/each}</Select.Content>
 							</Select.Root>
 						{:else if column.kind === 'json' || column.kind === 'text'}
 							<TextEditor id={`${id}-field-${i}`} language={column.kind} {value} {placeholder} label={column.name} readonly={editor.busy}
@@ -161,14 +130,14 @@
 								<Button variant="ghost" size="xs" disabled={editor.busy} onclick={() => change(column.name, undefined)}>Default</Button>
 								{#if column.nullable}<Button variant="ghost" size="xs" disabled={editor.busy} onclick={() => change(column.name, null)}>NULL</Button>{/if}
 								{#if column.kind === 'text' || column.enumValues?.includes('')}<Button variant="ghost" size="xs" disabled={editor.busy} onclick={() => change(column.name, '')}>Empty text</Button>{/if}
-								{#if /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type)}<Button variant="ghost" size="xs" disabled={editor.busy} onclick={() => change(column.name, 'now')}>Now</Button>{/if}
-								<span class="ml-auto text-[11px] text-muted-foreground" aria-live="polite">{value === null ? 'SQL NULL' : value === undefined ? 'DEFAULT' : value === '' ? 'Empty text' : ''}</span>
+								{#if isTemporal(column)}<Button variant="ghost" size="xs" disabled={editor.busy} onclick={() => change(column.name, 'now')}>Now</Button>{/if}
+								<span class="ml-auto text-[11px] text-muted-foreground" aria-live="polite">{valueState(value)}</span>
 								<Button variant="outline" size="icon-xs" disabled={editor.busy} aria-label={column.foreignKey ? `Choose reference for ${column.name}` : `Expand ${column.name}`}
 									onclick={(event) => nested = { column, anchor: event.currentTarget }}><Maximize2 /></Button>
 							</div>
 						{/if}
 						{#if column.foreignKey}<p class="break-words text-xs text-muted-foreground">References <code>{column.foreignKey.schema}.{column.foreignKey.table} ({column.foreignKey.referencedColumns.join(', ')})</code></p>{/if}
-						{#if value === 'now' && /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type)}<p class="text-xs text-muted-foreground">Resolved by PostgreSQL when you save.</p>{/if}
+						{#if value === 'now' && isTemporal(column)}<p class="text-xs text-muted-foreground">Resolved by PostgreSQL when you save.</p>{/if}
 					</div>
 				</div>
 			{/each}
@@ -188,5 +157,4 @@
 		{#if nested}
 			<CellEditor {row} column={nested.column} anchor={nested.anchor} startExpanded onapply={applyChanges} onclose={() => { const anchor = nested?.anchor; nested = null; void tick().then(() => anchor?.focus()); }} />
 		{/if}
-	</Sheet.Content>
-</Sheet.Root>
+</ResizableSheet>

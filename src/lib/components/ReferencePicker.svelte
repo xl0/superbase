@@ -3,7 +3,7 @@
 	import { Search, ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { tableRows } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { message } from '#lib/utils.js';
+	import { fresh, message } from '#lib/utils.js';
 	import { displayValue } from '#lib/format.js';
 	import type { Column, Row, Values } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -34,13 +34,10 @@
 		error = null;
 		const timer = setTimeout(async () => {
 			try {
-				const result = tableRows(args);
-				await result.refresh();
+				const result = await fresh(tableRows(args));
 				if (cancelled) return;
-				if (result.error) throw result.error;
-				if (!result.current) throw new Error('No response from the database');
-				rows = result.current.rows;
-				hasMore = result.current.hasMore;
+				rows = result.rows;
+				hasMore = result.hasMore;
 			} catch (value) {
 				if (!cancelled) { rows = []; hasMore = false; error = message(value); }
 			} finally { if (!cancelled) loading = false; }
@@ -60,7 +57,7 @@
 		<div role="alert" class="flex items-center gap-2 text-xs text-destructive"><span class="min-w-0 break-words">{error}</span><Button variant="outline" size="xs" onclick={() => retry++}>Retry</Button></div>
 	{/if}
 	{#if disabled}<p class="text-xs text-muted-foreground">Reference selection is unavailable while saving or for read-only fields.</p>{/if}
-	<div class="min-h-0 flex-1 overflow-auto rounded-md border" data-reference-results>
+	<div class="min-h-0 flex-1 overflow-auto rounded-md border">
 		{#if table}
 			<Table.Root containerClass="overflow-visible" class="w-full text-left text-xs">
 				<Table.Caption class="sr-only mt-0">Available records in {foreignKey.schema}.{foreignKey.table}</Table.Caption>

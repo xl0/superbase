@@ -1,9 +1,13 @@
 import type { CellValue, Column } from './types.js';
 
-/** Counts only. Database numeric cells must not pass through Number or locale rounding. */
-export function formatNumber(value: number): string {
-	return value.toLocaleString('en-US');
-}
+export const isTemporal = (column: Column) => /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type);
+/** Fixed choices for boolean ('t'/'f' as PostgreSQL prints them) and enum columns. */
+export const valueOptions = (column: Column) => column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? [];
+export const optionLabel = (column: Column, option: string) =>
+	column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)';
+/** Spells out values that look alike in an input: NULL, DEFAULT and empty text. */
+export const valueState = (value: CellValue | undefined) =>
+	value === null ? 'SQL NULL' : value === undefined ? 'DEFAULT' : value === '' ? 'Empty text' : '';
 
 export function displayValue(value: CellValue | undefined, column: Column): string {
 	if (value === undefined) return 'DEFAULT';

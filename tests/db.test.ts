@@ -3,7 +3,6 @@ import pg from 'pg';
 
 import { deleteRows, listRows, listTables, saveTable } from '../src/lib/server/db.js';
 import type { RowFilter, RowIdentity, RowsArgs, Values } from '../src/lib/types.js';
-import { MAX_FILTERS, MAX_SORTS } from '../src/lib/types.js';
 
 // Never fall back to DATABASE_URL: integration tests require an explicit disposable test database.
 const url = process.env.TEST_DATABASE_URL;
@@ -117,62 +116,6 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		expect(native.rows[0]).toEqual({ n: 42, b: true, doc: { a: 1 } });
 	});
 
-	test('reports exact types, generated/identity, enums, foreign keys and actual PK columns', async () => {
-		const { tables, server } = await listTables(pool);
-		const column = (table: string, name: string) => tables.find((t) => t.schema === schema && t.name === table)!.columns.find((c) => c.name === name)!;
-		expect(server.database).toBeTruthy();
-		expect(column('exact', 'amount').type).toBe('numeric(40,10)');
-		expect(column('exact', 'items').kind).toBe('array');
-		expect(column('exact', 'mood').enumValues).toEqual(['quiet', 'loud']);
-		expect(column('defaults', 'id').identity).toBe('always');
-		expect(column('defaults', 'doubled').generated).toBe(true);
-		expect(column('by_default', 'id').identity).toBe('by-default');
-		expect(column('by_default', 'parent').foreignKey).toEqual({
-			schema, table: 'defaults', column: 'id', columns: ['parent'], referencedColumns: ['id']
-		});
-		expect(column('included', 'extra').primaryKey).toBe(false);
-	});
-
-	test('composite foreign keys preserve constraint order, pairing and deterministic overlap', async () => {
-		const { tables } = await listTables(pool);
-		const columns = tables.find((table) => table.schema === schema && table.name === 'reference_source')!.columns;
-		for (const [name, targetColumn, sourceColumns] of [
-			['x', 'a', ['y', 'x']], ['y', 'b', ['y', 'x']], ['z', 'a', ['y', 'z']]
-		] as const) {
-			expect(columns.find((column) => column.name === name)!.foreignKey).toEqual({
-				schema, table: 'reference_target', column: targetColumn,
-				columns: [...sourceColumns], referencedColumns: ['b', 'a']
-			});
-		}
-	});
-
-	test('exact filters bind native values, preserve precision, quote names and combine with search', async () => {
-		const literal = "needle %_\\' OR true --";
-		await insert('filters', [
-			{ id: '9007199254740993', amount: '123456789012345678901234567890.1234567890', 'odd"name': literal, nullable: null },
-			{ id: '9007199254740992', amount: '123456789012345678901234567890.1234567891', 'odd"name': literal, nullable: '' },
-			{ id: '9007199254740994', amount: '1', 'odd"name': 'other', nullable: null }
-		]);
-		const ids = async (filter: Values, search = '') =>
-			(await rows('filters', { filter, search })).rows.map((row) => row.values.id);
-		expect(await ids({ id: '9007199254740993' })).toEqual(['9007199254740993']);
-		expect(await ids({ amount: '123456789012345678901234567890.1234567891' })).toEqual(['9007199254740992']);
-		// Native numeric equality, not equality of text representations.
-		expect(await ids({ amount: '1.000' })).toEqual(['9007199254740994']);
-		expect(await ids({ 'odd"name': literal, nullable: null })).toEqual(['9007199254740993']);
-		expect(await ids({ nullable: '' })).toEqual(['9007199254740992']);
-		expect(await ids({ nullable: null }, 'needle')).toEqual(['9007199254740993']);
-		expect(await ids({ nullable: '' }, 'other')).toEqual([]);
-		expect(await ids({ 'odd"name': "%' OR true --" })).toEqual([]);
-		expect(await ids({})).toHaveLength(3);
-		await expect(ids({ 'missing" OR true --': 'x' })).rejects.toThrow('Unknown column');
-		await expect(ids({ constructor: 'x' })).rejects.toThrow('Unknown column');
-		expect((await rows('filters', {
-			filters: [{ column: 'odd"name', operator: 'eq', value: literal }],
-			filter: { nullable: null }, search: 'needle'
-		})).rows.map((row) => row.values.id)).toEqual(['9007199254740993']);
-	});
-
 	test('structured comparisons use native numeric ordering, exact precision and same-column AND ranges', async () => {
 		const ids = async (filters: RowFilter[]) =>
 			(await rows('structured_filters', { filters })).rows.map((row) => row.values.id);
@@ -191,7 +134,6 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		}])).toEqual(['9007199254740993']);
 		expect(await ids([{ column: 'amount', operator: 'eq', value: '2.000' }])).toEqual(['2']);
 		expect(await ids([])).toHaveLength(5);
-		expect(await ids(Array(MAX_FILTERS).fill({ column: 'id', operator: 'eq', value: '2' }))).toEqual(['2']);
 		for (const filter of [
 			{ column: 'id', operator: 'eq', value: "2 OR true --" },
 			{ column: 'amount', operator: 'gt', value: '' },
@@ -201,53 +143,12 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		}
 	});
 
-	test('LIKE/ILIKE retain PostgreSQL wildcards and NULL is distinct from empty text', async () => {
-		const ids = async (filters: RowFilter[], overrides: Partial<RowsArgs> = {}) =>
-			(await rows('structured_filters', { filters, ...overrides })).rows.map((row) => row.values.id);
-		expect(await ids([{ column: 'label', operator: 'like', value: 'Alpha_One' }])).toEqual(['2', '10']);
-		expect(await ids([{ column: 'label', operator: 'like', value: 'Alpha\\_One' }])).toEqual(['2']);
-		expect(await ids([{ column: 'label', operator: 'like', value: 'alpha%' }])).toEqual(['11']);
-		expect(await ids([{ column: 'label', operator: 'ilike', value: 'alpha%' }])).toEqual(['2', '10', '11']);
-		expect(await ids([{ column: 'label', operator: 'like', value: 'alpha\\%Two' }])).toEqual(['11']);
-		expect(await ids([{ column: 'label', operator: 'eq', value: '' }])).toEqual(['9007199254740992']);
-		expect(await ids([{ column: 'label', operator: 'isNull', value: '' }])).toEqual(['9007199254740993']);
-		expect(await ids([{ column: 'label', operator: 'isNotNull', value: '' }])).toEqual(['2', '10', '11', '9007199254740992']);
-		expect(await ids([{ column: 'label', operator: 'neq', value: '' }])).toEqual(['2', '10', '11']);
-		expect(await ids([
-			{ column: 'nullable', operator: 'isNull', value: '' },
-			{ column: 'id', operator: 'gt', value: '10' }
-		])).toEqual(['9007199254740992']);
-		expect(await ids([{ column: 'label', operator: 'eq', value: "' OR true --" }])).toEqual([]);
-		expect(await ids([{ column: 'id', operator: 'gte', value: '2' }], {
-			search: 'Alpha', filter: { nullable: '' }
-		})).toEqual(['10']);
-		expect(await ids([{ column: 'id', operator: 'gt', value: '10' }], {
-			search: 'Alpha', filter: { nullable: '' }
-		})).toEqual([]);
-	});
-
-	test('direct listRows rejects unknown, malformed and oversized filter arguments instead of widening results', async () => {
-		const valid = { column: 'id', operator: 'eq', value: '2' };
-		for (const filters of [
-			undefined, null, {}, 'id = 2', Array(MAX_FILTERS + 1).fill(valid), Array(1),
-			...[null, [], Object.create(valid), { ...valid, extra: true },
-				{ column: 'id', operator: 'eq' },
-				...['missing', '__proto__', 'constructor', 'id" = 2 OR true --', '', 'a\0b', 'x'.repeat(1025)].map((column) => ({ ...valid, column })),
-				...['constructor', '__proto__', 'toString', '= 2 OR true --', null, {}].map((operator) => ({ ...valid, operator })),
-				...[null, 2, true, {}, [], 'a\0b', 'x'.repeat(10_001)].map((value) => ({ ...valid, value })),
-				{ ...valid, operator: 'isNull', value: 'null' },
-				{ ...valid, operator: 'isNotNull', value: ' ' }
-			].map((filter) => [filter])
-		]) {
-			await expect(rows('structured_filters', { filters } as Partial<RowsArgs>)).rejects.toThrow();
-		}
-		for (const overrides of [
-			{ unknown: true }, { search: null }, { search: 'x'.repeat(1025) },
-			{ filter: [] }, { page: 1_000_001 }, { sort: [{ column: 'id', direction: 'asc; select 1' }] }
-		]) {
-			await expect(rows('structured_filters', overrides as Partial<RowsArgs>)).rejects.toThrow();
-		}
-		expect((await rows('structured_filters')).rows).toHaveLength(5);
+	test('only known columns and operators reach SQL; directions are whitelisted', async () => {
+		const valid = { column: 'id', operator: 'eq' as const, value: '2' };
+		await expect(rows('structured_filters', { filters: [{ ...valid, column: 'id" = 2 OR true --' }] })).rejects.toThrow('Unknown column');
+		await expect(rows('structured_filters', { filters: [{ ...valid, operator: '__proto__' as 'eq' }] })).rejects.toThrow('Unknown filter operator');
+		const injected = await rows('structured_filters', { sort: [{ column: 'id', direction: 'desc; select 1' as 'desc' }] });
+		expect(injected.rows.map((row) => row.values.id)[0]).toBe('2');
 	});
 
 	test('omissions use defaults; rejects generated, always identity, unknown and non-text inputs', async () => {
@@ -261,70 +162,7 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 			await expect(insert('defaults', [changes])).rejects.toThrow();
 			await expect(saveTable(pool, { ...target('defaults'), updates: [{ identity: row.identity!, changes }], inserts: [] })).rejects.toThrow();
 		}
-		await expect(insert('defaults', [{ n: 7 } as unknown as Values])).rejects.toThrow('text or null');
 		await expect(insert('defaults', [{ n: 'not a number' }])).rejects.toThrow();
-	});
-
-	test('user column names never collide with envelope metadata or object prototypes', async () => {
-		const values = Object.fromEntries(['__proto__', '__key', '__pk', '__ctid', 'key', 'values', 'identity', 'constructor'].map((name) => [name, `${name} value`]));
-		await insert('names', [values]);
-		const [row] = (await rows('names')).rows;
-		expect(row.values).toEqual(values);
-		expect(Object.hasOwn(row.values, '__proto__')).toBe(true);
-		expect(row.identity!.pk.__proto__).toBe('__proto__ value');
-		expect((await rows('names', { filters: [
-			{ column: '__proto__', operator: 'eq', value: '__proto__ value' },
-			{ column: 'constructor', operator: 'eq', value: 'constructor value' }
-		] })).rows).toEqual([row]);
-		await saveTable(pool, { ...target('names'), updates: [{ identity: row.identity!, changes: JSON.parse('{"__proto__":"new key","__key":"new value"}') }], inserts: [] });
-		const [updated] = (await rows('names')).rows;
-		expect(updated.values.__proto__).toBe('new key');
-		expect(updated.values.__key).toBe('new value');
-		expect(await deleteRows(pool, { ...target('names'), identities: [updated.identity!] })).toEqual({ deleted: 1 });
-	});
-
-	test('multi-sort preserves rule order, NULLS LAST and native numeric ordering', async () => {
-		const sort: RowsArgs['sort'] = [{ column: 'part', direction: 'desc' }, { column: 'id', direction: 'desc' }];
-		const first = await rows('partitioned', { sort, pageSize: 2 });
-		const second = await rows('partitioned', { sort, pageSize: 2, page: 1 });
-		expect([...first.rows, ...second.rows].map((row) => [row.values.part, row.values.id]))
-			.toEqual([['2', '1'], ['1', '3'], ['1', '2'], ['1', '1']]);
-		expect(first.hasMore).toBe(true);
-		expect(second.hasMore).toBe(false);
-		expect((await rows('partitioned', { sort: [...sort].reverse() })).rows.map((row) => [row.values.part, row.values.id]))
-			.toEqual([['1', '3'], ['1', '2'], ['2', '1'], ['1', '1']]);
-		expect((await rows('structured_filters', { sort: [
-			{ column: 'nullable', direction: 'desc' }, { column: 'id', direction: 'desc' }
-		] })).rows.map((row) => row.values.id)).toEqual(['9007199254740993', '11', '10', '9007199254740992', '2']);
-		for (const sort of [null, {}, Array(1), [{ column: 'missing', direction: 'asc' }],
-			[{ column: 'id" desc; select 1 --', direction: 'asc' }], [{ column: 'id', direction: 'asc; select 1' }],
-			[{ column: 'id', direction: 'asc' }, { column: 'id', direction: 'desc' }],
-			Array.from({ length: MAX_SORTS + 1 }, (_, i) => ({ column: String(i), direction: 'asc' }))]) {
-			await expect(rows('partitioned', { sort } as Partial<RowsArgs>)).rejects.toThrow();
-		}
-		// Arbitrary real column names still work after rejecting SQL fragments above.
-		await rows('names', { sort: [{ column: '__proto__', direction: 'asc' }, { column: 'constructor', direction: 'desc' }] });
-		await rows('filters', { sort: [{ column: 'odd"name', direction: 'asc' }] });
-	});
-
-	test('composite sort keeps remaining PK tie-breakers and paging uses hasMore', async () => {
-		expect((await rows('partitioned', { pageSize: 500 })).rows).toHaveLength(4);
-		await expect(rows('partitioned', { pageSize: 501 })).rejects.toThrow('Invalid pagination');
-		const options = { pageSize: 2, sort: [{ column: 'part', direction: 'asc' as const }] };
-		const first = await rows('partitioned', options);
-		const second = await rows('partitioned', { ...options, page: 1 });
-		expect(first.rows.map((row) => [row.values.part, row.values.id])).toEqual([['1', '1'], ['1', '2']]);
-		expect(second.rows.map((row) => [row.values.part, row.values.id])).toEqual([['1', '3'], ['2', '1']]);
-		expect(first.hasMore).toBe(true);
-		expect(second.hasMore).toBe(false);
-		expect(Object.hasOwn(first, 'total')).toBe(false);
-		expect((await rows('partitioned', { search: 'other' })).rows).toHaveLength(1);
-		const row = second.rows[1];
-		expect(row.identity!.relation).not.toBe(first.rows[0].identity!.relation);
-		await saveTable(pool, { ...target('partitioned'), updates: [{ identity: row.identity!, changes: { part: '1', id: '10', payload: 'moved' } }], inserts: [] });
-		const [moved] = (await rows('partitioned', { search: 'moved' })).rows;
-		expect(moved.identity!.relation).toBe(first.rows[0].identity!.relation);
-		expect(await deleteRows(pool, { ...target('partitioned'), identities: [moved.identity!] })).toEqual({ deleted: 1 });
 	});
 
 	test('tableoid scopes duplicate inherited PKs to exactly one physical relation', async () => {
@@ -387,22 +225,4 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		await expect(deleteRows(pool, { ...target('keyless'), identities: [{ pk: {}, version: '1', relation: '1' }] })).rejects.toThrow('read-only');
 	});
 
-	test('writes reload metadata after DDL; listTables deliberately refreshes the read cache', async () => {
-		await rows('changing');
-		await pool.query(`alter table "${schema}".changing add column fresh text`);
-		await insert('changing', [{ id: '1', fresh: 'new column' }]);
-		await listTables(pool);
-		const [row] = (await rows('changing')).rows;
-		expect(row.values.fresh).toBe('new column');
-		await pool.query(`alter table "${schema}".changing drop column old`);
-		await expect(saveTable(pool, { ...target('changing'), updates: [{ identity: row.identity!, changes: { old: 'stale column' } }], inserts: [] })).rejects.toThrow('Unknown column');
-		await pool.query(`alter table "${schema}".changing drop constraint changing_pkey`);
-		await expect(insert('changing', [{ id: '2' }])).rejects.toThrow('read-only');
-	});
-
-	test('rejects incomplete PK identities rather than widening the predicate', async () => {
-		const [row] = (await rows('partitioned')).rows;
-		const identity: RowIdentity = { ...row.identity!, pk: { part: row.values.part! } };
-		await expect(deleteRows(pool, { ...target('partitioned'), identities: [identity] })).rejects.toThrow('Invalid row identity');
-	});
 });

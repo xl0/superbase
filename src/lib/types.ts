@@ -49,18 +49,9 @@ export interface Row {
 	draft?: boolean;
 }
 
-export interface ServerInfo {
-	version: string;
-	database: string;
-	user: string;
-	host: string | null;
-	port: number | null;
-}
-
-/** id is a public generation, NOT the HttpOnly session bearer token. */
+/** id is a generation: it changes whenever the server switches databases. */
 export interface ConnectionInfo {
 	id: string;
-	source: 'session' | 'env';
 	host: string;
 	port: string;
 	database: string;
@@ -69,9 +60,8 @@ export interface ConnectionInfo {
 
 export interface ConnectionStatus {
 	connection: ConnectionInfo | null;
-	defaultAvailable: boolean;
-	expired: boolean;
-	error?: string;
+	/** Pinned to DATABASE_URL: no connection switching. */
+	locked: boolean;
 }
 
 /** Ordered, unique column rules; PostgreSQL applies each with NULLS LAST. */
@@ -79,7 +69,6 @@ export interface Sort {
 	column: string;
 	direction: 'asc' | 'desc';
 }
-export const MAX_SORTS = 20;
 
 export interface TableTarget {
 	connection: string;
@@ -107,15 +96,14 @@ export interface RowFilter {
 	operator: FilterOperator;
 	value: string;
 }
-export const MAX_FILTERS = 20;
 
 /** Shared selection/order for paginated reads and unpaginated CSV exports. */
 export interface RowQuery {
 	sort: Sort[];
-	/** Broad text search remains available to the reference picker. */
-	search: string;
-	/** Exact foreign-key navigation constraints, combined with user filters using AND. */
-	filter?: Values;
+	/** Broad text search across all columns (reference picker). */
+	search?: string;
+	/** Exact match on a referenced record (foreign-key navigation), ANDed with `filters`. */
+	reference?: Values;
 	filters?: RowFilter[];
 }
 

@@ -11,7 +11,7 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
-	import { MAX_SORTS, writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
+	import { tableKey, writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
 	let { table, rows, rowOffset, onedit }: {
 		table: Table; rows: Row[]; rowOffset: number;
@@ -29,17 +29,17 @@
 	let editing = $state<Edit | null>(null);
 
 	let resizeCleanup: (() => void) | undefined;
-	let widths = $state<{ current: Record<string, number> }>({ current: {} });
-	try {
-		widths = new PersistedState<Record<string, number>>(
-			untrack(() => `superbase:widths:${editor.connection}:${JSON.stringify([table.schema, table.name])}`), {}
-		);
-	} catch (error) {
-		// Column sizes are optional; denied storage must not disable editing or resizing.
-		if (!(error instanceof DOMException && error.name === 'SecurityError')) throw error;
-	}
-	const width = (column: Column) => Object.hasOwn(widths.current, column.name) && Number.isFinite(widths.current[column.name])
-		? Math.max(64, widths.current[column.name]) : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
+	const widths = new PersistedState<Record<string, number>>(untrack(() => `superbase:widths:${tableKey(table.schema, table.name)}`), {});
+	const width = (column: Column) => Object.hasOwn(widths.current, column.name)
+		? widths.current[column.name] : column.kind === 'number' || column.kind === 'boolean' ? 120 : 230;
+	const columnTitle = (column: Column) => [
+		`${column.name} · ${column.type} — click to sort`,
+		column.nullable ? 'Nullable' : 'NOT NULL',
+		column.identity ? `Identity (${column.identity})` : column.generated ? `Generated: ${column.defaultValue}` : `Default: ${column.defaultValue ?? 'none'}`,
+		column.comment,
+		column.enumValues && `Values: ${column.enumValues.join(', ')}`,
+		column.foreignKey && `References ${column.foreignKey.schema}.${column.foreignKey.table} (${column.foreignKey.referencedColumns.join(', ')})`
+	].filter(Boolean).join('\n');
 	const template = $derived(`${GUTTER}px ${table.columns.map((column) => `${width(column)}px`).join(' ')} 44px`);
 	const disabled = $derived(editor.busy || editor.loading);
 	const allSelected = $derived(rows.length > 0 && rows.every((row) => editor.isRowSelected(row.key)));
@@ -89,12 +89,6 @@
 	async function clearSelection() {
 		const box = bounds();
 		if (disabled || !editor.tableEditable || !box) return;
-		// Validate the entire operation before changing any cell.
-		for (let c = box.c1; c <= box.c2; c++) {
-			if (!writable(table.columns[c]) || !table.columns[c].nullable) {
-				editor.error = 'Only writable, nullable columns can be set to NULL'; return;
-			}
-		}
 		try {
 			await editor.updateRows(rows.slice(box.r1, box.r2 + 1).map((row) => ({
 				row, values: Object.fromEntries(table.columns.slice(box.c1, box.c2 + 1).map((column) => [column.name, null]))
@@ -146,11 +140,7 @@
 			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {
 				const row = rows[focus.r + r], column = table.columns[focus.c + c], value = pasted[r][c];
 				if (!row || !column) throw new Error('Clipboard data extends beyond the loaded grid');
-				if (!writable(column)) throw new Error(`${column.name} is generated and cannot be edited`);
-				if (value === undefined) throw new Error('DEFAULT is only available in the new-row form');
-				if (value === null && !column.nullable) throw new Error(`${column.name} does not allow NULL`);
-				if (!changes[r]) changes[r] = { row, values: {} };
-				changes[r].values = { ...changes[r].values, [column.name]: value };
+				(changes[r] ??= { row, values: {} }).values[column.name] = value;
 			}
 			await editor.updateRows(changes);
 		} catch (error) { editor.error = message(error); }
@@ -210,12 +200,9 @@
 					{@const sortIndex = editor.sort.findIndex((rule) => rule.column === column.name)}
 					{@const sort = editor.sort[sortIndex]}
 					<div class="header-cell flex items-center" role="columnheader" aria-sort={sortIndex === 0 ? sort.direction === 'asc' ? 'ascending' : 'descending' : undefined}>
-						<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={editor.navigationBlocked || editor.loading || (!sort && editor.sort.length >= MAX_SORTS)}
+						<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs focus-visible:outline-1 focus-visible:outline-ring" disabled={editor.navigationBlocked || editor.loading}
 							aria-label={sort ? `${column.name} ${column.type}, sort priority ${sortIndex + 1}, ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}
-							onclick={() => editor.toggleSort(column.name)} title={[`${column.name} · ${column.type} — sort`, column.nullable ? 'Nullable' : 'NOT NULL',
-								column.identity ? `Identity (${column.identity})` : column.generated ? `Generated: ${column.defaultValue}` : `Default: ${column.defaultValue ?? 'none'}`,
-								column.comment, column.enumValues ? `Values: ${column.enumValues.map((value) => JSON.stringify(value)).join(', ')}` : null,
-								column.foreignKey ? `References ${column.foreignKey.schema}.${column.foreignKey.table} (${column.foreignKey.referencedColumns.join(', ')})` : null].filter(Boolean).join('\n')}>
+							onclick={() => editor.toggleSort(column.name)} title={columnTitle(column)}>
 							{#if column.primaryKey}<KeyRound class="size-3 shrink-0 text-muted-foreground" />{:else if column.foreignKey}<Link2 class="size-3 shrink-0 text-muted-foreground" />{/if}
 							<span class="truncate font-semibold">{column.name}</span><span class="truncate text-muted-foreground">{column.type}</span>
 							{#if sort}
@@ -252,7 +239,7 @@
 						{@const active = focus?.r === r && focus?.c === c}
 						{@const selected = !!selection && r >= selection.r1 && r <= selection.r2 && c >= selection.c1 && c <= selection.c2}
 						<div id={`${id}-${r}-${c}`} class="cell" class:focused={active} class:selected role="gridcell" tabindex="-1" aria-colindex={c + 2}
-							aria-selected={selected} aria-readonly={!editor.tableEditable || !writable(column)} data-cell={`${r}:${c}`}
+							aria-selected={selected} aria-readonly={!editor.tableEditable || !writable(column)}
 							onmousedown={(event) => { if (event.button !== 0) return; event.preventDefault(); viewport.focus(); setFocus(r, c, event.shiftKey); }}
 							ondblclick={() => startEdit(r, c)}>
 							{#if column.foreignKey}

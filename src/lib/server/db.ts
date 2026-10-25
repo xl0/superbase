@@ -2,21 +2,13 @@ import pg from 'pg';
 
 import type {
 	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowQuery, RowsArgs, RowsPage,
-	SaveArgs, ServerInfo, Table, Values
+	SaveArgs, Table, Values
 } from '../types.js';
 import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
-import { rowsSchema } from '../validation.js';
+import { ident, qualify } from '../ddl.js';
 
-export function ident(name: string): string {
-	if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) {
-		throw new Error('Invalid identifier');
-	}
-	return `"${name.replaceAll('"', '""')}"`;
-}
-
-export function qualify(schema: string, table: string): string {
-	return `${ident(schema)}.${ident(table)}`;
-}
+/** Per-query parser: every value stays PostgreSQL's exact text output (numeric, JSON, arrays…). */
+export const textTypes = { getTypeParser: () => (value: string) => value };
 
 const NUMBER_TYPES = new Set(['int2', 'int4', 'int8', 'float4', 'float8', 'numeric', 'money', 'oid']);
 const TIMESTAMP_TYPES = new Set(['date', 'timestamp', 'timestamptz', 'time', 'timetz', 'interval']);
@@ -71,7 +63,7 @@ export async function loadMetadata(
 		and n.nspname !~ '^pg_(toast_)?temp_' ${scope}`;
 	const tables = await db.query<TableRow>(
 			`select c.oid::text as id, n.nspname as schema, c.relname as name,
-			        greatest(c.reltuples, 0) as row_count
+			        c.reltuples as row_count
 			 from pg_class c
 			 join pg_namespace n on n.oid = c.relnamespace
 			 where ${visible}
@@ -150,7 +142,7 @@ export async function loadMetadata(
 		schema: table.schema,
 		name: table.name,
 		columns: columnsByTable.get(table.id) ?? [],
-		rowCount: Math.max(0, Math.round(Number(table.row_count)))
+		rowCount: Math.round(Number(table.row_count))
 	}));
 }
 
@@ -183,77 +175,54 @@ function primaryKey(table: Table): string[] {
 	return table.columns.filter((column) => column.primaryKey).map((column) => column.name);
 }
 
-export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; server: ServerInfo }> {
-	const [tables, info] = await Promise.all([
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string }> {
+	const [tables, version] = await Promise.all([
 		cachedTables(pool, true),
-		pool.query<ServerInfo>(
-			`select version() as version, current_database() as database,
-			        current_user as "user", inet_server_addr()::text as host,
-			        inet_server_port() as port`
-		)
+		pool.query<{ version: string }>("select current_setting('server_version') as version")
 	]);
-	const server = info.rows[0];
-	return {
-		tables: [...tables.values()],
-		server: { ...server, version: /^PostgreSQL (\S+)/.exec(server.version)?.[1] ?? server.version }
-	};
+	return { tables: [...tables.values()], version: version.rows[0].version };
 }
 
-/** Validated grid query to bound WHERE/order clauses; callers select/paginate independently. */
+/** Parameterized WHERE and deterministic ORDER BY shared by grid pages and CSV exports. */
 export function rowSelection(table: Table, args: RowQuery) {
-	if (args.sort.some((rule) => !table.columns.some((column) => column.name === rule.column))) throw new Error('Invalid sort column');
-	const pkColumns = primaryKey(table);
-	const search = table.columns.length ? args.search.trim() : '';
-	const values: (string | number)[] = search ? [`%${search}%`] : [];
-	const clauses = search
-		? [`(${table.columns.map((column) => `t.${ident(column.name)}::text ilike $1`).join(' or ')})`]
-		: [];
-	for (const [name, value] of Object.entries(args.filter ?? {})) {
+	const column = (name: string) => {
 		if (!table.columns.some((column) => column.name === name)) throw new Error(`Unknown column: ${name}`);
-		if (value !== null && typeof value !== 'string') throw new Error(`Expected PostgreSQL text or null for ${name}`);
-		if (value === null) clauses.push(`t.${ident(name)} is null`);
-		else {
-			values.push(value);
-			clauses.push(`t.${ident(name)} = $${values.length}`);
-		}
+		return `t.${ident(name)}`;
+	};
+	const search = table.columns.length ? args.search?.trim() ?? '' : '';
+	const values: (string | number)[] = search ? [`%${search}%`] : [];
+	const clauses = search ? [`(${table.columns.map((c) => `${column(c.name)}::text ilike $1`).join(' or ')})`] : [];
+	for (const [name, value] of Object.entries(args.reference ?? {})) {
+		if (value === null) clauses.push(`${column(name)} is null`);
+		else clauses.push(`${column(name)} = $${values.push(value)}`);
 	}
-	for (const { column, operator, value } of args.filters ?? []) {
-		if (!table.columns.some((entry) => entry.name === column)) throw new Error(`Unknown column: ${column}`);
+	for (const { column: name, operator, value } of args.filters ?? []) {
+		if (!Object.hasOwn(FILTER_OPERATORS, operator)) throw new Error(`Unknown filter operator: ${operator}`);
 		const { sql, needsValue } = FILTER_OPERATORS[operator];
-		if (needsValue) values.push(value);
-		clauses.push(`t.${ident(column)} ${sql}${needsValue ? ` $${values.length}` : ''}`);
+		clauses.push(`${column(name)} ${sql}${needsValue ? ` $${values.push(value)}` : ''}`);
 	}
-	const filter = clauses.length ? `where ${clauses.join(' and ')}` : '';
-	const order = args.sort.map(({ column, direction }) => `t.${ident(column)} ${direction} nulls last`);
-	for (const column of pkColumns) {
-		if (!args.sort.some((rule) => rule.column === column)) order.push(`t.${ident(column)} asc`);
+	const order = args.sort.map(({ column: name, direction }) => `${column(name)} ${direction === 'desc' ? 'desc' : 'asc'} nulls last`);
+	for (const name of primaryKey(table)) {
+		if (!args.sort.some((rule) => rule.column === name)) order.push(`${column(name)} asc`);
 	}
 	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only.
 	order.push('t.tableoid asc', 't.ctid asc');
-	return { filter, order: order.join(', '), values };
+	return { where: clauses.length ? `where ${clauses.join(' and ')}` : '', order: order.join(', '), values };
 }
 
 export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
-	if (!Number.isSafeInteger(args.page) || args.page < 0 ||
-		!Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 500 ||
-		!Number.isSafeInteger(args.page * args.pageSize)) throw new Error('Invalid pagination');
-	// Direct callers must cross the same validation boundary as remote requests.
-	const validated = rowsSchema['~standard'].validate(args);
-	if ('issues' in validated) throw new Error(validated.issues[0].message);
-	args = validated.value;
 	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
 	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
 	const pkColumns = primaryKey(table);
-	const { filter, order, values } = rowSelection(table, args);
+	const { where, order, values } = rowSelection(table, args);
 	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
 	selected.push('t.xmin', 't.tableoid', 't.ctid');
 	const result = await pool.query<(string | null)[]>({
 		text: `select ${selected.join(', ')} from ${qualify(args.schema, args.table)} t
-			${filter} order by ${order} limit $${values.length + 1} offset $${values.length + 2}`,
+			${where} order by ${order} limit $${values.length + 1} offset $${values.length + 2}`,
 		values: [...values, args.pageSize + 1, args.page * args.pageSize],
 		rowMode: 'array',
-		// Per-query parsing preserves PostgreSQL's text output even for JSON, numeric and arrays.
-		types: { getTypeParser: () => (value: string) => value }
+		types: textTypes
 	});
 	const rows: Row[] = result.rows.slice(0, args.pageSize).map((cells) => {
 		const values: Values = Object.fromEntries(table.columns.map((column, i) => [column.name, cells[i]]));
@@ -272,32 +241,19 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 }
 
 function entriesForWrite(table: Table, values: Values): [string, string | null][] {
-	if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('Invalid row values');
-	const columns = new Map(table.columns.map((column) => [column.name, column]));
 	const entries = Object.entries(values);
-	for (const [name, value] of entries) {
-		const column = columns.get(name);
+	for (const [name] of entries) {
+		const column = table.columns.find((column) => column.name === name);
 		if (!column) throw new Error(`Unknown column: ${name}`);
 		if (!writable(column)) throw new Error(`Column is not writable: ${name}`);
-		if (value !== null && typeof value !== 'string') throw new Error(`Expected PostgreSQL text or null for ${name}`);
 	}
 	return entries;
 }
 
+/** Match the loaded row version exactly: primary key, physical table (inheritance) and xmin. */
 function identityWhere(identity: RowIdentity, pkColumns: string[], values: (string | null)[]): string {
-	if (!identity || !identity.pk || typeof identity.pk !== 'object' || Array.isArray(identity.pk) ||
-		Object.keys(identity.pk).length !== pkColumns.length ||
-		pkColumns.some((name) => !Object.hasOwn(identity.pk, name) || typeof identity.pk[name] !== 'string') ||
-		typeof identity.version !== 'string' || !/^\d+$/.test(identity.version) ||
-		typeof identity.relation !== 'string' || !/^\d+$/.test(identity.relation)) {
-		throw new Error('Invalid row identity; reload the table');
-	}
-	const clauses = pkColumns.map((name) => {
-		values.push(identity.pk[name]);
-		return `${ident(name)} = $${values.length}`;
-	});
-	values.push(identity.relation, identity.version);
-	clauses.push(`tableoid = $${values.length - 1}::oid`, `xmin = $${values.length}::xid`);
+	const clauses = pkColumns.map((name) => `${ident(name)} = $${values.push(identity.pk[name])}`);
+	clauses.push(`tableoid = $${values.push(identity.relation)}::oid`, `xmin = $${values.push(identity.version)}::xid`);
 	return clauses.join(' and ');
 }
 

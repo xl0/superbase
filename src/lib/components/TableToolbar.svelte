@@ -19,9 +19,9 @@
 
 	function exportRows(options: boolean, anchor: HTMLElement) {
 		onedit({ kind: 'exportCsv', options, query: {
-			search: '', sort: editor.sort.map((rule) => ({ ...rule })),
+			sort: editor.sort.map((rule) => ({ ...rule })),
 			filters: editor.filters.map((filter) => ({ ...filter })),
-			...(editor.filter ? { filter: { ...editor.filter } } : {})
+			...(editor.reference ? { reference: { ...editor.reference } } : {})
 		} }, anchor);
 	}
 
@@ -76,10 +76,10 @@
 				<Button bind:ref={refreshButton} variant="outline" size="icon-sm" disabled={blocked} aria-label="Refresh database" onclick={() => void editor.reload()}><RotateCw /></Button>
 			</div>
 		</div>
-		{#if editor.filter}
+		{#if editor.reference}
 			<div class="flex items-center gap-2 border-t px-3 py-2 text-xs">
 				<span class="shrink-0 text-muted-foreground">Referenced record:</span>
-				<span class="min-w-0 truncate font-mono">{Object.entries(editor.filter).map(([name, value]) => `${name} = ${value ?? 'NULL'}`).join(' · ')}</span>
+				<span class="min-w-0 truncate font-mono">{Object.entries(editor.reference).map(([name, value]) => `${name} = ${value ?? 'NULL'}`).join(' · ')}</span>
 				<Button variant="outline" size="xs" class="ml-auto shrink-0" disabled={blocked} onclick={() => void editor.clearFilters()}>Show all rows</Button>
 			</div>
 		{/if}

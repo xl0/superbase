@@ -3,7 +3,7 @@
 	import type { ConnectionStatus } from '#lib/types.js';
 	import ConnectionDialog from './ConnectionDialog.svelte';
 
-	let { status, restoreError = '' }: { status: ConnectionStatus; restoreError?: string } = $props();
+	let { status }: { status: ConnectionStatus } = $props();
 </script>
 
 <main class="grid min-h-dvh place-items-center bg-background p-6 text-foreground">
@@ -13,23 +13,7 @@
 			<span class="text-sm font-semibold tracking-tight">superbase</span>
 		</div>
 		<h1 class="text-xl font-semibold tracking-tight">Connect to Postgres</h1>
-		<p class="mt-2 mb-5 text-xs leading-relaxed text-muted-foreground">
-			Choose a saved connection or add a Postgres URL.
-		</p>
-		{#if restoreError}
-			<p role="alert" class="mb-4 rounded-md border border-destructive/30 p-3 text-xs text-destructive">{restoreError}</p>
-		{/if}
-		{#if status.error}
-			<p role="alert" class="mb-4 rounded-md border border-destructive/30 p-3 text-xs text-destructive">{status.error}</p>
-		{/if}
-		{#if status.expired}
-			<p role="alert" class="mb-4 rounded-md border border-border bg-muted p-3 text-xs">
-				Your database session expired. Reconnect to continue.
-			</p>
-		{/if}
+		<p class="mt-2 mb-5 text-xs leading-relaxed text-muted-foreground">Choose a saved connection or add a Postgres URL.</p>
 		<ConnectionDialog {status} />
-		<p class="mt-5 text-xs leading-relaxed text-muted-foreground">
-			Set <code class="text-foreground">DATABASE_URL</code> for an optional default.
-		</p>
 	</div>
 </main>

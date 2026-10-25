@@ -1,18 +1,18 @@
 import { database, deleteRows, saveTable, tableRows, changeSchema } from '#lib/db.remote.js';
-import { message } from '#lib/utils.js';
-import type { SchemaChangeArgs } from '#lib/schema.js';
-import { editable, tableKey, writable, MAX_SORTS, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type ServerInfo, type Sort, type Table, type Values } from '#lib/types.js';
+import { fresh, message } from '#lib/utils.js';
+import type { SchemaChange } from '#lib/schema.js';
+import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
 
-// Svelte's snapshot drops __proto__ keys; PK column names must survive capture exactly.
+// Plain copies: identities are kept in $state and sent to the server later.
 const copyIdentity = (identity: RowIdentity): RowIdentity => ({ ...identity, pk: { ...identity.pk } });
 
 /** One browser workspace. Mutations capture row identities, never page indexes. */
 export class EditorState {
 	connection = $state('');
 	tables = $state<Table[]>([]);
-	server = $state<ServerInfo | null>(null);
+	version = $state('');
 	ready = $state(false);
 	activeSchema = $state('');
 	activeTableName = $state('');
@@ -22,7 +22,8 @@ export class EditorState {
 	pageSize = $state(100);
 	sort = $state<Sort[]>([]);
 	filters = $state<RowFilter[]>([]);
-	filter = $state<Values | null>(null);
+	/** Exact referenced-record match from FK navigation; separate from user `filters`. */
+	reference = $state<Values | null>(null);
 	rows = $state<Row[]>([]);
 	hasMore = $state(false);
 	loading = $state(false);
@@ -49,21 +50,10 @@ export class EditorState {
 	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
 	get navigationBlocked() { return this.busy || this.editing || this.inserting || this.schemaEditing; }
-	get hasFilters() { return this.filters.length > 0 || this.filter !== null; }
+	get hasFilters() { return this.filters.length > 0 || this.reference !== null; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
 
 	async initialize(connection: string) {
-		if (this.connection === connection && this.ready) return;
-		if (this.connection && this.connection !== connection) {
-			if (this.navigationBlocked) {
-				this.error = 'Connection changed. Reconnect or reload to discard local changes; they will not be sent to another database.';
-				return;
-			}
-			this.discardAll();
-			this.tables = [];
-			this.activeSchema = this.activeTableName = '';
-			this.ready = false;
-		}
 		this.connection = connection;
 		await this.reload();
 	}
@@ -81,21 +71,19 @@ export class EditorState {
 		this.liveError = null;
 		this.externalChange = false;
 		try {
-			const resource = database({ connection: this.connection });
-			await resource.refresh();
+			const result = await fresh(database({ connection: this.connection }));
 			if (request !== this.#request) return;
-			if (resource.error) throw resource.error;
-			if (!resource.current) throw new Error('No response from the database');
-			this.tables = resource.current.tables;
-			this.server = resource.current.server;
+			this.tables = result.tables;
+			this.version = result.version;
 			this.ready = true;
 			if (this.table === EMPTY_TABLE) {
-				const first = this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
+				const first = this.tables.find((table) => table.schema === this.activeSchema)
+					?? this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
 				this.activeSchema = first?.schema ?? '';
 				this.activeTableName = first?.name ?? '';
 				this.sort = [];
 				this.filters = [];
-				this.filter = null;
+				this.reference = null;
 			}
 			this.page = 0;
 			await this.fetch();
@@ -119,16 +107,8 @@ export class EditorState {
 		if (!this.activeTableName) { this.loading = false; return; }
 		this.loading = true;
 		try {
-			const resource = tableRows({
-				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-				page: this.page, pageSize: this.pageSize, sort: this.sort, search: '', filters: this.filters,
-				...(this.filter ? { filter: this.filter } : {})
-			});
-			await resource.refresh();
+			const result = await this.#readRows();
 			if (request !== this.#request) return;
-			if (resource.error) throw resource.error;
-			const result = resource.current;
-			if (!result) throw new Error('No response from the database');
 			if (!result.rows.length && this.page > 0) {
 				this.page = 0;
 				return this.fetch();
@@ -147,6 +127,14 @@ export class EditorState {
 		}
 	}
 
+	#readRows() {
+		return fresh(tableRows({
+			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
+			page: this.page, pageSize: this.pageSize, sort: this.sort, filters: this.filters,
+			...(this.reference ? { reference: this.reference } : {})
+		}));
+	}
+
 	setLive(enabled: boolean) {
 		this.live = enabled;
 		this.#liveGeneration++;
@@ -155,23 +143,15 @@ export class EditorState {
 
 	async poll(isActive: () => boolean = () => true) {
 		const eligible = () => this.live && this.ready && !!this.activeTableName &&
-			!this.loading && !this.busy && !this.schemaEditing && !this.error && isActive();
+			!this.loading && !this.busy && !this.schemaEditing && isActive();
 		if (this.polling || !eligible()) return;
 		const request = this.#request;
 		const generation = this.#liveGeneration;
 		const current = () => request === this.#request && generation === this.#liveGeneration && eligible();
 		this.polling = true;
 		try {
-			const resource = tableRows({
-				connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-				page: this.page, pageSize: this.pageSize, sort: this.sort, search: '', filters: this.filters,
-				...(this.filter ? { filter: this.filter } : {})
-			});
-			await resource.refresh();
+			const result = await this.#readRows();
 			if (!current()) return;
-			if (resource.error) throw resource.error;
-			const result = resource.current;
-			if (!result) throw new Error('No response from the database');
 			this.liveError = null;
 			if (JSON.stringify(result.rows) === JSON.stringify(this.rows) && result.hasMore === this.hasMore) {
 				this.externalChange = false;
@@ -185,6 +165,7 @@ export class EditorState {
 			this.rowsPage = this.page;
 			this.hasMore = result.hasMore;
 			this.externalChange = false;
+			this.error = null; // Fresh rows supersede an earlier read or action error.
 		} catch (error) {
 			if (current()) this.liveError = message(error);
 		} finally {
@@ -192,21 +173,21 @@ export class EditorState {
 		}
 	}
 
-	async selectTable(schema: string, name: string, filter: Values | null = null) {
-		if (this.navigationBlocked || (!filter && !this.filter && schema === this.activeSchema && name === this.activeTableName)) return;
+	async selectTable(schema: string, name: string, reference: Values | null = null) {
+		if (this.navigationBlocked || (!reference && !this.reference && schema === this.activeSchema && name === this.activeTableName)) return;
 		this.activeSchema = schema;
 		this.activeTableName = name;
 		this.page = 0;
 		this.sort = [];
 		this.filters = [];
-		this.filter = filter;
+		this.reference = reference;
 		this.savedAt = null;
 		await this.fetch();
 	}
 	async clearFilters() {
 		if (this.navigationBlocked) return;
 		this.filters = [];
-		this.filter = null;
+		this.reference = null;
 		this.page = 0;
 		await this.fetch();
 	}
@@ -224,12 +205,12 @@ export class EditorState {
 		if (first) await this.selectTable(schema, first.name);
 	}
 	async setPage(page: number) {
-		if (this.navigationBlocked || this.loading || page < 0 || !Number.isSafeInteger(page) || (page > this.page && !this.hasMore)) return;
+		if (this.navigationBlocked || this.loading || page < 0 || (page > this.page && !this.hasMore)) return;
 		this.page = page;
 		await this.fetch();
 	}
 	async setPageSize(size: number) {
-		if (this.navigationBlocked || ![100, 250, 500].includes(size)) return;
+		if (this.navigationBlocked) return;
 		this.pageSize = size;
 		this.page = 0;
 		await this.fetch();
@@ -244,10 +225,8 @@ export class EditorState {
 		if (this.navigationBlocked) return;
 		const sort = [...this.sort];
 		const index = sort.findIndex((rule) => rule.column === column);
-		if (index < 0) {
-			if (sort.length >= MAX_SORTS) return;
-			sort.push({ column, direction: 'asc' });
-		} else if (sort[index].direction === 'asc') sort[index] = { column, direction: 'desc' };
+		if (index < 0) sort.push({ column, direction: 'asc' });
+		else if (sort[index].direction === 'asc') sort[index] = { column, direction: 'desc' };
 		else sort.splice(index, 1);
 		await this.setSort(sort);
 	}
@@ -258,32 +237,25 @@ export class EditorState {
 		await this.fetch(true);
 	}
 
-	async applySchemaChange(args: SchemaChangeArgs) {
-		if (!this.schemaEditing || this.editing || this.inserting || this.busy || this.loading || !this.ready) {
-			throw new Error('The workspace is not ready for schema editing');
-		}
-		if (args.connection !== this.connection) throw new Error('Connection changed; reopen the schema editor');
-		// Schema intents contain JSON scalars only; snapshot before any asynchronous work.
-		const submitted: SchemaChangeArgs = JSON.parse(JSON.stringify(args));
+	async applySchema(change: SchemaChange) {
+		if (this.editing || this.inserting || this.busy || this.loading) throw new Error('Finish editing rows first');
 		this.#request++;
 		this.#liveGeneration++;
 		this.busy = true;
 		this.savedAt = null;
 		try {
-			await changeSchema(submitted);
+			await changeSchema({ connection: this.connection, sql: change.sql });
 			this.savedAt = Date.now();
 			this.rowSelection = {};
 			this.cellSelected = false;
 			this.filters = [];
-			this.filter = null;
+			this.reference = null;
 			this.sort = [];
-			// Deleting another sidebar table should not switch the current table.
-			if (submitted.operation.kind !== 'dropTable') {
-				this.activeSchema = submitted.schema;
-				this.activeTableName = submitted.operation.kind === 'renameTable' || submitted.operation.kind === 'duplicateTable'
-					? submitted.operation.name : submitted.table;
+			if (change.select) {
+				this.activeSchema = change.select.schema;
+				this.activeTableName = change.select.table;
 			}
-			// An acknowledged DDL write stays successful even if metadata refresh fails.
+			// The DDL is committed; a failed refresh below is a read error, not a failed change.
 			await this.#reload();
 		} finally { this.busy = false; }
 	}
@@ -339,15 +311,8 @@ export class EditorState {
 			await saveTable(args);
 			this.savedAt = Date.now();
 			// Read failure after an acknowledged write must not turn Save into a duplicate-write retry.
-			if (this.tableKey === key && this.connection === args.connection) await this.fetch(true);
+			if (this.tableKey === key) await this.fetch(true);
 		} finally { this.busy = false; }
-	}
-
-	discardAll() {
-		this.rowSelection = {};
-		this.editing = false;
-		this.inserting = false;
-		this.schemaEditing = false;
 	}
 
 	clearRowSelection() {
@@ -374,9 +339,9 @@ export class EditorState {
 		this.busy = true;
 		this.error = null;
 		try {
-			if (args.identities.length) await deleteRows(args);
+			await deleteRows(args);
 			delete this.rowSelection[key];
-			if (args.identities.length && this.tableKey === key && this.connection === args.connection) await this.fetch();
+			if (this.tableKey === key) await this.fetch();
 		} catch (error) { this.error = message(error); }
 		finally { this.busy = false; }
 	}

@@ -1,155 +1,142 @@
 <script lang="ts">
-	import { tick } from 'svelte';
-	import { ArrowDown, ArrowUp, Plus, X } from '@lucide/svelte';
-	import type { ConstraintOperation, SchemaConstraint, SchemaDefinition } from '#lib/schema.js';
+	import { Plus, X } from '@lucide/svelte';
+	import { editor } from '#lib/state/editor.svelte.js';
+	import { REFERENTIAL_ACTIONS, type SchemaChange, type SchemaConstraint, type SchemaDefinition } from '#lib/schema.js';
+	import { constraintSql, ident, qualify, type ConstraintSpec } from '#lib/ddl.js';
+	import { tableKey } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
+	import ColumnChoice from './ColumnChoice.svelte';
 	import TextEditor from './TextEditor.svelte';
-	import SchemaForeignKey from './SchemaForeignKey.svelte';
-	import { constraintSpec, displayIdentifier } from '#lib/schema-forms.js';
 
-	let { definition, connection, draft = $bindable(null), confirmation = $bindable(''), disabled, onbegin }: {
-		definition: SchemaDefinition;
-		connection: string;
-		draft: ConstraintOperation | null;
-		confirmation: string;
-		disabled: boolean;
-		onbegin: (operation: ConstraintOperation) => void;
-	} = $props();
+	let { definition, disabled, change = $bindable() }: { definition: SchemaDefinition; disabled: boolean; change: SchemaChange | null } = $props();
 	const id = $props.id();
-	let picked = $state('');
-	const spec = $derived(draft && 'constraint' in draft ? draft.constraint : null);
-	const existing = $derived.by(() => {
-		const operation = draft;
-		return operation && 'constraintOid' in operation ? definition.constraints.find((constraint) => constraint.oid === operation.constraintOid) : undefined;
+	const KIND = { u: 'UNIQUE', c: 'CHECK', f: 'FOREIGN KEY' };
+	/** Editing replaces the original constraint (drop + add in one transaction). */
+	let draft = $state<{ spec: ConstraintSpec; original: SchemaConstraint | null; initial?: string } | null>(null);
+	let dropping = $state<SchemaConstraint | null>(null);
+	const table = $derived(qualify(definition.schema, definition.table));
+	const columns = $derived(definition.columns.map((column) => column.name));
+	const target = $derived.by(() => {
+		const spec = draft?.spec;
+		return spec?.kind === 'foreignKey' ? editor.tables.find((table) => table.schema === spec.reference.schema && table.name === spec.reference.table) : undefined;
+	});
+
+	function complete(spec: ConstraintSpec) {
+		if (spec.kind === 'check') return !!spec.expression.trim();
+		if (spec.kind === 'unique') return spec.columns.length > 0;
+		return spec.columns.length > 0 && spec.columns.every(Boolean) && spec.reference.columns.every(Boolean);
+	}
+	$effect(() => {
+		const drop = (constraint: SchemaConstraint) => `alter table ${table} drop constraint ${ident(constraint.name)};`;
+		change = draft && draft.spec.name && complete(draft.spec) && JSON.stringify(draft.spec) !== draft.initial ? {
+			sql: [draft.original ? drop(draft.original) : '', `alter table ${table} add constraint ${ident(draft.spec.name)} ${constraintSql(draft.spec)};`].filter(Boolean).join('\n')
+		} : dropping ? { sql: drop(dropping), destructive: true } : null;
 	});
 
 	function edit(constraint: SchemaConstraint) {
-		onbegin({ kind: 'alterConstraint', constraintOid: constraint.oid, constraint: constraintSpec(constraint) });
+		const spec: ConstraintSpec = constraint.kind === 'u' ? { kind: 'unique', name: constraint.name, columns: [...constraint.columns] }
+			: constraint.kind === 'c' ? { kind: 'check', name: constraint.name, expression: constraint.expression ?? '' }
+			: { kind: 'foreignKey', name: constraint.name, columns: [...constraint.columns], onUpdate: constraint.foreignKey!.onUpdate,
+				onDelete: constraint.foreignKey!.onDelete,
+				reference: { schema: constraint.foreignKey!.schema, table: constraint.foreignKey!.table, columns: [...constraint.foreignKey!.columns] } };
+		draft = { spec, original: constraint, initial: JSON.stringify(spec) };
 	}
 
-	async function addColumn(name: string) {
-		if (disabled || spec?.kind !== 'unique' || spec.columns.length >= 32 || spec.columns.includes(name)
-			|| !definition.columns.some((column) => column.name === name)) return;
-		spec.columns = [...spec.columns, name];
-		await tick();
-		picked = '';
-	}
-
-	function moveColumn(index: number, delta: number) {
-		if (disabled || spec?.kind !== 'unique') return;
-		const next = index + delta;
-		if (next < 0 || next >= spec.columns.length) return;
-		[spec.columns[index], spec.columns[next]] = [spec.columns[next], spec.columns[index]];
+	function chooseTarget(key: string) {
+		const table = editor.tables.find((table) => tableKey(table.schema, table.name) === key);
+		if (!table || draft?.spec.kind !== 'foreignKey') return;
+		const pk = table.columns.filter((column) => column.primaryKey).map((column) => column.name);
+		draft.spec.reference = { schema: table.schema, table: table.name, columns: pk.length ? pk : [''] };
+		draft.spec.columns = draft.spec.reference.columns.map(() => '');
 	}
 </script>
 
-{#if !definition.editable}<p role="status" class="text-sm text-muted-foreground">{definition.reason}</p>{/if}
-{#if spec}
+{#if draft}
+	{@const spec = draft.spec}
 	<div class="space-y-2">
 		<Label for={`${id}-name`}>Constraint name</Label>
 		<Input id={`${id}-name`} bind:value={spec.name} {disabled} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
 	</div>
 	{#if spec.kind === 'unique'}
-		<div class="space-y-3">
-			<p class="text-xs font-medium">Key columns · {spec.columns.length} / 32</p>
-			<ol class="space-y-2">
-				{#each spec.columns as column, i (column)}
-					<li class="flex items-center gap-2 rounded-md border p-2">
-						<span class="text-xs text-muted-foreground">{i + 1}.</span>
-						<span class="min-w-0 flex-1 truncate font-mono text-xs" title={column}>{column}</span>
-						<Button variant="ghost" size="icon-xs" disabled={disabled || i === 0} aria-label={`Move ${column} up`} onclick={() => moveColumn(i, -1)}><ArrowUp /></Button>
-						<Button variant="ghost" size="icon-xs" disabled={disabled || i === spec.columns.length - 1} aria-label={`Move ${column} down`} onclick={() => moveColumn(i, 1)}><ArrowDown /></Button>
-						<Button variant="ghost" size="icon-xs" {disabled} aria-label={`Remove constraint column ${column}`} onclick={() => { if (spec?.kind === 'unique') spec.columns = spec.columns.filter((name) => name !== column); }}><X /></Button>
-					</li>
-				{/each}
-			</ol>
-			<Select.Root type="single" bind:value={picked} onValueChange={addColumn} allowDeselect={false}
-				disabled={disabled || spec.columns.length >= Math.min(32, definition.columns.length)}>
-				<Select.Trigger aria-label="Add constraint column" class="w-full text-xs">Add a column…</Select.Trigger>
+		<ColumnChoice label="Unique columns" {columns} bind:selected={spec.columns} {disabled} />
+	{:else if spec.kind === 'check'}
+		<div class="space-y-2">
+			<Label>CHECK expression</Label>
+			<TextEditor value={spec.expression} language="sql" readonly={disabled} label="CHECK expression" placeholder="price >= 0" class="h-32"
+				onchange={(value) => { if (spec.kind === 'check') spec.expression = value; }} />
+			<p class="text-xs text-muted-foreground">A boolean expression. NULL results pass the check.</p>
+		</div>
+	{:else}
+		<div class="space-y-2">
+			<Label for={`${id}-table`}>Referenced table</Label>
+			<Select.Root type="single" value={tableKey(spec.reference.schema, spec.reference.table)} allowDeselect={false} {disabled} onValueChange={chooseTarget}>
+				<Select.Trigger id={`${id}-table`} class="w-full min-w-0 text-xs"><span class="truncate">{spec.reference.table ? `${spec.reference.schema}.${spec.reference.table}` : 'Choose a table…'}</span></Select.Trigger>
 				<Select.Content class="max-h-72">
-					{#each definition.columns.filter((column) => spec?.kind === 'unique' && !spec.columns.includes(column.name)) as column (column.name)}
-						<Select.Item value={column.name} label={column.name}><span class="max-w-64 truncate">{column.name}</span></Select.Item>
-					{/each}
+					{#each editor.tables as table}<Select.Item value={tableKey(table.schema, table.name)} label={`${table.schema}.${table.name}`} />{/each}
 				</Select.Content>
 			</Select.Root>
 		</div>
-		<div class="space-y-3">
-			<div class="flex items-start gap-2"><Checkbox id={`${id}-nulls`} bind:checked={spec.nullsNotDistinct} {disabled} /><Label for={`${id}-nulls`} class="text-xs leading-relaxed">Treat NULLs as equal (NULLS NOT DISTINCT)</Label></div>
-			<div class="flex items-start gap-2"><Checkbox id={`${id}-defer`} bind:checked={spec.deferrable} {disabled} /><Label for={`${id}-defer`} class="text-xs leading-relaxed">Deferrable</Label></div>
-			<div class="flex items-start gap-2"><Checkbox id={`${id}-initial`} bind:checked={spec.initiallyDeferred} {disabled} /><Label for={`${id}-initial`} class="text-xs leading-relaxed">Initially deferred until transaction commit</Label></div>
-			{#if spec.initiallyDeferred && !spec.deferrable}<p role="status" class="text-xs text-destructive">Initially deferred requires Deferrable.</p>{/if}
-		</div>
-	{:else if spec.kind === 'foreignKey'}
-		<SchemaForeignKey bind:value={() => spec, (value) => { if (draft && 'constraint' in draft) draft.constraint = value; }} {definition} {connection} {disabled} />
-	{:else}
-		<div class="space-y-2">
-			<Label onclick={() => { if (!disabled) document.getElementById(`${id}-expression`)?.focus(); }}>CHECK expression</Label>
-			<TextEditor id={`${id}-expression`} value={spec.expression} language="sql" readonly={disabled} label="CHECK expression"
-				onchange={(value) => { if (!disabled && spec?.kind === 'check') spec.expression = value ?? ''; }} placeholder="price >= 0" class="h-44" />
-			<p class="text-xs text-muted-foreground">A PostgreSQL boolean expression, without CHECK (...). NULL passes; use IS NOT NULL or column nullability to require a value.</p>
-		</div>
-		<div class="space-y-3">
-			<div class="flex items-start gap-2"><Checkbox id={`${id}-validate`} bind:checked={spec.notValid} {disabled} /><Label for={`${id}-validate`} class="text-xs leading-relaxed">Skip existing rows (NOT VALID); new or updated rows are still checked</Label></div>
-			<div class="flex items-start gap-2"><Checkbox id={`${id}-inherit`} bind:checked={spec.noInherit} {disabled} /><Label for={`${id}-inherit`} class="text-xs leading-relaxed">Do not inherit this check (NO INHERIT)</Label></div>
-		</div>
+		{#if spec.reference.table}
+			<div class="space-y-2">
+				<p class="text-xs font-medium">Columns → referenced key</p>
+				{#each spec.reference.columns as _, i}
+					<div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
+						<Select.Root type="single" bind:value={spec.columns[i]} allowDeselect={false} {disabled}>
+							<Select.Trigger aria-label={`Column ${i + 1}`} class="w-full min-w-0 text-xs"><span class="truncate">{spec.columns[i] || 'Column…'}</span></Select.Trigger>
+							<Select.Content class="max-h-72">{#each columns as column}<Select.Item value={column} label={column} />{/each}</Select.Content>
+						</Select.Root>
+						<span aria-hidden="true" class="text-muted-foreground">→</span>
+						<Select.Root type="single" bind:value={spec.reference.columns[i]} allowDeselect={false} {disabled}>
+							<Select.Trigger aria-label={`Referenced column ${i + 1}`} class="w-full min-w-0 text-xs"><span class="truncate">{spec.reference.columns[i] || 'Column…'}</span></Select.Trigger>
+							<Select.Content class="max-h-72">{#each target?.columns ?? [] as column}<Select.Item value={column.name} label={column.name} />{/each}</Select.Content>
+						</Select.Root>
+						<Button variant="ghost" size="icon-xs" aria-label={`Remove pair ${i + 1}`} disabled={disabled || spec.columns.length === 1}
+							onclick={() => { spec.columns.splice(i, 1); spec.reference.columns.splice(i, 1); }}><X /></Button>
+					</div>
+				{/each}
+				<Button variant="ghost" size="xs" {disabled} onclick={() => { spec.columns.push(''); spec.reference.columns.push(''); }}><Plus />Add column pair</Button>
+			</div>
+			<div class="grid grid-cols-2 gap-4">
+				{#each ['onUpdate', 'onDelete'] as const as action}
+					<div class="space-y-2">
+						<Label for={`${id}-${action}`}>{action === 'onUpdate' ? 'On update' : 'On delete'}</Label>
+						<Select.Root type="single" bind:value={spec[action]} allowDeselect={false} {disabled}>
+							<Select.Trigger id={`${id}-${action}`} class="w-full text-xs">{spec[action]}</Select.Trigger>
+							<Select.Content>{#each REFERENTIAL_ACTIONS as choice}<Select.Item value={choice} label={choice} />{/each}</Select.Content>
+						</Select.Root>
+					</div>
+				{/each}
+			</div>
+		{/if}
 	{/if}
-	{#if existing}
-		<p class="text-xs text-muted-foreground">Apply replaces this constraint atomically and preserves comments. Dependencies can block replacement; they are not removed automatically. Advanced options require SQL.</p>
-		{#if existing.kind === 'f'}<p class="text-xs text-muted-foreground">Replacement also locks the old referenced table exclusively and requires its native LOCK permissions, not just REFERENCES.</p>{/if}
-	{/if}
-	<p class="text-xs text-muted-foreground">Apply locks the table and can block reads and writes. {spec.kind === 'check' ? 'PostgreSQL evaluates the expression during validation; functions can have side effects.' : spec.kind === 'unique' ? 'Existing rows must satisfy uniqueness; PostgreSQL creates a backing index.' : 'Source values must match the referenced key unless validation is deferred.'}</p>
-{:else if draft && existing}
-	<pre class="whitespace-pre-wrap break-all font-mono text-xs">{existing.definition}</pre>
-	{#if draft.kind === 'renameConstraint'}
-		<div class="space-y-2">
-			<Label for={`${id}-rename`}>Constraint name</Label>
-			<Input id={`${id}-rename`} bind:value={draft.name} {disabled} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
-		</div>
-	{:else if draft.kind === 'validateConstraint'}
-		<p class="text-sm">Validate all existing rows against this {existing.kind === 'f' ? 'foreign key' : 'CHECK constraint'}. Failures leave it NOT VALID; new writes remain checked.</p>
-		<p class="text-xs text-muted-foreground">Apply locks the table and can block reads and writes. PostgreSQL evaluates the expression; functions can have side effects.</p>
-	{:else if draft.kind === 'dropConstraint'}
-		<p class="text-sm text-destructive">Remove this constraint’s enforcement, not the table’s data.{existing.kind === 'u' ? ' Its backing index will also be removed.' : ''} Dependencies block removal; they are not deleted automatically.</p>
-		<div class="space-y-2">
-			<Label for={`${id}-confirm`} class="break-all text-xs">Type {existing.name} to confirm</Label>
-			<Input id={`${id}-confirm`} bind:value={confirmation} {disabled} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
-		</div>
-	{/if}
+	{#if draft.original}<p class="text-xs text-muted-foreground">Applying replaces the existing constraint.</p>{/if}
+{:else if dropping}
+	<pre class="whitespace-pre-wrap break-all font-mono text-xs">{dropping.definition}</pre>
+	<p class="text-sm text-destructive">Drop this constraint? Table data is not affected.</p>
 {:else}
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<p class="text-sm">{definition.constraints.length} {definition.constraints.length === 1 ? 'constraint' : 'constraints'}</p>
 		<div class="flex flex-wrap gap-2">
-			<Button variant="outline" size="sm" disabled={disabled || !definition.columns.length} onclick={() => onbegin({ kind: 'addConstraint', constraint: { kind: 'unique', name: '', columns: [], nullsNotDistinct: false, deferrable: false, initiallyDeferred: false } })}><Plus />UNIQUE</Button>
-			<Button variant="outline" size="sm" {disabled} onclick={() => onbegin({ kind: 'addConstraint', constraint: { kind: 'check', name: '', expression: '', notValid: false, noInherit: false } })}><Plus />CHECK</Button>
-			<Button variant="outline" size="sm" disabled={disabled || !definition.columns.length} onclick={() => onbegin({ kind: 'addConstraint', constraint: {
-				kind: 'foreignKey', name: '', columns: [], reference: { schema: definition.schema, table: '', oid: '', version: '', columns: [] },
-				match: 'simple', onUpdate: 'no action', onDelete: 'no action', notValid: false, deferrable: false, initiallyDeferred: false
-			} })}><Plus />Foreign key</Button>
+			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'unique', name: `${definition.table}_key`, columns: [] }, original: null }}><Plus />UNIQUE</Button>
+			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'check', name: `${definition.table}_check`, expression: '' }, original: null }}><Plus />CHECK</Button>
+			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'foreignKey', name: `${definition.table}_fkey`, columns: [],
+				reference: { schema: definition.schema, table: '', columns: [] }, onUpdate: 'no action', onDelete: 'no action' }, original: null }}><Plus />Foreign key</Button>
 		</div>
 	</div>
-	{#each definition.constraints as constraint (constraint.oid)}
-		{@const replica = definition.indexes.some((index) => index.oid === constraint.indexOid && index.replicaIdentity)}
-		<section class="space-y-3 rounded-md border p-3" aria-label={`Constraint ${constraint.name}`}>
-			<div class="space-y-1">
-				<h3 class="break-all font-mono text-xs font-medium">{constraint.name}</h3>
-				<p class="text-xs text-muted-foreground">{constraint.kind === 'u' ? 'UNIQUE' : constraint.kind === 'f' ? 'FOREIGN KEY' : 'CHECK'}{constraint.deferrable ? ' · Deferrable' : ''}{constraint.initiallyDeferred ? ' · Initially deferred' : ''}{constraint.nullsNotDistinct ? ' · NULLs not distinct' : ''}</p>
+	{#each definition.constraints as constraint (constraint.name)}
+		<section class="space-y-2 rounded-md border p-3" aria-label={`Constraint ${constraint.name}`}>
+			<div class="flex items-start gap-2">
+				<div class="min-w-0 flex-1">
+					<h3 class="break-all font-mono text-xs font-medium">{constraint.name}</h3>
+					<p class="text-[11px] text-muted-foreground">{KIND[constraint.kind]}</p>
+				</div>
+				<Button variant="ghost" size="sm" {disabled} onclick={() => edit(constraint)}>Edit</Button>
+				<Button variant="ghost" size="sm" {disabled} class="text-destructive" onclick={() => dropping = constraint}>Drop</Button>
 			</div>
-			{#if constraint.foreignKey}<p class="break-all font-mono text-xs">({constraint.columns.map(displayIdentifier).join(', ')}) → {displayIdentifier(constraint.foreignKey.schema)}.{displayIdentifier(constraint.foreignKey.table)} ({constraint.foreignKey.columns.map(displayIdentifier).join(', ')})</p>{/if}
-			{#if !constraint.validated || !constraint.enforced}<p class="text-xs text-amber-300">{!constraint.enforced ? 'Not enforced.' : ''} {!constraint.validated ? 'Not validated against existing rows.' : ''}</p>{/if}
-			{#if replica}<p class="text-xs text-muted-foreground">Replica identity — change it in SQL before editing or dropping this constraint.</p>
-			{:else if !constraint.replaceable}<p class="text-xs text-muted-foreground">Native options require SQL to edit. Rename preserves them.</p>{/if}
-			{#if constraint.comment}<p class="whitespace-pre-wrap break-words text-xs text-muted-foreground">{constraint.comment}</p>{/if}
-			<details class="text-xs"><summary class="cursor-pointer text-muted-foreground">SQL definition</summary><pre class="mt-2 whitespace-pre-wrap break-all font-mono">{constraint.definition}</pre></details>
-			<div class="flex flex-wrap justify-end gap-2">
-				<Button variant="ghost" size="sm" disabled={disabled || !constraint.replaceable} aria-label={`Edit constraint ${constraint.name}`} onclick={() => edit(constraint)}>Edit</Button>
-				<Button variant="ghost" size="sm" {disabled} aria-label={`Rename constraint ${constraint.name}`} onclick={() => onbegin({ kind: 'renameConstraint', constraintOid: constraint.oid, name: constraint.name })}>Rename</Button>
-				{#if (constraint.kind === 'c' || constraint.kind === 'f') && !constraint.validated && constraint.enforced}<Button variant="ghost" size="sm" {disabled} aria-label={`Validate constraint ${constraint.name}`} onclick={() => onbegin({ kind: 'validateConstraint', constraintOid: constraint.oid })}>Validate</Button>{/if}
-				<Button variant="ghost" size="sm" disabled={disabled || replica} class="text-destructive" aria-label={`Drop constraint ${constraint.name}`} onclick={() => onbegin({ kind: 'dropConstraint', constraintOid: constraint.oid })}>Drop</Button>
-			</div>
+			<p class="break-all font-mono text-xs text-muted-foreground">{constraint.definition}</p>
 		</section>
 	{/each}
 {/if}

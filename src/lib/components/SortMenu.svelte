@@ -2,7 +2,7 @@
 	import { tick, untrack } from 'svelte';
 	import { ArrowDown, ArrowUp, ListOrdered, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { MAX_SORTS, type Sort } from '#lib/types.js';
+	import type { Sort } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
@@ -29,7 +29,7 @@
 	}
 
 	async function add(column: string) {
-		if (blocked || !column || draft.length >= MAX_SORTS || !available.some((entry) => entry.name === column)) return;
+		if (blocked || !column || !available.some((entry) => entry.name === column)) return;
 		draft = [...draft, { column, direction: 'asc' }];
 		await tick();
 		picked = '';
@@ -80,9 +80,9 @@
 			</ol>
 		{:else}<p class="p-4 text-xs text-muted-foreground">No sorts applied to this view.</p>{/if}
 		<div class="flex flex-wrap items-center gap-2 border-t p-3">
-			<Select.Root type="single" bind:value={picked} onValueChange={add} allowDeselect={false} disabled={blocked || !available.length || draft.length >= MAX_SORTS}>
+			<Select.Root type="single" bind:value={picked} onValueChange={add} allowDeselect={false} disabled={blocked || !available.length}>
 				<Select.Trigger aria-label="Add sort column" size="sm" class="min-w-0 flex-1 text-xs">
-					{draft.length >= MAX_SORTS ? `Maximum ${MAX_SORTS} sort rules` : draft.length ? 'Pick another column to sort by' : 'Pick a column to sort by'}
+					{draft.length ? 'Pick another column to sort by' : 'Pick a column to sort by'}
 				</Select.Trigger>
 				<Select.Content class="max-h-72">
 					{#each available as column (column.name)}

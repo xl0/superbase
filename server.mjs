@@ -1,21 +1,16 @@
 import { createServer } from 'node:http';
 
-// adapter-node otherwise assumes HTTPS. Set this ourselves on the socket request,
-// never trust a browser-supplied forwarding header or disable SvelteKit's CSRF check.
-process.env.PROTOCOL_HEADER = 'x-superbase-protocol';
+// adapter-node assumes HTTPS unless ORIGIN is set. Mark local requests as HTTP ourselves rather
+// than trusting a forwarding header; behind a proxy, set ORIGIN instead.
+if (!process.env.ORIGIN) process.env.PROTOCOL_HEADER = 'x-superbase-protocol';
 const { handler } = await import('./build/handler.js');
+const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
 
 const server = createServer((request, response) => {
-	request.headers['x-superbase-protocol'] = 'http';
+	if (!process.env.ORIGIN) request.headers['x-superbase-protocol'] = 'http';
 	handler(request, response);
 });
-server.listen(port, '127.0.0.1', () => console.log(`Superbase: http://127.0.0.1:${port}`));
+server.listen(port, host, () => console.log(`Superbase: http://${host.includes(':') ? `[${host}]` : host}:${port}`));
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-	process.once(signal, () => {
-		server.close(() => process.exit(0));
-		setTimeout(() => process.exit(1), 35_000).unref();
-	});
-}
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => process.exit(0));

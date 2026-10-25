@@ -4,14 +4,15 @@
 	import { ChevronDown, Maximize2, Minimize2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
+	import { isTemporal, optionLabel, valueOptions, valueState } from '#lib/format.js';
 	import { writable, type CellValue, type Column, type Row } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
-	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import ReferencePicker from './ReferencePicker.svelte';
+	import ResizableSheet from './ResizableSheet.svelte';
 	import TextEditor from './TextEditor.svelte';
 	import type { EditorState } from '@codemirror/state';
 	import type { EditorView } from '@codemirror/view';
@@ -31,27 +32,22 @@
 	let value = $state<CellValue | undefined>(untrack(() => readOnly || initial === undefined ? original : initial));
 	let expanded = $state(untrack(() => startExpanded || !!column.foreignKey));
 	let picking = $state(untrack(() => !!column.foreignKey && initial === undefined));
-	let width = $state(640);
-	let windowWidth = $state(1024);
 	let field = $state<HTMLTextAreaElement | null>(null);
 	let textView = $state.raw<EditorView | null>(null);
 	let textState = $state.raw<EditorState | null>(null);
-	let panel = $state<HTMLDivElement | null>(null);
+	let panel = $state<HTMLElement | null>(null);
 	let error = $state<string | null>(null);
 	let saving = $state(false);
 	let referenceChanges = $state<Record<string, CellValue> | null>(null);
-	let resize: { x: number; width: number; pointerId: number } | null = null;
 	let selection: { start: number; end: number } | null = null;
-	const temporal = $derived(/^(date|timestamp|time)(?:\(|\s|$)/.test(column.type));
-	const options = $derived(column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? []);
+	const temporal = $derived(isTemporal(column));
+	const options = $derived(valueOptions(column));
 	const specialOptions = $derived(readOnly ? [] : [
 		...(column.nullable ? [{ action: 'null', label: 'Set to NULL' }] : []),
 		...(temporal ? [{ action: 'now', label: 'Set to Now' }] : []),
 		...(row.draft ? [{ action: 'default', label: 'Use DEFAULT' }] : []),
 		...(column.kind === 'text' ? [{ action: 'empty', label: 'Empty text' }] : [])
 	]);
-	const optionLabel = (option: string) => column.kind === 'boolean' ? option === 't' ? 'true' : 'false' : option || '(empty string)';
-	const panelWidth = $derived(Math.min(windowWidth, Math.max(320, width)));
 	const current = $derived(Object.fromEntries((column.foreignKey?.columns ?? []).map((name) =>
 		[name, name === column.name ? value ?? null : referenceChanges?.[name] ?? editor.getValue(row, name) ?? null])));
 	const referenceReadOnly = $derived(readOnly || column.foreignKey?.columns.some((name) => {
@@ -98,16 +94,15 @@
 		event.preventDefault();
 		await tick();
 		if (picking) { panel?.querySelector<HTMLInputElement>('[data-reference-search]')?.focus(); return; }
+		// Restore the selection across expand/collapse; otherwise place the caret at the end.
 		if (textView) {
+			const end = textView.state.doc.length;
 			textView.focus();
-			textView.dispatch({ selection: selection ? { anchor: selection.start, head: selection.end }
-				: { anchor: initial === undefined ? 0 : textView.state.doc.length } });
-			return;
+			textView.dispatch({ selection: { anchor: selection?.start ?? end, head: selection?.end ?? end } });
+		} else if (field) {
+			field.focus();
+			field.setSelectionRange(selection?.start ?? field.value.length, selection?.end ?? field.value.length);
 		}
-		field?.focus();
-		if (selection) field?.setSelectionRange(selection.start, selection.end);
-		else if (initial === undefined) field?.setSelectionRange(0, 0);
-		else field?.setSelectionRange(field.value.length, field.value.length);
 	}
 
 	function keydown(event: KeyboardEvent) {
@@ -116,16 +111,7 @@
 			event.preventDefault(); event.stopPropagation(); apply();
 		}
 	}
-
-	function resizeKey(event: KeyboardEvent) {
-		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-		event.preventDefault();
-		width = event.key === 'Home' ? 320 : event.key === 'End' ? windowWidth : panelWidth + (event.key === 'ArrowLeft' ? 32 : -32);
-		width = Math.min(windowWidth, Math.max(320, width));
-	}
 </script>
-
-<svelte:window bind:innerWidth={windowWidth} />
 
 {#snippet contents()}
 	<div class="flex shrink-0 items-center gap-2">
@@ -158,13 +144,13 @@
 			{#if options.length && !readOnly}
 				<Select.Root type="single" disabled={saving} value={value == null || !options.includes(value) ? '' : String(options.indexOf(value))} allowDeselect={false}
 					onValueChange={(selected) => { if (selected) value = options[Number(selected)]; }}>
-					<Select.Trigger size="sm" aria-label={`Choose ${column.name} value`} class="text-xs">{value == null || !options.includes(value) ? 'Choose value…' : optionLabel(value)}</Select.Trigger>
+					<Select.Trigger size="sm" aria-label={`Choose ${column.name} value`} class="text-xs">{value == null || !options.includes(value) ? 'Choose value…' : optionLabel(column, value)}</Select.Trigger>
 					<Select.Content>
-						{#each options as option, i}<Select.Item value={String(i)} label={optionLabel(option)} />{/each}
+						{#each options as option, i}<Select.Item value={String(i)} label={optionLabel(column, option)} />{/each}
 					</Select.Content>
 				</Select.Root>
 			{/if}
-			<span class="text-xs text-muted-foreground" aria-live="polite">{value === null ? 'SQL NULL' : value === undefined ? 'DEFAULT' : value === '' ? 'Empty text' : ''}</span>
+			<span class="text-xs text-muted-foreground" aria-live="polite">{valueState(value)}</span>
 		</div>
 		{#if column.kind === 'json' || column.kind === 'text'}
 			<TextEditor language={column.kind} bind:ref={textView} bind:state={textState} label={`Edit ${column.name}`} readonly={readOnly || saving}
@@ -216,27 +202,9 @@
 		</Popover.Content>
 </Popover.Root>
 
-<Sheet.Root open={expanded} onOpenChange={(open) => { if (!open && !saving) onclose(); }}>
-	<Sheet.Content bind:ref={panel} side="right" showCloseButton={false} aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
-		class="gap-3 p-5" style={`width:${panelWidth}px;max-width:100vw;height:100dvh;`}
-		onInteractOutside={(event) => event.preventDefault()} onEscapeKeydown={(event) => { if (saving) event.preventDefault(); }} onOpenAutoFocus={focusField}
-		onCloseAutoFocus={(event) => event.preventDefault()} onkeydown={keydown}>
-		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA adjustable separators are focusable and support arrow keys.) -->
-		<div role="separator" tabindex="0" aria-label="Resize cell side panel" aria-orientation="vertical"
-			aria-controls={panel?.id} aria-valuemin={Math.min(320, windowWidth)} aria-valuemax={windowWidth} aria-valuenow={panelWidth}
-			aria-valuetext={`${Math.round(panelWidth)} pixels`}
-			class="panel-resize absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none outline-none"
-			onkeydown={resizeKey}
-			title="Drag or use Left/Right, Home/End to resize"
-			onpointerdown={(event) => {
-				if (event.button !== 0 || !event.isPrimary || resize) return;
-				event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-				resize = { x: event.clientX, width: panelWidth, pointerId: event.pointerId };
-			}}
-			onpointermove={(event) => { if (resize?.pointerId === event.pointerId) width = Math.min(windowWidth, Math.max(320, resize.width + resize.x - event.clientX)); }}
-			onpointerup={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
-			onpointercancel={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}
-			onlostpointercapture={(event) => { if (resize?.pointerId === event.pointerId) resize = null; }}></div>
-		{@render contents()}
-	</Sheet.Content>
-</Sheet.Root>
+<ResizableSheet open={expanded} onOpenChange={(open) => { if (!open && !saving) onclose(); }} bind:ref={panel} label="Resize cell side panel"
+	aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} class="gap-3 p-5"
+	onEscapeKeydown={(event) => { if (saving) event.preventDefault(); }} onOpenAutoFocus={focusField}
+	onCloseAutoFocus={(event) => event.preventDefault()} onkeydown={keydown}>
+	{@render contents()}
+</ResizableSheet>

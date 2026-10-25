@@ -3,7 +3,7 @@
 	import { Combobox } from 'bits-ui';
 	import { Search, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import { FILTER_OPERATORS, MAX_FILTERS, type FilterOperator, type RowFilter } from '#lib/types.js';
+	import { FILTER_OPERATORS, type FilterOperator, type RowFilter } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
@@ -36,7 +36,7 @@
 	});
 
 	function begin(column: string, index: number | null = null) {
-		if (blocked || (index === null && editor.filters.length >= MAX_FILTERS)) return;
+		if (blocked) return;
 		editingIndex = index;
 		draft = index === null ? { column, operator: '', value: '' } : { ...editor.filters[index] };
 		query = '';
@@ -153,10 +153,10 @@
 		{@render editChip()}
 	{/if}
 	{#if !draft}
-		<Combobox.Root type="single" value="" inputValue={query} bind:open={columnOpen} disabled={blocked || editor.filters.length >= MAX_FILTERS}
+		<Combobox.Root type="single" value="" inputValue={query} bind:open={columnOpen} disabled={blocked}
 			allowDeselect={false} onValueChange={(column) => { if (column) begin(column); }}>
 			<Combobox.Input aria-label="Add filter" {placeholder} maxlength={1024} autocomplete="off" spellcheck={false}
-				onfocus={() => { if (!blocked && editor.filters.length < MAX_FILTERS) columnOpen = true; }}
+				onfocus={() => { if (!blocked) columnOpen = true; }}
 				oninput={(event) => query = event.currentTarget.value}>
 				{#snippet child({ props })}<Input {...props} class="h-8 flex-1 basis-52 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent" />{/snippet}
 			</Combobox.Input>
@@ -174,5 +174,4 @@
 	{#if editor.hasFilters}
 		<Button variant="ghost" size="xs" class="ml-auto" disabled={blocked} onclick={() => { cancel(); void editor.clearFilters(); }}>Remove filters</Button>
 	{/if}
-	{#if editor.filters.length >= MAX_FILTERS}<span class="text-xs text-muted-foreground">Maximum {MAX_FILTERS} filters.</span>{/if}
 </div>

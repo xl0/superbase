@@ -34,7 +34,6 @@
 		exportOptionsOpening = false;
 	}}>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => void copyName()}><Copy />Copy name</DropdownMenu.Item>
-		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'copySchema' }, trigger, table)}><Copy />Copy table schema</DropdownMenu.Item>
 		<DropdownMenu.Separator />
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'renameTable' }, trigger, table)}><Pencil />Rename table</DropdownMenu.Item>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'duplicateTable' }, trigger, table)}><Copy />Duplicate table</DropdownMenu.Item>

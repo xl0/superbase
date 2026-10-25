@@ -1,710 +1,114 @@
 # superbase — code map
 
-A local-only Postgres table and SQL editor: SvelteKit 3 / Svelte 5 SPA, shadcn-svelte, Tailwind v4,
-and direct `pg`. No Supabase services, ORM, or public API. One Node process owns sessions.
+Postgres table + SQL editor: SvelteKit 3 / Svelte 5 SPA (SSR off), SvelteKit remote functions,
+shadcn-svelte, Tailwind v4, `pg` directly. One Node process, one database target.
 
-## Runtime and boundaries
+## Deployment modes and trust model
 
-`+layout.ts` disables SSR. `+page.svelte` loads `connectionStatus()` before mounting either
-onboarding or `EditorApp`. The latter initializes the module-level `EditorState` and renders
-the navigation rail, table workspace and lazily mounted SQL workspace. Hidden workspaces stay
-mounted to retain drafts, selection/history, filters and scroll state without reconnecting.
-Connection changes reload the page
-after confirming unsaved work; generation checks protect other tabs that did not reload.
+- **Local** (`DATABASE_URL` unset): browsers pick a URL; `server/connections.ts` keeps one
+  global pool. Bound to 127.0.0.1; `hooks.server.ts` rejects non-loopback Host headers
+  (DNS rebinding). SvelteKit's origin check guards commands and form POSTs.
+- **Locked** (`DATABASE_URL` set): pinned to that database; `connect` refuses.
+  `HOST` other than loopback disables the Host check: auth is expected in front.
+  `server.mjs` marks requests as HTTP unless `ORIGIN` is set (adapter-node assumes HTTPS).
 
-`lib/db.remote.ts` validates structured intents using the Standard Schema adapters in
-`lib/validation.ts` and `lib/schema-validation.ts`. It resolves a generation-checked pool
-exactly once, before calling the row or schema SQL module. Database functions receive their pool explicitly, never consult cookies,
-and never generate table/schema SQL on the client. Identifiers are quoted and values bound as
-parameters. The separate SQL-console commands intentionally accept arbitrary SQL, validated by
-`sql-validation.ts` and confined to dedicated clients rather than table-editor pool leases.
-
-`hooks.ts` supplies a shared SvelteKit transport codec for records with an own `__proto__`
-column key, which devalue otherwise rejects. It carries entries and reconstructs own data
-properties without prototype assignment. Rows, PK identities, changes and exact filters
-retain the same in-process contracts; ordinary remote validation still applies.
-
-`hooks.server.ts` requires both a loopback socket peer and a localhost/loopback Host header.
-It rejects proxy address/host/port header configuration and initializes the browser's session
-before remote queries (queries cannot set cookies themselves). Database errors remain useful
-but known passwords and connection URLs are redacted. Client errors use `utils.message` to
-handle SvelteKit's HttpError body as well as ordinary Errors/query error bodies.
-
-`server.mjs` is the production entrypoint. It binds 127.0.0.1 and overwrites an internal
-protocol header with HTTP before invoking adapter-node's handler. Otherwise adapter-node
-assumes HTTPS and rejects local HTTP commands. No client forwarding header is trusted and
-SvelteKit's origin/CSRF validation remains enabled. `bun run start` loads optional `.env`.
-
-## Data contracts
-
-`lib/types.ts` is shared by the browser, validation, and SQL modules:
-
-- `CellValue` is PostgreSQL text or SQL NULL. A per-query identity parser preserves exact
-  numeric, JSON, array, timestamp, and other type output. Metadata queries use normal pg
-  parsers; no process-global type parser mutations.
-- `Row` is `{ key, values, identity, draft? }`. User columns never share a namespace with
-  application fields. `Object.fromEntries`/computed keys and own-property checks preserve
-  even names such as `__proto__`, `constructor`, and `__key`.
-- `RowIdentity` captures primary-key text values, physical table OID, and xmin version.
-  Explicit copies of the identity and PK map avoid Svelte snapshot dropping `__proto__` keys.
-  Writes require all three and exactly one affected row; otherwise the transaction rolls
-  back. Physical table OIDs scope inherited/partitioned rows. Keyless tables refuse writes.
-- Display keys encode tableoid/ctid/xmin and identify one loaded row version, not an enduring
-  logical row. Pending mutations retain their own identity even after that version disappears.
-- New-row form values are sparse: omission is DEFAULT, `null` is explicit SQL NULL, `''` is
-  empty text. Its local draft Row is used only by nested editors, never added to grid rows.
-  Identity/generated column metadata controls writability on both client and server.
-- `Column.kind` is only a rendering hint, not a serialization or validation rule. The server
-  binds input text unchanged and PostgreSQL validates/coerces it to the actual column type.
-- Table keys encode `[schema, table]` tuples; dotted identifier names cannot collide.
-
-## SQL and metadata
-
-`lib/server/db.ts` exports `listTables(pool)`, `listRows(pool,args)`, `saveTable(pool,args)`
-and `deleteRows(pool,args)`.
-
-Catalog introspection includes exact formatted types, PK columns (excluding INCLUDE columns),
-enums, FKs, defaults, identity and generated columns. FK metadata preserves ordered source
-and target tuples per constraint; a column in multiple FKs exposes the first by name/OID.
-A WeakMap caches metadata per pool for 30 seconds; `listTables` explicitly refreshes it.
-Each mutation acquires a transaction-local ROW EXCLUSIVE table lock before reading fresh
-metadata, preventing column/key DDL races.
-Unknown/non-writable columns are rejected, never silently discarded.
-
-Saves and deletions are transactional. Updates/deletes match PK + tableoid + xmin and check
-rowCount; inserts also require one created row. Conflict handling is deliberately explicit:
-no automatic retry, silent overwrite, or automatic merging of concurrent changes.
-
-`RowQuery` shares filters, exact FK constraints, search and sorting between paginated rows
-and unpaginated query exports. `validation.rowQuery` validates these fields at both boundaries;
-`server/db.rowSelection` builds the shared parameterized WHERE and deterministic ORDER BY.
-`RowsArgs.sort` is an ordered array of at most 20 unique column/direction pairs (empty means
-no explicit sort). Validation rejects duplicate columns, invalid directions and malformed lists;
-metadata validates every column. SQL emits rules in order with NULLS LAST for both directions,
-then appends only missing PK columns and physical relation/tuple tie-breakers.
-Pages use OFFSET/LIMIT with that deterministic ordering.
-Fetching one extra row gives `hasMore`; there is no mandatory exact COUNT. `rowCount` is a
-catalog estimate. The toolbar uses the exact loaded count when a successful, unfiltered
-first page contains the whole table; other totals stay explicitly approximate, with a tooltip
-explaining stale PostgreSQL statistics. Structured `RowFilter` conditions use a shared operator
-whitelist (comparison, LIKE/ILIKE, NULL checks), native column typing and bound raw strings.
-At most 20 conditions of up to 10,000 characters each combine with AND, including repeated
-columns for ranges. Direct `listRows` calls share remote validation; metadata checks column
-names before quoting. Invalid types/operators remain explicit PostgreSQL errors.
-
-Exact FK constraints (`filter`) and user conditions (`filters`) combine with AND. The reference
-picker retains its separate debounced, text-cast ILIKE search across columns, which can scan
-large tables. Refresh reloads metadata and rows.
-
-## Schema editing
-
-`lib/schema.ts` defines catalog types, table definitions and structured DDL intents.
-`lib/server/schema.ts` lists usable namespaces (including empty ones) and approved builtin,
-enum/domain and array type OIDs, actual scalar/array relationships and ordered enum labels.
-Domains remain opaque, including domains over arrays. Type names are resolved and quoted on
-the server, never accepted as SQL. Strict validation bounds columns, UTF-8 identifier lengths,
-literals/comments and type-specific integer modifiers. Array modifiers apply to their elements.
-`schema-options.ts` shares modifier and contextual-default validation between client/server.
-Literal defaults use pg's escaping; date/time, UUID and new-integer identity are fixed presets.
-Text UUID defaults cast explicitly to text and reject character bounds below 36. Keeping a
-default emits no replacement SQL, preserving arbitrary existing expressions.
-
-Existing-table DDL takes an ACCESS EXCLUSIVE lock with a three-second lock timeout, then
-compares a semantic SHA-256 catalog fingerprint including table OID, column types/modifiers,
-defaults, comments, constraints and indexes. Data writes and statistics do not invalidate it;
-concurrent definition changes or same-name replacement do. Relation locks do not prevent
-namespace/type renames: transaction-start/end catalog tuple versions fence those names
-(including array elements and rename-and-restore), and pre-commit relation/type OID checks
-verify the actual target.
-These use namespace/type xmin, never table xmin or statistics. Transactions explicitly use
-READ COMMITTED so catalog checks stay fresh even with a stricter role default. Introspection
-and structured writes use a trusted search path; CHECK expressions retain the connection's
-original path for native operator/function resolution, then restore the trusted path. Explicit
-pg_temp last prevents temporary objects from shadowing catalog reads. Each Apply is one transaction; errors roll back and retain the form.
-There is no CASCADE, trial rollback, custom USING expression or automatic conversion fallback.
-Only standalone ordinary tables are editable; inheritance and partition targets are rejected.
-
-An explicit type selection uses a native PostgreSQL cast and requires acknowledgement that
-values may change and the table may be rewritten. Keeping a type preserves its exact modifiers.
-`SchemaTypePicker` groups integer sizes and timezone variants with an array checkbox;
-JSON/JSONB remain distinct. Decoded modifiers seed contextual length/precision/scale controls
-without triggering DDL. Unsupported existing modifiers stay exact until explicitly replaced.
-Changing types retains modifier/default drafts; incompatible choices block Apply, never silently
-reset values. Literal editors follow type: enum/boolean choices, JSON/plain CodeMirror, array
-literals and native scalar inputs. Empty text, arrays and JSON containers are distinct from NULL.
-Existing generated type/expressions and identity defaults stay unchanged. New tables can have composite PKs; keyless tables can add a PK, but existing PKs
-cannot be replaced. Native constraints and permissions remain authoritative. Dropping a column
-can remove its own indexes/constraints; external dependencies block restricted drops.
-
-`SchemaDefinition.indexes` exposes the same index metadata already included in the fingerprint:
-native definitions, method, uniqueness/PK, validity/readiness, clustering, replica identity,
-comments and owning PK/UNIQUE/exclusion constraints. Referencing FKs are not index owners.
-Ordered key columns exclude INCLUDE attributes; `referenceable` identifies valid, immediate,
-nonpartial, nonexpression unique keys usable by the FK form. PK membership also excludes INCLUDE.
-The table menu's Indexes Sheet inspects every definition and stages create/drop intents.
-Creation accepts 1–32 ordered, distinct plain columns, the six standard access methods and an
-optional unique flag. PostgreSQL supplies default ordering, collations and operator classes;
-unsupported combinations and duplicate data produce native errors without clearing the form.
-Expressions, partial indexes, INCLUDE, custom operator classes and concurrent operations remain
-SQL-only. Index operations use the existing exclusive table lock/transaction/fingerprint and
-namespace fences, so builds can block reads and writes. Creation verifies the resulting index's
-parent OID. Drops resolve an index OID against the locked table snapshot, protect constraint-owned
-and replica-identity indexes, use RESTRICT, then verify the original index OID is absent. This
-postcondition rolls back a name-resolved DROP if a concurrent rename redirected it elsewhere.
-
-`SchemaDefinition.constraints` exposes owned UNIQUE/CHECK/FK definitions, expression/ordered keys,
-validation/enforcement and deferral/NULL flags, comments and owned backing-index identity.
-FK metadata includes the full source/target mapping, target OID, match and referential actions;
-its referenced index is never treated as owned or given the FK's comments. Flags
-introduced in newer PostgreSQL versions are read through `to_jsonb` catalog properties.
-`SchemaConstraints.svelte` supplies local create/edit/rename/drop/validate forms inside the
-same Sheet. UNIQUE accepts ordered plain columns, NULLS NOT DISTINCT and native deferral.
-CHECK accepts one bounded boolean expression with NOT VALID/NO INHERIT options. NOT VALID skips
-old rows, not new-write enforcement; NULL passes CHECK unless the expression rejects it.
-
-CHECK input is not interpolated unchecked. A small `pg.Query.submit` adapter sends unnamed
-Parse → Close → Sync for a SELECT/WHERE wrapper; it never binds, plans or executes that SELECT.
-Parse rejects multiple statements, WHERE grammar rejects extra ALTER actions, and identical
-newline wrappers protect trailing comments. PostgreSQL then validates actual CHECK semantics.
-The adapter uses the normal driver queue; parse errors can precede ReadyForQuery, so rollback
-must finish before release. There is no named prepared state to leak. Native type-input routines
-can run during parsing, and real constraint validation evaluates functions: this is not a SQL
-function sandbox. Original search_path is restored separately for parsing and actual CHECK
-DDL; trusted search_path/standard_conforming_strings are restored before catalog/identity checks.
-
-Editing replaces a constraint atomically and preserves constraint/backing-index comments.
-Ordinary enforced CHECK/FK constraints and standard valid UNIQUE indexes are replaceable.
-Temporal, unenforced and column-subset referential actions require SQL to replace, as do
-custom internal RI-trigger names, modes or comments. Trigger configuration on both relations
-participates in the fingerprint. For UNIQUE, INCLUDE,
-nondefault operator classes/collations/order, index storage/tablespace options, clustering and
-replica identity require SQL. Rename retains advanced definitions without replacement. Replica
-identity also blocks drops, and native RESTRICT protects FK dependencies. Every existing target
-is resolved by OID against the locked snapshot; DROP verifies the original OID disappeared,
-rename/validate verify the original OID's new state, and creation verifies its parent and current
-transaction xmin. This also fences constraint renames induced by backing-index renames.
-UNIQUE replacement additionally locks its backing index: PostgreSQL cannot LOCK TABLE an index,
-so a no-op ALTER INDEX SET TABLESPACE to the actual database default obtains the index lock.
-A short-lived catalog-xmin check and refreshed semantic fingerprint reject changes before the
-lock; comments/options cannot change afterward. This xmin is not in the public fingerprint.
-The normal command does no physical work, but a raced tablespace move can cause work before
-rollback. It is real DDL and can fire event triggers. Rebuilds retain the database-default
-location rather than adopting a different role default_tablespace; the resulting index must
-still have reltablespace = 0, fencing tablespace-name reuse.
-
-FK forms select an existing primary/immediate unique key, map complete composite tuples and
-support MATCH SIMPLE/FULL, native update/delete actions, deferral and NOT VALID/validation.
-They capture the referenced definition's OID/fingerprint. Parse-only ACCESS SHARE acquisition
-protects target identity without requiring SELECT beyond native REFERENCES privileges; real ADD
-upgrades the lock. FK replacement additionally takes an explicit ACCESS EXCLUSIVE lock on the
-old referenced relation and rechecks the source fingerprint before removing anything. This
-blocks RI-trigger comments as well as mode/name changes, including when retargeting another table.
-It requires native LOCK permissions beyond REFERENCES; there is no weaker fallback. External
-FK creation still needs no SELECT privilege; rename and deliberate whole-constraint drops keep
-native permissions.
-Namespace versions, index identities, referenced attnums and the actual created FK are rechecked. External target fingerprints exclude only the locked source's incoming FKs,
-which our own batch can change. Eligible self-reference indexes use the native no-op index
-lock, including before type rebuilds.
-Timeouts/deadlocks fail explicitly, without retries. Both tables must be ordinary standalone tables.
-Type casts can implicitly rebuild owned or incoming FKs. Casts of FK key attributes therefore
-check their RI-trigger configuration and exclusively lock all related tables before mutation,
-with the same identity/fingerprint fences and native LOCK permission requirement. Customized
-triggers or nonstandalone related tables require SQL. Unrelated casts, rename/nullability changes
-and explicitly staged whole-FK removals do not acquire these additional cast protections.
-
-`SchemaEditor.svelte` owns local drafts in a resizable Sheet; shared `SchemaColumnFields`
-serves create/add/alter forms. `ColumnConstraints.svelte` embeds UNIQUE, relevant CHECKs and
-outgoing FKs directly in Edit column, reusing `SchemaConstraints` and `SchemaForeignKey` fields.
-Joined table/key labels quote punctuation so dotted namespaces and comma-containing columns
-cannot look identical to different targets/tuples; selection values remain raw identity tuples.
-Simple single-column uniqueness has a checkbox; composite/advanced membership stays explicit.
-Collapsed draft forms remain mounted, preserving editor history. Opening an unchanged edit or
-loading a target fingerprint does not dirty the form. Removal requires the whole constraint's name;
-undoing removal restores any earlier local edit. Table overviews retain checks with no column refs.
-
-Up to 20 column constraint additions/replacements/removals share the outer Apply transaction.
-All captured targets/index locks are checked first; explicit FK removals precede UNIQUE removals,
-then column changes run, UNIQUE keys are created before FKs, and the column rename runs last.
-CHECK text and mappings use original column names; PostgreSQL propagates the final rename.
-Failures roll back every column/constraint change and retain drafts. No nested save is issued.
-Referenced keys must already exist in the captured definition; creating a new self-reference key
-requires applying that key first. New-column/create-table forms do not yet embed these controls. The sidebar creates tables; each table row's `TableMenu` exposes
-copy name/schema, duplicate, CSV export, indexes, constraints, rename, delete and keyless-table
-PK creation.
-Breadcrumbs are display-only. Opening a menu/form
-captures its own table target without changing the active grid; cancelling preserves that view.
-Deleting another table leaves the current table selected. Grid header menus expose column edit/delete, and a trailing
-sticky + header adds columns, including to zero-column tables. There is no separate Definition view.
-The panel snapshots its menu trigger before parent intent teardown for focus restoration;
-removed triggers fall back to the grid. Apply or Ctrl/Cmd+Enter submits; outside clicks do
-nothing, Cancel confirms dirty
-form discard, and destructive operations require the exact target name. `schemaEditing` blocks
-navigation, row writes and polling. Successful DDL invalidates metadata and clears stale query
-conditions/selections before reloading the created/renamed/current table. A table with its last
-column removed remains selected, with its add-column header and table menu available. A read failure after
-acknowledgement never turns a successful DDL command into a retryable write failure.
-
-## Table copying and CSV export
-
-Schema SQL is a read-only server-generated preview, copied only by an explicit browser gesture.
-Its scope warnings travel with the copied SQL; it is not a full database backup. Duplication
-uses a new name in the source schema, defaults to no rows, and requires acknowledging the copy
-scope. `server/table-actions.ts` builds the catalog snapshot and native LIKE clone, with
-independent owned sequences. Direct nextval defaults (including cross-column references) are
-rebound without SQL text substitution; complex owned-sequence expressions, including dynamic
-builtin sequence calls in CHECK trees, are rejected before creating the clone.
-Sequence options/ownership and RLS flags participate in fingerprints, but live sequence values
-do not. New sequence positions use PostgreSQL numeric/int8 arithmetic past copied extrema;
-exhaustion fails explicitly. External types/functions/unowned sequences remain shared.
-Generated values are recomputed when rows are included. RLS flags remain but policies,
-foreign keys, triggers, rules, grants and ownership are not copied; PostgreSQL default privileges
-apply to the destination. Copy/duplicate use ACCESS SHARE locks and source/destination catalog
-identity checks. Schema SQL includes exact types/collations/defaults, owned sequences,
-constraints/FKs, non-constraint indexes and comments, with unsupported physical/security settings
-listed as omissions. Non-FK constraints and indexes precede FKs, so self-references backed by
-standalone unique indexes restore correctly. No arbitrary SQL is accepted from the client for
-either action.
-
-`server/export.ts` streams exact CSV with a read-only SQL cursor in 256-row batches; one value
-can still be large. Optional `CsvExportArgs.query` applies the grid's exact filters/FK tuple
-and sort to all matching rows, without pagination or checked-row selection. Query exports
-read fresh metadata on the locked lease, reuse the grid's WHERE/order builder and bind values
-in DECLARE. Catalog reads use a trusted search path; DECLARE/FETCH retain the connection's
-original path so custom operators (e.g. citext), functions and RLS behave as in grid reads.
-Full-table exports omit the query and retain unspecified ordering. Optional `columns` selects
-unique, existing names in table column order; filtering/sorting still uses the complete table.
-Omission means all columns, and an empty selection is rejected rather than silently broadened.
-Non-null values (including empty strings and headers) are quoted; SQL NULL
-is an unquoted empty field. Per-query text parsing and array-mode rows preserve precision and
-hostile column names. An ACCESS SHARE lock, namespace tuple-version fences and cursor field
-relation OIDs verify the bound target before response headers. The cursor supplies a consistent
-snapshot without OFFSET pagination and respects the role's RLS visibility. Zero-column and
-non-standalone tables are rejected explicitly. Abort/cancellation destroys only the leased
-client; successful/error completion rolls back the read-only transaction before reuse.
-
-`/export` accepts only connection/schema/table GET parameters for full-table downloads.
-The UI uses a native URL-encoded POST form with one JSON `export` field, avoiding URL
-length limits and filter values in URLs/history. Both validate strict structured arguments and
-capture one generation-checked pool. Loopback/session guards still apply; cross-origin requests
-are rejected, and POST requires a matching Origin and the expected form content type. Native attachment
-downloads avoid buffering the whole file in browser JavaScript. `CsvExport.svelte` captures
-requests and submits to a hidden, script-disabled download frame, without navigating the app or
-opening tabs. A new request replaces the previous frame; already-started attachments belong to
-the browser download manager. Initial error documents appear in the app, not as CSV files.
-The toolbar downloads all matching rows/columns immediately; the sidebar downloads the full
-table. A brief, dismissible request acknowledgement (or modal button label) confirms the click,
-not transfer completion; initial errors replace it. Its timer resets per request and is cleared
-on unmount. Optional Export options opens a modal with all columns initially checked, preserving
-the action's captured table/query scope. The schema-editing Sheet no longer handles CSV.
-Options/errors remain available for correction; browser-native downloads report later transfer
-failures. Browser-level URL blocking that produces neither a download nor a frame load event
-cannot be detected by this native handoff; there is no speculative failure timeout. Query exports use a fresh cursor snapshot, not the grid's displayed row versions.
-Responses are no-store/nosniff/same-origin; filenames are safely encoded.
-
-## SQL console
-
-`sql.ts` defines positional field/row results: every value is PostgreSQL text or NULL,
-including duplicate/hostile column names. `server/sql.ts` owns up to four dedicated clients per
-browser connection generation. Each SQL workspace lazily opens its own server-generated session;
-SET, temporary tables and explicit transactions survive subsequent runs without affecting pools.
-Buffers/selections are submitted unchanged using PostgreSQL's simple protocol: no splitting,
-LIMIT injection, implicit BEGIN wrapper or automatic retry. Multi-statement buffers follow
-PostgreSQL's native transaction rules. Earlier explicit commits can survive a later error.
-COPY protocol streams and binary cursor results explicitly close the session; this is not a
-psql terminal. UTF8 client encoding is required and established at startup. Reported encoding
-changes close the session and discard that run's previews. PostgreSQL does not report temporary
-change-and-restore within one buffer: changing client_encoding, including inside functions, is
-unsupported and may corrupt results/messages or cause native conversion errors. No SQL blacklist
-pretends to enforce arbitrary function behavior.
-
-Streaming `pg.Query` row events retain at most 1,000 rows per result, 50 results and a 2 MB
-aggregate preview budget, including metadata/notices and reserved error space. Excess previews
-are discarded without cancelling SQL or changing write semantics. A small, documented adapter
-to pinned pg 8.23.1 internals drops old driver result metadata too. One incoming protocol
-frame/value can still be large before the preview bound applies. Error text and notices are
-redacted/bounded. ReadyForQuery, not Query's earlier error event, determines actual idle/open/
-failed transaction status. Transport failures report unknown outcomes and require explicit Reset.
-
-Cancellation uses a separate bounded client with original credentials, checks the run ID again
-after connecting, and keeps the SQL session busy until cancellation settles. Idle/stale requests
-cannot cancel a later run. Connection replacement, disconnect and expiry retire all dedicated
-and connecting/cancelling clients. Defaults: 10-second connect, 30-second statement timeout,
-5-minute idle-transaction timeout, 15-minute SQL idle expiry and a 60-second application wall
-limit which destroys the socket even if SQL changes server timeouts. Socket destruction does
-not guarantee immediate database interruption; unfinished work has an unknown outcome.
-Closed/expired sessions never reconnect transparently. A same-origin JSON `/sql/close` beacon
-on non-bfcache pagehide releases abandoned sessions; expiry also covers crashes/offline tabs.
-
-`SqlState` is instantiated per mounted workspace. It snapshots submitted SQL/run IDs, retains
-drafts through errors and resets, and guards duplicate runs/connection changes.
-SQL text autosaves synchronously on actual edits to versioned localStorage keys containing a
-per-tab UUID and exact host/port/database/user tuple, never credentials or connection generations.
-The UUID lives in sessionStorage; a held Web Lock prevents duplicated tabs (which clone that
-storage) from sharing a write slot. A duplicate copies the current target's text into its own slot.
-The editor is read-only during initial restoration/ownership acquisition. Restoration never opens
-a SQL connection or executes text; a nonempty restored draft opens the SQL workspace unless the
-user already chose a workspace. Clearing the buffer removes its saved text.
-
-Pagehide freezes writes before releasing the lock; a lifecycle counter rejects late acquisitions.
-BFCache resume reacquires ownership and compares the saved snapshot before enabling persistence.
-Conflicts preserve both cached text and newer stored text, with autosave paused and an explicit
-warning. Failed initial reads likewise never enable writes to unread storage. Quota/write failures
-retain unsaved text; subsequent edits can retry. Storage events and a synchronous pre-navigation
-check detect cleared/changed data or lost tab identity without recreating deleted records.
-Only safely saved SQL text and idle sessions avoid reload warnings: running/cancelling work,
-open/failed transactions, unknown outcomes and unsaved table forms still warn. Connection changes
-retain a separate session-loss confirmation; successful teardown does not save an artificial empty
-draft. Local SQL is unencrypted; sessions/results/history are never restored, and abandoned tab
-records remain until their editor is cleared or the site's storage is removed.
-`SqlEditor` uses TextEditor's PostgreSQL CodeMirror mode, keyword completion, line numbers,
-selection-or-buffer Run/Ctrl+Enter, a keyboard/pointer resizer and paged read-only result sets.
-The SQL workspace opts into `TextEditor.tabIndent`: Tab accepts a selected SQL completion or
-indents; Shift+Tab outdents without leaving the editor. SQL-language CHECK forms keep native
-Tab focus navigation.
-CodeMirror's Escape-then-Tab accessibility escape hatch remains available. Autocomplete consumes
-its own Escape before enclosing panels handle dismissal; the next Escape follows normal container
-behavior. Cell editors retain native Tab navigation.
-Compact status reports idle/open/failed transactions. Commit/Rollback buttons send only their
-literal command through the existing run path, preserving the draft/selection and session;
-Commit is disabled in a failed transaction. There is no transaction wrapper or mode switch.
-Session/preview details live in an info popover rather than permanent explainers. Errors,
-messages, truncation and session reset remain explicit. The rail shows
-Tables, SQL and connection controls only. Table Live polling pauses in SQL; returning preserves
-the table workspace. Schema changes made through SQL require a table Refresh.
+Whoever reaches the app can run arbitrary SQL with the configured role. So remote functions are
+`'unchecked'` (no schema validation layer) and there is no DDL/SQL "hardening". SQL builders
+still quote identifiers, bind values and whitelist interpolated keywords (sort direction, filter
+operators) — for correctness, not as a security boundary.
 
 ## Connection lifecycle
 
-`lib/server/connections.ts` maintains a bounded in-memory registry. Each browser has an
-HttpOnly SameSite=Strict bearer cookie; its connection has an independent public generation.
-An absent cookie may initialize the optional trusted `DATABASE_URL` default. An unknown or
-expired cookie initializes an expired/disconnected session, never an environment fallback.
-Malformed environment configuration appears in onboarding rather than preventing connection.
+`connections.ts`: `current = { info, pool, sql }`. `info.id` is a random generation that
+changes on every switch. Every remote call passes the generation it loaded; a mismatch throws
+"Connection changed in another tab", so stale tabs never act on a new database.
+Connect test-queries a candidate pool before replacing the old one. SSL is a separate setting
+(`connection-options.ts`); URLs may carry only `sslmode` (imported into the setting, then
+stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
+on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
+Profiles (`connection-profiles.ts`) are a plain localStorage list; the active one is matched by
+host/port/db/user. A successful switch reloads the page.
 
-Connect tests a candidate pool before replacing the current one, checks expected generation
-and session revision before and after the await, and retires old/pending clients. Failed
-connects preserve the previous connection. Disconnect retains an explicit disconnected
-session; `useDefault` is a separate command. Every access checks the two-hour idle TTL;
-a periodic sweep releases idle sessions. Limits: 32 sessions, 8 pending connection attempts,
-5 clients per pool, 10-second connect and 30-second query/statement timeouts.
+## Rows (`server/db.ts`)
 
-Browser URLs are parsed into explicit pg settings, not passed through as driver options.
-`connection-options.ts` separates the URL and `sslMode`: disable/prefer/require/verify-full.
-The SSL dropdown never modifies the URL. Pasted sslmode options initialize the dropdown and
-are stripped without reserializing credentials; unknown/duplicate/conflicting options fail.
-Required is the default (encrypted, no certificate verification); verify-full verifies identity.
-Disabled permits plaintext for any host. If available first tries encryption and permits one
-plaintext candidate only for pg's exact plain Error for an SSLRequest 'N', before authentication
-or SQL. TLS/authentication/query errors never downgrade. The fallback rechecks generation/revision
-and retires the original candidate; the negotiated transport stays fixed for that generation's
-pool and dedicated SQL clients. Reconnect to renegotiate after server SSL capability changes.
-Certificate file options, ambiguous settings, and environment-password
-inheritance are rejected. Environment URLs are trusted and retain pg's parsing behavior.
+- `CellValue` is PostgreSQL text or NULL: per-query identity type parsers, never JS coercion.
+- `loadMetadata` reads tables/columns/PK/FK/enum info; cached per pool for 30 s, refreshed by
+  `listTables` and invalidated after DDL. Column `kind` is only a rendering hint.
+- `rowSelection` builds the shared WHERE (exact FK filter, structured filters, picker search)
+  and deterministic ORDER BY (`reference` = exact FK-navigation match, `filters` = user conditions) (user sorts NULLS LAST, then PK, tableoid, ctid). Grid pages use
+  OFFSET/LIMIT+1 (`hasMore`); counts are catalog estimates.
+- Writes run in one transaction with a ROW EXCLUSIVE lock and fresh metadata. Updates/deletes
+  match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.
+  Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
 
-`lib/connection-profiles.ts` stores up to 50 named profiles in browser localStorage, separate
-from the active server connection and the automatic-reconnect entry. Profiles capture a UUID,
-revision token, case-insensitively unique name, credential-bearing URL and separate SSL mode.
-URLs are trimmed only at their edges, except an imported sslmode query is extracted.
-Explicit Save includes credentials; there is no separate password field or storage checkbox.
-Existing profiles/reconnect records with embedded sslmode normalize on read without losing
-their chosen transport or rewriting stored data until an explicit write.
-URL/name bounds and stored-record validation
-fail explicitly without overwriting malformed data or echoing credentials.
-Web Locks serialize local writes, re-read the current list and compare the selected revision.
-Unrelated profiles survive concurrent saves; stale edits/removals fail instead of resurrecting
-records. No-op saves retain their revision and reconnect entry. Updating/removing a profile
-revokes its linked reconnect entry before writing, not its live session; a storage failure can
-therefore disable reconnect while leaving the original profile intact.
-The same lock/revision check fences post-connect credential persistence against profile removal.
-Network connections never hold this storage lock. No profile operation sends database DDL.
+## Schema editing
 
-`ConnectionDialog` owns the header switcher and separate management dialog, also reused on
-onboarding. Its searchable popover uses password-free labels, keyboard navigation, checked
-active rows and Add/Manage actions. Choosing a saved row switches directly through the existing
-generation-checked command/reload, with transaction/draft guards. Save/Remove remain local.
-The table/SQL workspace is inert during a switch; polling and SQL shortcuts pause while the
-connection UI is open. The shared header remains available in either workspace.
-Storage events refresh choices without replacing editing drafts; stale saves require reload.
-Function bindings reject cancelled dialog transitions before Bits UI changes its local state.
-The active-profile label is a non-secret storage hint fenced by connection generation and profile
-revision. It never selects a database or authorizes a command; missing/stale hints show actual
-server-reported connection details instead.
+`lib/ddl.ts` is the pure SQL generator (create table, add/alter column, duplicate, constraint
+clauses, literal escaping). Forms build a `SchemaChange { sql, select?, destructive? }`, show it
+as a preview, and `executeDdl` runs it in one transaction (`lock_timeout` 3 s). PostgreSQL is
+the validator. `server/schema.ts` also lists approved column types (builtins, enums, domains,
+arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
+`SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
+`SchemaConstraints` are list + form children that bind their `change`. Editing a constraint is
+drop + add. Duplicate uses `LIKE … INCLUDING ALL`, copies non-generated columns with
+`overriding system value`, and advances identity sequences.
 
-`lib/remembered-connection.ts` stores one opt-in URL/password in browser localStorage,
-scoped to the app origin (including port). A separate boolean preference enables automatic
-reconnection. Successful saved-profile switches capture the latest URL when enabled; turning
-it on can also capture the current unchanged profile. One-off connections never persist a URL.
-Disconnect pauses restoration without changing the preference; disabling it clears the
-reconnect entry. A separate non-secret consent
-cookie, scoped by protocol/port in its name, also gates restoration. Manual changes turn it
-off before touching localStorage; this allows nonpersistent use when localStorage is denied
-without reviving stale credentials once access returns. An intent nonce also prevents a late
-connect response from overwriting a newer choice or undoing disabled reconnection in another tab.
-Queued preference enables capture their intent before awaiting the profile lock, so a newer
-opt-out wins. Corrupt reconnect data exposes an explicit clearing action without erasing profiles.
-Missing/expired consent fails closed. Reconnect entries may link a saved profile; bootstrap
-checks that both URL and SSL mode still match. Profile URLs are erased only by explicit editing/removal.
-Other storage failures are explicit; failed post-connect persistence does not undo a connection.
+## SQL console (`server/sql.ts`)
 
-On page bootstrap, an enabled saved URL restores a missing session or replaces an implicit
-environment default. An existing browser connection is never replaced automatically. Failed
-restoration stays on onboarding, never falls through to the environment database. This runs
-before EditorApp mounts, never during edits or background polling; after expiration, reload
-with the normal unsaved-work guard. Browser-entered credentials are never persisted on the server.
+Up to 16 dedicated `pg.Client`s per connection, keyed by random session id; never reconnected.
+A buffer is sent unchanged via the simple protocol. A `row` listener (no callback) stops pg from
+accumulating rows; previews keep ≤1,000 rows per result and ~10M chars total. Per-statement
+results come from pg's internal `query._results`; transaction status is read after
+ReadyForQuery. Cancel opens a second client and `pg_cancel_backend`, guarded by a run counter.
+Sessions expire after 15 idle minutes; a pagehide `sendBeacon` to `/sql/close` releases them.
+`SqlState` (client) persists only the draft text, per database, in localStorage.
 
-## Browser state and grid
+## CSV export
 
-`EditorState` owns the active query and cross-page row selections, not staged edits.
-Cell buffers and new-row form values stay in their components. `updateRows` validates and
-captures an atomic mutation batch for an applied cell/composite reference, paste or range clear.
-`insertRow` inserts one complete sparse form. Both await the real database write; PostgreSQL
-validates all types and constraints. Failures throw to the owning editor without replacing
-its rows or buffer. After acknowledgement, a refresh failure is a read error, not a failed
-write that should be submitted again. Updated versions are removed from row selections;
-unrelated selected identities survive.
+`/export` takes one form-POSTed JSON `CsvExportArgs` into a hidden iframe so the browser streams
+the attachment; an error response loads in the frame and is shown as a toast. `server/export.ts`
+declares a read-only cursor (same `rowSelection` as the grid when a query is given) and streams
+256-row batches; cancel/abort destroys the leased client.
 
-Open editors/forms and pending mutations block navigation and connection reinitialization.
-Mutations capture their target and invalidate older polls. Sort fetches retain displayed rows
-and their page offset, with editing disabled; other fetches clear stale rows immediately.
-A request counter discards out-of-order reads. User filter changes reset pagination and copy
-the submitted conditions; sorting, page size, polling and refresh preserve them. Reference
-arrows use a separate complete exact-key constraint. Switching tables clears user conditions;
-Show all rows / Remove filters clears both user and FK constraints.
+## Browser state and UI
 
-Live mode starts enabled and is scoped to the current result page. EditorApp invokes `poll()` every
-five seconds and on visibility changes, gated by document visibility, active workspace,
-SQL execution and connection modal state.
-Schema forms pause polling through the workspace guard. Polls never overlap or invalidate foreground reads. Foreground request and live
-mode generations reject obsolete responses, including reads begun before a mutation.
-Unchanged results keep the existing row array. Changes update an idle view, or set a notice
-when an open editor/form, row selections or cell/range focus need preserving.
-Live errors are separate from foreground errors and never clear rows. DataGrid reports cell
-selection independently of its edit buffer. Polling does not refresh schema metadata in the UI.
+- `state/editor.svelte.ts` (`EditorState`, module singleton): active table, query, rows, row
+  selections (captured identities, across pages), busy/editing flags. A request counter discards
+  out-of-order reads; a live generation discards polls begun before a mutation. A failed read
+  after an acknowledged write is reported as a read error, never retried as a write.
+  `navigationBlocked` (busy/editing/inserting/schemaEditing) gates navigation and reloads.
+- `utils.fresh()` refreshes a remote query: queries are cached per argument and polling reuses
+  identical arguments.
+- `DataGrid` is a custom CSS-grid spreadsheet (fixed 35 px rows, no virtualization) with
+  positional focus/range; edits capture the row, never an index. `CellEditor` holds one
+  text/NULL/DEFAULT buffer in a popover or `ResizableSheet`; only Apply saves.
+- `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
+  the editor reports document edits only, so opening and applying unchanged never rewrites a
+  value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).
+- `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for the sidebar and sheets.
+- Theme: dark charcoal palette in `app.css`, shared by shadcn components and the grid.
 
-`DataGrid.svelte` keeps positional focus/range and a captured row/column/anchor for its editor,
-never a mutable array index as an edit target. Replacing rows cancels positional selection
-and editing. Bounds and full paste rectangles are validated before local mutation. Native
-child controls own their keyboard events; the grid exposes active-cell focus through ARIA.
-There is no permanent usage-hint/status strip above the column headers.
-Cells open by double-click, Enter or F2. Escape, blank grid clicks and outside-grid clicks
-clear cell/range focus without changing checkbox row selections. Adjustable separators are
-excluded so layout resizing keeps the current range. Outside clicks never steal focus from
-controls or clear selection underneath an open cell editor.
-
-`CellEditor.svelte` owns one exact text/NULL/DEFAULT buffer shared between a shadcn Popover
-and a resizable Sheet. Apply saves existing rows immediately; Escape cancels the buffer.
-Outside clicks and blur neither save nor discard the buffer. FK selection prepares a complete
-local tuple; Apply writes it together with any subsequent field edit. The editor stays open on
-database errors, disables changes/dismissal while saving, and closes only after acknowledgement.
-A transparent overlay consumes outside clicks so navigation cannot bypass Apply or Cancel.
-Filter changes are likewise blocked
-while cell editors or insert forms are open. Opening a cell places a caret rather than selecting
-all text. Expansion preserves the buffer and deliberate text selection.
-Set to options depend on nullability, type and draft status. Temporal Now uses PostgreSQL's
-`now` literal rather than JS date conversion; PostgreSQL resolves it when the batch is saved.
-Read-only cells can still be inspected and expanded. Sheets do not blur the underlying table;
-regular confirmation and connection dialogs keep their backdrop. Applicable Set to actions
-sit at the footer's right: one action is a button, multiple actions a DropdownMenu.
-Select handles enum/boolean choices; Escape dismisses the innermost menu first.
-
-`TextEditor.svelte` uses CodeMirror for text and JSON/JSONB columns, chosen from `Column.kind`,
-never content or length. Plain text stays literal and soft-wraps; JSON gets indentation
-and syntax highlighting. The SQL workspace selects a separate PostgreSQL language mode with
-line numbers/completion, without changing cell semantics. Other column kinds retain native controls. Both the cell editor and insert
-form use this component. EditorState survives cell-panel expansion, preserving selection and
-undo history. Initial formatting and external buffer changes do not emit edits.
-A shared history field tracks the semantic buffer value alongside the document:
-undo/redo preserves SQL NULL, DEFAULT, explicit empty text and original literal spelling.
-Set-to actions are independently undoable, even when the visible document stays empty.
-`json.ts` formats parser tokens without decoding numbers, strings or duplicate keys.
-Incomplete JSON stays editable. CodeMirror splits only LF, retaining CRLF and lone CR bytes
-even through edits; special-character markers make CR visible. Rendering uses text nodes,
-never injected HTML.
-
-`InsertRow.svelte` is a resizable, unblurred Sheet with all column fields, a scrollable body
-and fixed Save/Cancel footer. Defaults are placeholders, never evaluated into form values.
-Generated/always-identity fields stay omitted. Save performs one insert; errors retain the
-whole form. Create more resets fields and undo history after acknowledgement. Discarding a
-populated form requires confirmation. Nested cell/text/reference editors only update this
-local form until its Save action.
-
-`FilterBar.svelte` replaces broad table search with searchable column suggestions, grouped
-comparison choices, raw values and editable/removable chips. Bits UI Combobox and shadcn
-Select/Popover provide keyboard navigation and focus handling. Draft conditions stay local
-until Apply (unary NULL checks apply immediately); no AI, SQL expression parser or nested OR.
-The grid distinguishes an empty table, zero filtered matches (with Remove filters), and read
-failures. Failed reads show the PostgreSQL warning inside the empty-results panel, not a
-duplicate top banner; errors with retained rows keep the banner. There is no
-panel Retry button: edit/remove invalid filters, or use the toolbar Refresh for transient errors.
-Empty-result panels fit their content, wrap long messages within the viewport, and stay sticky
-at the grid's left edge during horizontal scrolling.
-A type error is never presented as a successful query with no results. If Live empties
-a later page, it says No rows on this page and offers Go to first page without removing filters,
-rather than incorrectly claiming the whole table or filtered result is empty.
-
-`SortMenu.svelte` shares the filter toolbar row. Its local draft supports adding columns,
-toggling direction, moving priorities up/down and removing rules. Apply snapshots all rules
-in one retained-row fetch; closing the popover discards the draft. Grid headers cycle one
-column through ascending/descending/off without replacing other rules, and display priority
-numbers. Only the primary header uses `aria-sort`; other sorted headers have descriptive names.
-Sorting survives filters, paging, refresh and polls, but resets when switching tables.
-`ColumnMenu.svelte` provides explicit ascending/descending/remove-sort actions without replacing
-other priorities, plus copy-name and schema actions. Header chevrons are separate from the sort
-button and resize handle. Header tooltips retain comments, nullability, defaults/generation,
-enum values and FK targets; the trailing action column never enters cell selection or clipboard data.
-
-`ReferencePicker.svelte` queries 25 target records per page with debounced search and
-superseded-response cancellation. Selection prepares all source columns in the cell editor;
-Apply saves them atomically for existing rows, or fills the new-row form locally. NULL-containing target tuples cannot be selected.
-The same resizable panel hosts the picker; a raw-value editor remains available.
-
-The grid uses fixed 35px rows/header and 100/250/500-row pages, without virtualization.
-Widths use runed PersistedState keyed by connection/table, with in-memory sizing when browser
-storage is denied at mount. Resizing works with pointer or keyboard. shadcn provides buttons, checkboxes and textareas; the cell layout stays custom.
-`format.ts` keeps display text lossless and implements quoted TSV, including NULL/default
-markers. Opening and closing a cell without input does not coerce its original value.
-
-The table sidebar has an adjustable right-edge separator: drag or use Left/Right and Home/End.
-Its local preferred width survives Tables/SQL switching; viewport clamping does not overwrite it.
-Bounds are 160–480px, capped at half the viewport when space permits. Existing cell/reference,
-insert and schema Sheets retain their left-edge controls and 320px-to-viewport bounds.
-All four handles capture only the primary pointer, ignore secondary pointers/buttons, and stop
-on release, cancellation or lost capture. Pointer resizing preserves the focused field and never
-remounts editors or changes drafts. Shared CSS draws small neutral dotted grips instead of
-highlighting the entire edge; keyboard focus outlines the grip. Grips stay on the border,
-including at full Sheet width, where the viewport intentionally clips their outside half.
-No new storage or resizing dependency is involved.
-
-The shell uses generated shadcn-svelte buttons, inputs, labels, dialogs, selects and badges.
-ReferencePicker uses shadcn Table; its outer scroll container
-owns scrolling so the table header remains sticky. The spreadsheet remains custom.
-Dialogs provide focus containment/restoration. Connection URLs use ordinary text inputs,
-not password fields, to avoid browser password-save prompts. Discard confirmation and
-beforeunload guards protect open editors/forms and writes. The dark
-charcoal palette in `app.css` is shared by shadcn and the grid. Inputs are inset/darker,
-buttons and selections neutral; only Connect and small status accents use brand green.
-JSON syntax uses a muted editor palette rather than green strings.
-
-`LoadingShell.svelte` keeps the sidebar/main layout while connection/catalog data loads.
-Neutral Skeleton bars cover empty table/reference loads; retained rows during sorts show
-only a small progress bar. Live polls do not flash skeletons. Loading regions expose status
-and busy semantics; pulse animation respects reduced-motion preferences.
-
-## Development and verification
-
-Use Bun for the pinned dependency lockfile and Node 24+ for the launcher and native
-TypeScript test runner. Production runs through `server.mjs`, not `node build`.
+## Development
 
 ```sh
 bun install --frozen-lockfile
-bun run dev                 # http://127.0.0.1:5173, loopback only
+bun run dev                 # 127.0.0.1:5173 (loads .env)
 bun run check
-bun run test                # tests not requiring a live database
 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55433/postgres bun run test
-bun run test:production     # builds and tests the real HTTP server
+bun run test:production     # builds, then checks the real launcher (CSRF, Host guard)
+docker run -d --name sb-dev-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55433:5432 postgres:18.3-alpine
 ```
 
-For an isolated development database:
+DB tests create and drop their own schema and need an explicit `TEST_DATABASE_URL`.
+Tests are deliberately few: exact values, conflicts, editor race guards, DDL round-trip,
+SQL sessions, CSV and the production HTTP boundary.
 
-```sh
-docker run -d --name superbase-db -e POSTGRES_PASSWORD=postgres \
-  -p 127.0.0.1:55433:5432 postgres:18.3-alpine
-docker exec -i superbase-db psql -U postgres < dev/seed.sql
-```
+## Layout
 
-Copy `.env.example` to `.env` and adjust `DATABASE_URL` for an optional default connection.
-The application can also start without any environment URL and connect through onboarding.
-Integration tests require explicit `TEST_DATABASE_URL`, create a unique schema and remove it
-afterward. They never fall back to the application's database URL. Use a disposable database.
-Browser QA likewise uses isolated browser sessions and disposable databases.
-Resize checks cover all four handles, native mouse/touch and keyboard bounds, pointer cancellation,
-viewport/workspace restoration, retained ranges/drafts/caret/history and narrow long-name layouts.
+- `src/lib/types.ts`, `schema.ts`, `sql.ts` — shared contracts; `ddl.ts` — DDL generation.
+- `src/lib/db.remote.ts` — remote functions; `src/lib/server/` — connections, rows, schema, SQL, CSV.
+- `src/lib/state/` — editor and SQL workspace state; `src/lib/components/` — UI (`ui/` is generated shadcn).
+- `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
 
-`bun run check` typechecks application code. `bun run test` exercises actual compiled runes
-state with mocked remote I/O, connection lifecycle with mocked sockets/request context, and
-value/schema regressions, lossless JSON formatting, literal text/line endings and semantic
-CodeMirror history.
-With explicit `TEST_DATABASE_URL`, real PostgreSQL tests cover
-precision, defaults, arbitrary names, inheritance/partitions, conflicts, transaction rollback,
-typed/parameterized filters, multi-column order/NULL placement and stable page boundaries.
-Schema integration tests cover literal quoting, contextual presets, scalar/array modifiers,
-domain/enum metadata, exact modifier preservation, casts/default ordering, rollback,
-concurrent fingerprints and catalog-name reuse, dependency restrictions, PKs, lock timeouts
-and metadata invalidation. Index tests cover native definitions/status, ordered B-tree/GIN
-creation, invalid combinations and duplicate-data rollback, owner/replica-identity protection,
-FK dependencies, cross-table OIDs, permissions and actual index/namespace rename races.
-Constraint tests cover exact metadata, native deferral/NULL semantics, atomic replacement and
-comments, NOT VALID/validation, parse-only injection boundaries, custom search paths, permissions,
-advanced-option/replica/dependency protections and constraint/namespace rename races. Index
-locking regressions cover concurrent options/comments and ordinary-owner replacement.
-Column/FK tests cover atomic multi-constraint type/rename batches, complete rollback, composite
-and self-reference mappings, eligibility (including INCLUDE versus key attributes), referential
-semantics, REFERENCES-only creation versus stronger replacement/cast locks, target/index/namespace
-races, comment preservation and explicit/implicit RI-trigger rebuild protections.
-Constraint browser checks verify native writes/errors, validation, comment-preserving edits,
-advanced/replica/dependency protections, stale metadata, permissions and inactive targeting.
-Column/FK browser checks additionally verify one outer Apply with combined rollback/recovery,
-complete composite mappings, validation/actions, delayed target responses, explicit target reload,
-typed whole-constraint removal/undo, no-op dirty detection and collapsed-editor history.
-Dotted identifiers and comma-containing keys remain distinct and bind to actual expected OIDs/attnums.
-They also cover autocomplete Escape layering, SQL/cell Tab behavior, focus, polling/navigation
-protection, resizing and short/narrow layouts with long errors.
-Index browser checks verify native writes/errors, draft correction, protected/dependent drops,
-inactive targeting, stale metadata, permissions, focus, resizing and narrow layouts.
-Isolated schema browser checks exercise all DDL flows, native-error
-recovery, stale definitions, protected drafts, keyboard handling and narrow/resizable panels.
-Type-option browser checks verify exact existing settings, retained incompatible drafts,
-contextual defaults, custom/array types, SQL previews and PostgreSQL-persisted definitions.
-Table-action regressions cover SQL round-trips, independent/cross-column sequence defaults,
-sequence exhaustion, dynamic CHECK rejection, self-FK ordering, RLS and unchanged sources.
-CSV tests cover exact bytes, multiple batches, snapshot visibility, permissions, catalog races,
-abort/error cleanup and GET/POST route security. Filtered exports are compared with both native
-SQL and paginated grid reads, including multi-sort/NULLs/tie-breaks, FK tuples, hostile names,
-RLS, custom operator/search-path semantics, empty matches and native comparison errors. SQL-console tests cover exact/duplicate-name multiple
-results, preview bounds without truncating writes, transaction errors/ReadyForQuery ordering,
-session isolation, cancellation races, disposal/expiry, unsupported COPY and unknown outcomes.
-Connection and runes-state tests verify generation ownership, draft retention and no replay.
-Connection tests cover separate SSL modes, controlled prefer negotiation and no downgrade on
-TLS/authentication/query failures. Isolated browsers verify dropdown/URL independence, plaintext
-fallback, encrypted Prefer/Required, rejection of an untrusted certificate without downgrade,
-and restoration of both embedded and separate SSL settings.
-Profile tests cover SSL imports, exact credential storage,
-password-free labels, generation-fenced active hints,
-reconnect preferences, serialized writes, stale revisions, no-op saves and storage failures.
-Isolated browsers verify actual
-A/B connections, retained per-database SQL drafts/transactions, stale tabs and late deletion races,
-search/keyboard switching, cancelled dismissals, retained drafts, queued preference races,
-corrupt reconnect recovery, quota/denied storage and narrow scrollable dialogs.
-Profile saves never execute or connect.
-Production HTTP checks exercise every SQL command's generation/CSRF boundary and cleanup origin.
-Isolated SQL browser checks cover selection/keyboard execution, preview versus real write counts,
-transactions/cancellation/reset, navigation state, cross-tab isolation, reload/beacon/bfcache
-cleanup, connection-discard confirmations, unsupported protocols and narrow/short layouts.
-Draft-persistence checks cover exact restoration without execution, duplicate-tab ownership,
-database/generation isolation, genuine BFCache, real quota exhaustion and cancelled-reload
-recovery, denied storage/locks, external conflicts and unchanged table-edit guards.
-Browser checks verify actual clipboard contents and
-native full-table, filtered/sorted and selected-column downloads against exact PostgreSQL
-bytes/order. Checks include composite FK constraints, long form values, empty matches, inline
-initial errors, focus and narrow modals. Concurrent 32.8 MB downloads survive frame replacement
-with exact hashes; midstream failures cancel browser downloads rather than producing success.
-Browser filter checks cover keyboard focus, same-column ranges,
-NULL versus empty, invalid-type recovery, FK constraints, sorting/paging/polling, and distinct
-empty-page/table/no-match/error states.
-`bun run test:production` builds and checks actual same-origin HTTP commands and Host/CSRF
-rejection through the production launcher.
-
-## Source layout and limits
-
-- `src/lib/types.ts`, `schema.ts`, `sql.ts` — row/connection, structured DDL and SQL contracts.
-- `src/lib/state/` — table workspace/polling guards and per-workspace SQL execution state.
-- `src/lib/components/` — shell, custom grid, filter bar, cell editors and reference picker.
-- `src/lib/components/ui/` — generated MIT shadcn-svelte components.
-- `src/lib/db.remote.ts`, `*validation.ts` — validated remote boundaries.
-- `src/lib/server/` — connection lifecycle, catalog metadata and transactional SQL.
-- `src/app.css`, `components.json` — shared theme and shadcn configuration.
-
-No server-side credential persistence, hosted authentication, multi-process sessions, views,
-SQL multi-tabs/saved history, or nested/OR filter groups. Schema editing excludes
-advanced constraint replacement, advanced/concurrent index creation, enum/namespace management
-and replacing existing primary keys. Offset pagination is not a
-cross-page snapshot under concurrent changes. The app is intentionally a loopback-only tool.
+Not supported: views, OR filters, saved SQL history, enum/schema management, replacing an
+existing primary key.

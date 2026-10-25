@@ -60,7 +60,7 @@ accordingly.
 - Filters (column, comparison, value) combine with AND; **Sort** takes several columns in
   priority order; clicking a header cycles its sort.
 - Double-click a cell, or press Enter/F2, to edit; **Apply** or Ctrl/Cmd+Enter saves. Text and
-  JSON get a code editor, and values are never rounded or reformatted. **Set to** offers NULL,
+  JSON get a code editor; arrays are shown and edited as JSON. Values are never rounded. **Set to** offers NULL,
   Now and empty text.
 - Foreign-key cells open a record picker; the arrow jumps to the referenced row.
 - Arrow keys and Shift select ranges; copy/paste uses TSV (`\N` is NULL) and saves in one

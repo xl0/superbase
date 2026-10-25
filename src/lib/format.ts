@@ -1,4 +1,5 @@
 import type { CellValue, Column } from './types.js';
+import { arrayJSON } from './arrays.js';
 
 export const isTemporal = (column: Column) => /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type);
 /** Fixed choices for boolean ('t'/'f' as PostgreSQL prints them) and enum columns. */
@@ -13,6 +14,7 @@ export function displayValue(value: CellValue | undefined, column: Column): stri
 	if (value === undefined) return 'DEFAULT';
 	if (value === null) return 'NULL';
 	if (column.kind === 'boolean') return value === 't' || value === 'true' ? 'TRUE' : 'FALSE';
+	if (column.kind === 'array') return arrayJSON(value, column) ?? value;
 	return value;
 }
 

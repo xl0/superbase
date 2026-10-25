@@ -5,6 +5,7 @@
 	import { writable, type CellValue, type Column, type Row, type Table, type Values } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { isTemporal, optionLabel, valueOptions, valueState } from '#lib/format.js';
+	import { arrayLiteral } from '#lib/arrays.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -55,7 +56,12 @@
 		if (editor.busy || nested) return;
 		error = null;
 		try {
-			await editor.insertRow({ ...values });
+			// Array fields hold JSON in the form; convert them to literals now.
+			await editor.insertRow(Object.fromEntries(Object.entries(values).map(([name, value]) => {
+				const element = target.columns.find((column) => column.name === name)?.element;
+				if (!element || typeof value !== 'string') return [name, value];
+				try { return [name, arrayLiteral(value, element)]; } catch (cause) { throw new Error(`${name}: ${message(cause)}`); }
+			})));
 		} catch (cause) {
 			error = message(cause);
 			return;
@@ -93,7 +99,7 @@
 			{#each target.columns as column, i (column.name)}
 				{@const value = Object.hasOwn(values, column.name) ? values[column.name] : undefined}
 				{@const readOnly = !writable(column)}
-				{@const richText = column.kind === 'json' || column.kind === 'text'}
+				{@const richText = column.kind === 'json' || column.kind === 'text' || !!column.element}
 				{@const options = valueOptions(column)}
 				{@const placeholder = value === null ? 'SQL NULL' : value === undefined ? `Default: ${column.defaultValue ?? (column.identity ? 'generated identity' : column.nullable ? 'NULL' : 'none — required')}` : ''}
 				<div class="grid grid-cols-[minmax(0,1fr)] gap-3 @min-[500px]:grid-cols-[minmax(120px,1fr)_minmax(0,2fr)]">
@@ -115,8 +121,8 @@
 								</Select.Trigger>
 								<Select.Content>{#each options as option, index}<Select.Item value={String(index)} label={optionLabel(column, option)} />{/each}</Select.Content>
 							</Select.Root>
-						{:else if column.kind === 'json' || column.kind === 'text'}
-							<TextEditor id={`${id}-field-${i}`} language={column.kind} {value} {placeholder} label={column.name} readonly={editor.busy}
+						{:else if richText}
+							<TextEditor id={`${id}-field-${i}`} language={column.kind === 'text' ? 'text' : 'json'} {value} {placeholder} label={column.name} readonly={editor.busy}
 								onchange={(next) => change(column.name, next)} class="h-40" />
 						{:else if column.kind === 'array'}
 							<Textarea id={`${id}-field-${i}`} value={value ?? ''} {placeholder} disabled={editor.busy}

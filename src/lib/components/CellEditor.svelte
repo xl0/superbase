@@ -5,6 +5,7 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { isTemporal, optionLabel, valueOptions, valueState } from '#lib/format.js';
+	import { arrayJSON, arrayLiteral } from '#lib/arrays.js';
 	import { writable, type CellValue, type Column, type Row } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
@@ -29,7 +30,12 @@
 	const id = $props.id();
 	const readOnly = $derived(!editor.tableEditable || !writable(column));
 	const original = untrack(() => editor.getValue(row, column.name));
-	let value = $state<CellValue | undefined>(untrack(() => readOnly || initial === undefined ? original : initial));
+	// Arrays are edited as JSON and turned back into a literal on apply. Insert-form drafts already
+	// hold JSON (InsertRow converts on save); values without a JSON form keep the literal editor.
+	const json = (text: CellValue | undefined) => typeof text === 'string' ? arrayJSON(text, column) : null;
+	const arrayJson = untrack(() => column.kind === 'array' && !!column.element && (row.draft || original == null || json(original) !== null));
+	const baseline = untrack(() => arrayJson && !row.draft ? json(original) ?? original : original);
+	let value = $state<CellValue | undefined>(untrack(() => readOnly || initial === undefined ? baseline : initial));
 	let expanded = $state(untrack(() => startExpanded || !!column.foreignKey));
 	let picking = $state(untrack(() => !!column.foreignKey && initial === undefined));
 	let field = $state<HTMLTextAreaElement | null>(null);
@@ -71,8 +77,12 @@
 
 	function apply() {
 		if (saving || editor.busy) return;
-		if (readOnly || (value === original && !referenceChanges)) { onclose(); return; }
-		void commit({ ...referenceChanges, [column.name]: value });
+		if (readOnly || (value === baseline && !referenceChanges)) { onclose(); return; }
+		let next = value;
+		if (arrayJson && !row.draft && typeof value === 'string') {
+			try { next = arrayLiteral(value, column.element!); } catch (cause) { error = message(cause); return; }
+		}
+		void commit({ ...referenceChanges, [column.name]: next });
 	}
 
 	function selectReference(target: Row) {
@@ -152,8 +162,8 @@
 			{/if}
 			<span class="text-xs text-muted-foreground" aria-live="polite">{valueState(value)}</span>
 		</div>
-		{#if column.kind === 'json' || column.kind === 'text'}
-			<TextEditor language={column.kind} bind:ref={textView} bind:state={textState} label={`Edit ${column.name}`} readonly={readOnly || saving}
+		{#if column.kind === 'json' || column.kind === 'text' || arrayJson}
+			<TextEditor language={column.kind === 'text' ? 'text' : 'json'} bind:ref={textView} bind:state={textState} label={`Edit ${column.name}`} readonly={readOnly || saving}
 				{value} onchange={(next) => value = next}
 				placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
 				class={expanded ? 'min-h-24 flex-1' : 'h-64 max-h-[50dvh]'} />

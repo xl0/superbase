@@ -105,6 +105,11 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
 - `DataGrid` is a custom CSS-grid spreadsheet (fixed 35 px rows, no virtualization) with
   positional focus/range; edits capture the row, never an index. `CellEditor` holds one
   text/NULL/DEFAULT buffer in a popover or `ResizableSheet`; only Apply saves.
+- `arrays.ts`: array cells are displayed and edited as JSON (like Supabase) while values stay
+  literals. Element text that is valid JSON (numbers, json elements) is used verbatim, so nothing
+  is decoded; JSON goes back to a literal via the Lezer JSON tree on apply (`InsertRow` holds
+  JSON until Save). `Column.element` is set only for comma-delimited element types; bounds
+  (`[0:1]={…}`) and box[] keep the literal editor. Copy/paste and CSV stay literals.
 - `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
   the editor reports document edits only, so opening and applying unchanged never rewrites a
   value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).

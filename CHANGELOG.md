@@ -6,6 +6,10 @@
 
 - A live demo that runs PostgreSQL in the browser (PGlite) on sample data, published to GitHub Pages.
 
+### Changed
+
+- Array values are shown and edited as JSON (`["a","b"]`), like Supabase; numbers keep their exact spelling.
+
 ## [0.1.1] - 2026-10-25
 
 ### Added

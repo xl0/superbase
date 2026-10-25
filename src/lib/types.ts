@@ -9,6 +9,8 @@ export interface Column {
 	name: string;
 	type: string;
 	kind: ColumnKind;
+	/** Arrays only: the element kind when values can be shown as JSON (comma-delimited elements). */
+	element?: ColumnKind;
 	nullable: boolean;
 	primaryKey: boolean;
 	generated: boolean;

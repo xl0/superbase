@@ -31,6 +31,9 @@ type ColumnRow = {
 	type_name: string;
 	type_kind: string;
 	type_category: string;
+	element_name: string | null;
+	element_kind: string | null;
+	element_category: string | null;
 	exact_type: string;
 	not_null: boolean;
 	generated: boolean;
@@ -72,6 +75,7 @@ export async function loadMetadata(
 	const columns = await db.query<ColumnRow>(
 			`select a.attrelid::text as table_id, a.attname as name,
 			        t.typname as type_name, t.typtype as type_kind, t.typcategory as type_category,
+			        et.typname as element_name, et.typtype as element_kind, et.typcategory as element_category,
 			        format_type(a.atttypid, a.atttypmod) as exact_type,
 			        a.attnotnull as not_null, a.attgenerated <> '' as generated,
 			        a.attidentity as identity,
@@ -86,6 +90,7 @@ export async function loadMetadata(
 			 join pg_class c on c.oid = a.attrelid
 			 join pg_namespace n on n.oid = c.relnamespace
 			 join pg_type t on t.oid = a.atttypid
+			 left join pg_type et on et.oid = t.typelem and t.typcategory = 'A' and et.typdelim = ','
 			 left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
 			 where a.attnum > 0 and not a.attisdropped and ${visible}
 			 order by a.attrelid, a.attnum`, params
@@ -122,6 +127,7 @@ export async function loadMetadata(
 			name: row.name,
 			type: row.exact_type,
 			kind: kindOf(row.type_name, row.type_kind, row.type_category),
+			element: row.element_name ? kindOf(row.element_name, row.element_kind!, row.element_category!) : undefined,
 			nullable: !row.not_null,
 			primaryKey: row.is_primary_key,
 			generated: row.generated,

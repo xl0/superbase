@@ -100,7 +100,10 @@ until the next metadata reload re-lays out. Positions are not saved.
 
 `queries/database.ts` lists all indexes (key columns/expressions, owning constraint), top
 `pg_stat_statements` entries for the current database (PG 13+; missing extension or preload is
-reported, not thrown), extensions (`pg_available_extensions` + installed version/schema,
+reported, not thrown), client sessions of the current database (`pg_stat_activity` minus the
+asking backend, read in one statement with the server-wide connection count; blockers via
+`pg_blocking_pids`; cancel/terminate are previewed `select
+pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
 `DatabaseIndexes`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and

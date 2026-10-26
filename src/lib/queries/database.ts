@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { DatabaseIndex, DatabaseSetting, Extension, QueryStats } from '../database.js';
+import type { Activity, DatabaseIndex, DatabaseSetting, Extension, QueryStats } from '../database.js';
 import { CONFIG_SETTINGS } from '../database.js';
 
 export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
@@ -38,6 +38,22 @@ export async function queryStats(pool: pg.Pool): Promise<QueryStats> {
 		// Installed but not in shared_preload_libraries: the view raises instead of returning rows.
 		return { available: false, installed: true, reason: (error as Error).message };
 	}
+}
+
+/** Client sessions on this database, active first; roles see others' queries only with privilege. */
+export async function listActivity(pool: pg.Pool): Promise<Activity> {
+	// One statement, so the only backend to leave out is this one.
+	return (await pool.query<Activity>(`
+		select (select count(*)::int from pg_stat_activity where backend_type = 'client backend') as connections,
+		       current_setting('max_connections')::int as "maxConnections",
+		       coalesce(json_agg(s order by s.state = 'active' desc, s.duration desc nulls last), '[]') as sessions
+		from (
+			select pid, usename as role, application_name as application, client_addr::text as client, state,
+			       extract(epoch from now() - state_change)::float8 as duration,
+			       wait_event_type as "waitType", wait_event as wait, pg_blocking_pids(pid) as "blockedBy", query
+			from pg_stat_activity
+			where datname = current_database() and backend_type = 'client backend' and pid <> pg_backend_pid()
+		) s`)).rows[0];
 }
 
 export async function listExtensions(pool: pg.Pool): Promise<Extension[]> {

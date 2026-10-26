@@ -112,6 +112,10 @@ The side panel lists the sections:
 - **Performance:** the most expensive statements from `pg_stat_statements`, sortable, with
   cache hit rates; enables the extension for you if it's missing (the server must preload it).
 - **Extensions:** enable (choosing the schema), update or disable.
+- **Activity:** live overview (connections against `max_connections`, active, idle in transaction,
+  blocked, top blocker, longest running) and the database's sessions with state, duration, waits
+  and blockers; filter by state, role, application or root blockers, hover a query to read it,
+  and cancel or terminate a session with a preview.
 - **Configuration:** search_path, timezone, timeouts and work_mem as database or role defaults.
 
 ![Schema diagram of the shop tables](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/schema-diagram.png)

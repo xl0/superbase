@@ -123,6 +123,7 @@ export const schemaCatalog = query(withPool((pool) => schemaDb.listSchemaCatalog
 export const schemaDefinition = query(withPool(schemaDb.getSchemaDefinition));
 export const indexes = query(withPool((pool) => databaseDb.listIndexes(pool)));
 export const queryStats = query(withPool((pool) => databaseDb.queryStats(pool)));
+export const activity = query(withPool((pool) => databaseDb.listActivity(pool)));
 export const extensions = query(withPool((pool) => databaseDb.listExtensions(pool)));
 export const settings = query(withPool((pool) => databaseDb.listSettings(pool)));
 export const changeSchema = withPool((pool, { sql }: { sql: string }) => schemaDb.executeDdl(pool, sql));

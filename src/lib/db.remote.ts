@@ -23,6 +23,7 @@ export const deleteRows = command('unchecked', (args: DeleteArgs) => db.deleteRo
 export const schemaCatalog = query('unchecked', ({ connection }: Target) => schemaDb.listSchemaCatalog(connections.activePool(connection)));
 export const schemaDefinition = query('unchecked', (args: TableTarget) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
 export const indexes = query('unchecked', ({ connection }: Target) => databaseDb.listIndexes(connections.activePool(connection)));
+export const activity = query('unchecked', ({ connection }: Target) => databaseDb.listActivity(connections.activePool(connection)));
 export const queryStats = query('unchecked', ({ connection }: Target) => databaseDb.queryStats(connections.activePool(connection)));
 export const extensions = query('unchecked', ({ connection }: Target) => databaseDb.listExtensions(connections.activePool(connection)));
 export const settings = query('unchecked', ({ connection }: Target) => databaseDb.listSettings(connections.activePool(connection)));

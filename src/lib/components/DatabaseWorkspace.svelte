@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { Gauge, ListTree, Network, Puzzle, SlidersHorizontal } from '@lucide/svelte';
+	import { Activity, Gauge, ListTree, Network, Puzzle, SlidersHorizontal } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { databaseHref } from '#lib/links.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import DatabaseActivity from './DatabaseActivity.svelte';
 	import DatabaseConfig from './DatabaseConfig.svelte';
 	import DatabaseExtensions from './DatabaseExtensions.svelte';
 	import DatabaseIndexes from './DatabaseIndexes.svelte';
@@ -14,6 +15,7 @@
 		schema: { label: 'Schema', icon: Network },
 		indexes: { label: 'Indexes', icon: ListTree },
 		performance: { label: 'Performance', icon: Gauge },
+		activity: { label: 'Activity', icon: Activity },
 		extensions: { label: 'Extensions', icon: Puzzle },
 		config: { label: 'Configuration', icon: SlidersHorizontal }
 	};
@@ -38,6 +40,7 @@
 		{#if section === 'schema'}<SchemaDiagram />
 		{:else if section === 'indexes'}<DatabaseIndexes />
 		{:else if section === 'performance'}<DatabasePerformance />
+		{:else if section === 'activity'}<DatabaseActivity />
 		{:else if section === 'extensions'}<DatabaseExtensions />
 		{:else}<DatabaseConfig />{/if}
 	</div>

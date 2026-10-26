@@ -27,6 +27,29 @@ export type QueryStats =
 	/** The extension is missing (`installed` false) or installed but not preloaded by the server. */
 	| { available: false; installed: boolean; reason: string };
 
+/** A client session on the current database (pg_stat_activity), other than the one asking. */
+export interface Session {
+	pid: number;
+	role: string | null;
+	application: string;
+	client: string | null;
+	/** active, idle, idle in transaction, … (null when the role may not see it). */
+	state: string | null;
+	/** Seconds in the current state (for active sessions: the running query). */
+	duration: number | null;
+	waitType: string | null;
+	wait: string | null;
+	/** Sessions holding locks this one waits for. */
+	blockedBy: number[];
+	query: string;
+}
+/** Sessions of this database plus server-wide client connections against max_connections. */
+export interface Activity {
+	sessions: Session[];
+	connections: number;
+	maxConnections: number;
+}
+
 export interface Extension {
 	name: string;
 	comment: string | null;

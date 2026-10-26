@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Added
 
 - A live demo that runs PostgreSQL in the browser (PGlite) on sample data, published to GitHub Pages.

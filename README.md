@@ -110,8 +110,10 @@ The side panel lists the sections:
 - **Schema:** a diagram of one schema's tables and foreign keys (including references to other
   schemas); ↗ opens a table.
 - **Indexes:** every index per schema, with definitions; drop with a preview.
-- **Performance:** the most expensive statements from `pg_stat_statements`, sortable, with
-  cache hit rates; enables the extension for you if it's missing (the server must preload it).
+- **Performance:** the most expensive statements from `pg_stat_statements`: share of total time,
+  calls, max/mean/min time, rows and cache hit rate, sortable and filterable by role, with a
+  details panel per statement and CSV export; enables the extension for you if it's missing (the
+  server must preload it).
 - **Activity:** live overview (connections against `max_connections`, active, idle in transaction,
   blocked, top blocker, longest running) and the database's sessions with state, duration, waits
   and blockers; filter by state, role, application or root blockers, hover a query to read it,

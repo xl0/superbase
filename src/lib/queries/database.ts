@@ -24,7 +24,8 @@ export async function queryStats(pool: pg.Pool): Promise<QueryStats> {
 		const [queries, database] = await Promise.all([
 			pool.query(`
 				select s.query, r.rolname as role, s.calls::float8 as calls, s.total_exec_time::float8 as "totalTime",
-				       s.mean_exec_time::float8 as "meanTime", s.max_exec_time::float8 as "maxTime", s.rows::float8 as rows,
+				       s.mean_exec_time::float8 as "meanTime", s.min_exec_time::float8 as "minTime",
+				       s.max_exec_time::float8 as "maxTime", s.rows::float8 as rows,
 				       s.shared_blks_hit::float8 / nullif(s.shared_blks_hit + s.shared_blks_read, 0) as "hitRate"
 				from ${schema}.pg_stat_statements s
 				left join pg_roles r on r.oid = s.userid

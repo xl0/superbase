@@ -137,6 +137,8 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
   is decoded; JSON goes back to a literal via the Lezer JSON tree on apply (`InsertRow` holds
   JSON until Save). `Column.element` is set only for comma-delimited element types; bounds
   (`[0:1]={…}`) and box[] keep the literal editor. Copy/paste and CSV stay literals.
+- `sql-highlight.ts` renders read-only SQL (Activity hover, Performance) with the editor's parser;
+  `.sql-code` in `app.css` holds the colors.
 - `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
   the editor reports document edits only, so opening and applying unchanged never rewrites a
   value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).

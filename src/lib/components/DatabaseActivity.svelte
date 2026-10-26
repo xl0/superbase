@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LinkPreview } from 'bits-ui';
-	import { PostgreSQL } from '@codemirror/lang-sql';
-	import { classHighlighter, highlightCode } from '@lezer/highlight';
 	import { EllipsisVertical, Pause, Play, Search } from '@lucide/svelte';
 	import { activity, changeSchema } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { Activity, Session } from '#lib/database.js';
 	import { fresh, message } from '#lib/utils.js';
+	import { highlightSql } from '#lib/sql-highlight.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -59,14 +58,6 @@
 		if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
 		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
 		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-	}
-
-	/** Syntax-highlighted spans for the hover preview (same parser as the SQL editor). */
-	function highlighted(query: string) {
-		const spans: { text: string; class: string }[] = [];
-		highlightCode(query, PostgreSQL.language.parser.parse(query), classHighlighter,
-			(text, classes) => spans.push({ text, class: classes }), () => spans.push({ text: '\n', class: '' }));
-		return spans;
 	}
 
 	async function run() {
@@ -155,8 +146,8 @@
 									{#if session.query}
 										<LinkPreview.Portal>
 											<LinkPreview.Content side="bottom" align="start" sideOffset={4}
-												class="sql-preview z-50 max-h-96 w-[min(40rem,calc(100vw-24px))] overflow-auto rounded-md border bg-popover p-3 shadow-md">
-												<pre class="font-mono text-xs whitespace-pre-wrap break-words">{#each highlighted(session.query) as span}<span class={span.class}>{span.text}</span>{/each}</pre>
+												class="sql-code z-50 max-h-96 w-[min(40rem,calc(100vw-24px))] overflow-auto rounded-md border bg-popover p-3 shadow-md">
+												<pre class="font-mono text-xs whitespace-pre-wrap break-words">{#each highlightSql(session.query) as span}<span class={span.class}>{span.text}</span>{/each}</pre>
 											</LinkPreview.Content>
 										</LinkPreview.Portal>
 									{/if}
@@ -203,11 +194,3 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<style>
-	/* Same palette as the SQL editor (TextEditor). */
-	:global(.sql-preview .tok-keyword) { color: #c4b5fd; }
-	:global(.sql-preview .tok-string) { color: #ce9178; }
-	:global(.sql-preview .tok-number) { color: #b5cea8; }
-	:global(.sql-preview .tok-comment) { color: #7f8a82; }
-	:global(.sql-preview .tok-bool), :global(.sql-preview .tok-null) { color: #c4b5fd; }
-</style>

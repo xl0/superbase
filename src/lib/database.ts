@@ -17,6 +17,7 @@ export interface QueryStat {
 	calls: number;
 	totalTime: number;
 	meanTime: number;
+	minTime: number;
 	maxTime: number;
 	rows: number;
 	/** Shared-buffer hit ratio, 0–1; null when it touched no buffers. */

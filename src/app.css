@@ -90,3 +90,9 @@
 	body { @apply bg-background text-foreground font-sans; margin: 0; font-size: 13px; -webkit-font-smoothing: antialiased; }
 	::selection { background: color-mix(in srgb, var(--foreground) 20%, transparent); }
 }
+
+/* Read-only SQL (highlightSql) in the SQL editor's palette. */
+.sql-code .tok-keyword, .sql-code .tok-bool, .sql-code .tok-null { color: #c4b5fd; }
+.sql-code .tok-string { color: #ce9178; }
+.sql-code .tok-number { color: #b5cea8; }
+.sql-code .tok-comment { color: #7f8a82; }

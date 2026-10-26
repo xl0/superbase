@@ -1,11 +1,12 @@
 name: Demo
 
-# Publishes the in-browser demo (`bun run build:demo`) to GitHub Pages for each release, or on
-# demand. Needs Settings → Pages → Source: GitHub Actions.
+# Publishes the in-browser demo (`bun run build:demo`) to GitHub Pages from master, on every push
+# or on demand. Needs Settings → Pages → Source: GitHub Actions; the github-pages environment only
+# accepts master.
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:

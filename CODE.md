@@ -157,8 +157,8 @@ outside `server/` (SvelteKit keeps `/server/` out of client bundles) and imports
 - Remaining `import.meta.env.MODE === 'demo'` branches: CSV export builds a Blob, no
   `/sql/close` beacon, a header badge, and the connection picker (shown, not locked) answers
   Connect/Save with a pointer to the repo. The normal build drops them, PGlite included.
-- `BASE_PATH` sets the subpath; `.github/workflows/demo.yml` publishes to GitHub Pages on
-  release tags or on demand.
+- `BASE_PATH` sets the subpath; `.github/workflows/demo.yml` publishes to GitHub Pages on every
+  push to master (or on demand).
 
 ## Releases
 

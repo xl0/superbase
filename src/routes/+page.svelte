@@ -1,26 +1,22 @@
 <script lang="ts">
-	import { connect, connectionStatus } from '#lib/db.remote.js';
-	import { lastProfile } from '#lib/connection-profiles.js';
+	import { goto } from '$app/navigation';
+	import { connectionStatus } from '#lib/db.remote.js';
+	import { connectionId, lastProfile, profileTarget } from '#lib/connection-profiles.js';
+	import { databaseId, tablesHref } from '#lib/links.js';
 	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import ConnectScreen from '#lib/components/ConnectScreen.svelte';
-	import EditorApp from '#lib/components/EditorApp.svelte';
 	import LoadingShell from '#lib/components/LoadingShell.svelte';
 
 	const status = connectionStatus();
-	let reconnecting = $state(true);
-	let reconnectError = $state('');
-
-	// After a server restart, reconnect to the last saved profile instead of showing the connect screen.
-	$effect(() => {
-		if (!status.ready || !reconnecting) return;
-		const profile = !status.current.connection && !status.current.locked ? lastProfile() : undefined;
-		if (!profile) { reconnecting = false; return; }
-		connect({ url: profile.url, sslMode: profile.sslMode, expected: null })
-			.then(() => status.refresh())
-			.catch((cause) => { reconnectError = `Could not reconnect to “${profile.name}”: ${message(cause)}`; })
-			.finally(() => { reconnecting = false; });
+	// Open the connected database; after a server restart, the saved connection used last (its route connects it).
+	const target = $derived.by(() => {
+		if (!status.ready) return null;
+		if (status.current.connection) return databaseId(status.current.connection);
+		const profile = status.current.locked ? undefined : lastProfile();
+		return profile ? connectionId(profileTarget(profile.url)) : null;
 	});
+	$effect(() => { if (target) void goto(tablesHref(target), { replace: true }); });
 </script>
 
 {#if status.error}
@@ -31,10 +27,8 @@
 			<Button size="sm" onclick={() => void status.refresh()}>Retry</Button>
 		</div>
 	</main>
-{:else if !status.ready || reconnecting}
+{:else if !status.ready || target}
 	<LoadingShell />
-{:else if !status.current.connection}
-	<ConnectScreen status={status.current} error={reconnectError} />
 {:else}
-	<EditorApp status={status.current} />
+	<ConnectScreen status={status.current} />
 {/if}

@@ -43,3 +43,10 @@ export function profileTarget(url: string): string {
 export function connectionTarget(info: ConnectionInfo): string {
 	return `${info.host}:${info.port}/${info.database} · ${info.user}`;
 }
+
+/** Short, stable id for a password-free target, used in URLs (FNV-1a; not a secret, just no host names). */
+export function connectionId(target: string): string {
+	let hash = 0x811c9dc5;
+	for (const byte of new TextEncoder().encode(target)) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+	return hash.toString(16).padStart(8, '0');
+}

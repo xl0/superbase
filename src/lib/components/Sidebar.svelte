@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Plus, Search, Table2 } from '@lucide/svelte';
+	import { page } from '$app/state';
 	import { editor } from '#lib/state/editor.svelte.js';
+	import { tablesHref } from '#lib/links.js';
 	import type { Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import TableMenu from './TableMenu.svelte';
@@ -46,8 +48,9 @@
 	{#each tables as table (table.name)}
 		{@const active = editor.activeSchema === table.schema && editor.activeTableName === table.name}
 		<div class={['mb-0.5 flex items-center rounded-md hover:bg-muted', active ? 'bg-muted text-foreground' : 'text-muted-foreground']}>
+			<!-- The active table links to its current view, so clicking it keeps filters. -->
 			<Button variant="ghost" size="sm" disabled={editor.busy} aria-current={active ? 'page' : undefined}
-				onclick={() => void editor.selectTable(table.schema, table.name)}
+				href={tablesHref(page.params.db!, active ? editor.view : { schema: table.schema, table: table.name, filters: [], sort: [], page: 0, reference: null })}
 				class="min-w-0 flex-1 justify-start gap-2 px-2 text-xs font-normal">
 				<Table2 class={['size-3.5', active && 'text-foreground']} />
 				<span class="truncate">{table.name}</span>

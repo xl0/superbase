@@ -25,6 +25,10 @@ It serves on http://127.0.0.1:3000 (or the next free port) and opens your browse
 localStorage, password included and unencrypted; **Connect** connects without saving. After a
 restart the app reconnects to the saved connection you used last.
 
+The address bar follows you: database, workspace, table, filters and sort, so Back and Forward
+work and views can be bookmarked or shared. The database appears only as a short hash of its
+host, port, name and user; opening a link reconnects the matching saved connection.
+
 The server holds one database connection shared by every tab. It listens on 127.0.0.1 and
 refuses requests whose Host is not localhost, so other websites can't drive it.
 

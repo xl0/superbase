@@ -5,6 +5,7 @@
 	import { message } from '#lib/utils.js';
 	import { connectionTarget, loadProfiles, profileTarget, rememberProfile, storeProfiles, type ConnectionProfile } from '#lib/connection-profiles.js';
 	import { connectionOptions, SSL_MODES, type SslMode } from '#lib/connection-options.js';
+	import { databaseId, tablesHref } from '#lib/links.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
@@ -19,7 +20,7 @@
 		disabled?: boolean;
 		/** Confirm discarding unsaved work before switching databases. */
 		approve?: () => boolean;
-		/** Called right before the page reloads onto the new connection. */
+		/** Called right before the page loads the new connection. */
 		onswitch?: () => void;
 	} = $props();
 	const id = $props.id();
@@ -57,10 +58,13 @@
 		pending = true;
 		error = '';
 		try {
-			await connect({ ...choice, expected: status.connection?.id ?? null });
+			const next = await connect({ ...choice, expected: status.connection?.id ?? null });
 			rememberProfile(choice.id ?? null);
 			onswitch();
-			window.location.reload();
+			// A full load onto the new database's route resets every piece of client state. Switching
+			// adds a history entry (Back returns to the old database); leaving the connect screen does not.
+			const href = tablesHref(databaseId(next.connection!));
+			if (status.connection) window.location.assign(href); else window.location.replace(href);
 		} catch (cause) {
 			error = message(cause);
 			pending = false;

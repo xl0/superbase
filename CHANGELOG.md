@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Browser history and shareable links: the database, workspace and table are in the path, and filters, sort, page and followed foreign keys in the hash. Links to a saved connection reconnect to it.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

@@ -32,9 +32,24 @@ Connect test-queries a candidate pool before replacing the old one. SSL is a sep
 stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
 on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
 Profiles (`connection-profiles.ts`) are a plain localStorage list; the active one is matched by
-host/port/db/user. A successful switch reloads the page. Switching to a saved profile records its
-id; on load, an unconnected (non-locked) server is reconnected to it (`+page.svelte`).
-One-off URLs are never stored.
+host/port/db/user. A successful switch fully loads the new database's route. One-off URLs are
+never stored.
+
+## Routes and history
+
+`/db/[db]/tables/[[schema]]/[[table]]`, `/db/[db]/sql`, `/db/[db]/database/[[section]]`; the
+table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
+`#f.status=eq.pending&sort=placed_at.desc`), so filter values never reach the server.
+- `[db]` is `connectionId` (FNV-1a) of the password-free target. `db/[db]/+layout.svelte` opens
+  the app when the server is connected to it, otherwise connects the saved profile with that id
+  (one attempt), otherwise shows the connection manager; locked mode redirects to its database.
+  `/` redirects to the connected database or the last-used profile.
+- The layout keeps `EditorApp` and all three workspaces mounted; the empty pages only select one.
+- `EditorApp` syncs both ways: URL → `editor.show(view)` (deferred while `navigationBlocked`, so
+  Back during an edit applies once it ends) and editor state → `goto` (new history entry;
+  canonicalizing a bare/unknown table replaces). `show` sets state synchronously, so the two
+  settle without loops; the editor → URL effect must not track `page.url`.
+- Demo: `404.html` copies the app shell so GitHub Pages serves deep links.
 
 ## Rows (`queries/db.ts`)
 
@@ -175,7 +190,8 @@ SQL sessions, CSV and the production HTTP boundary.
 - `src/lib/db.remote.ts` — remote functions; `src/lib/server/` — connections, SQL sessions.
 - `src/lib/queries/` — rows, schema, database workspace, CSV (any pg-shaped pool); `src/lib/demo/` — demo build.
 - `src/lib/state/` — editor and SQL workspace state; `src/lib/components/` — UI (`ui/` is generated shadcn).
-- `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
+- `src/routes/db/[db]` — app routes; `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
+- `src/lib/view.ts` (URL hash encoding), `src/lib/links.ts` (route builders).
 
 Not supported: views, OR filters, saved SQL history, enum/schema management, replacing an
 existing primary key.

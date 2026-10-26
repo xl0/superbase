@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { Check, Database, Server, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
+	import { databaseHref, databaseId, sqlHref, tablesHref } from '#lib/links.js';
+	import { parseViewHash, type TableView } from '#lib/view.js';
 	import type { ConnectionStatus, Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -25,15 +29,40 @@
 	let leaving = false;
 	let exportOpen = $state(false);
 	let csvExport: CsvExport;
-	let workspace = $state<'tables' | 'sql' | 'database'>('tables');
-	let sqlOpened = $state(false);
 	const sql = new SqlState(untrack(() => status.connection!));
+	const db = untrack(() => databaseId(status.connection!));
+	// The route picks the workspace; all three stay mounted below.
+	const workspace = $derived(page.route.id?.startsWith('/db/[db]/sql') ? 'sql' : page.route.id?.startsWith('/db/[db]/database') ? 'database' : 'tables');
+	let sqlOpened = $state(false);
+	let databaseSection = $state<string | undefined>(undefined);
+	$effect(() => {
+		if (workspace === 'sql') sqlOpened = true;
+		if (workspace === 'database') databaseSection = page.params.section;
+	});
 
-	function switchWorkspace(next: typeof workspace) {
-		if (editor.navigationBlocked || exportOpen) return;
-		workspace = next;
-		if (next === 'sql') sqlOpened = true;
-	}
+	/** The table view the URL names; null off the tables workspace or before a table is named. */
+	const urlView = $derived<TableView | null>(workspace === 'tables' && page.params.table
+		? { schema: page.params.schema ?? '', table: page.params.table, ...parseViewHash(page.url.hash) } : null);
+	// URL → editor: links, Back/Forward, typed URLs. While edits are open the URL may run ahead;
+	// the view applies once they finish.
+	$effect(() => {
+		const view = urlView;
+		if (view && editor.ready && !editor.navigationBlocked) untrack(() => void editor.show(view));
+	});
+	// Editor → URL: sorting, filtering, paging, FK jumps and schema changes add history entries.
+	// show() updates the state synchronously, so a URL-driven change finds the URL already matching.
+	$effect(() => {
+		if (workspace !== 'tables' || !editor.ready || !editor.activeTableName) return;
+		const href = tablesHref(db, editor.view);
+		// Untracked URL: a URL change alone (Back while edits are open) must not push the old view again.
+		untrack(() => {
+			const target = new URL(href, page.url.href);
+			if (target.pathname === page.url.pathname && target.hash === page.url.hash) return;
+			// Canonicalizing a bare or stale URL (no or unknown table) replaces it.
+			const named = urlView && editor.tables.some((table) => table.schema === urlView.schema && table.name === urlView.table);
+			void goto(target, { replace: !named, reset: false });
+		});
+	});
 	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' }>; table: Table; anchor: HTMLElement | null } | null>(null);
 
 	/** Menus pass their own table, so actions on an inactive sidebar table never retarget the grid. */
@@ -51,7 +80,7 @@
 	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && !exportOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
-		void editor.initialize(status.connection!.id);
+		void editor.initialize(status.connection!.id, urlView ?? undefined);
 		const poll = () => { void editor.poll(liveActive); };
 		const timer = window.setInterval(poll, 5_000);
 		document.addEventListener('visibilitychange', poll);
@@ -111,13 +140,13 @@
 			<div class="flex h-full bg-background text-foreground">
 				<nav aria-label="Workspace" class="flex w-12 shrink-0 flex-col items-center gap-2 border-r bg-card py-2">
 					<Button variant={workspace === 'tables' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Table editor" title="Table editor"
-						aria-pressed={workspace === 'tables'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('tables')}><Table2 /></Button>
+						aria-current={workspace === 'tables' ? 'page' : undefined} disabled={editor.navigationBlocked} href={tablesHref(db, editor.view)}><Table2 /></Button>
 					<Button variant={workspace === 'sql' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="SQL editor" title={sql.busy ? 'SQL editor — running' : 'SQL editor'}
-						aria-pressed={workspace === 'sql'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('sql')}>
+						aria-current={workspace === 'sql' ? 'page' : undefined} disabled={editor.navigationBlocked} href={sqlHref(db)}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
 					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, performance, extensions, configuration"
-						aria-pressed={workspace === 'database'} disabled={editor.navigationBlocked} onclick={() => switchWorkspace('database')}><Server /></Button>
+						aria-current={workspace === 'database' ? 'page' : undefined} disabled={editor.navigationBlocked} href={databaseHref(db, databaseSection)}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->
 				<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'}>
@@ -175,7 +204,7 @@
 					</Workspace>
 				</div>
 				{#if workspace === 'database'}
-					<div class="flex min-w-0 flex-1"><DatabaseWorkspace onopen={(table) => { switchWorkspace('tables'); void editor.selectTable(table.schema, table.name); }} /></div>
+					<div class="flex min-w-0 flex-1"><DatabaseWorkspace /></div>
 				{/if}
 				{#if sqlOpened}
 					<div class="min-w-0 flex-1" style:display={workspace === 'sql' ? 'flex' : 'none'}>

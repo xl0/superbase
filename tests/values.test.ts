@@ -3,6 +3,7 @@ import { error } from '@sveltejs/kit';
 import { message } from '../src/lib/utils.js';
 import { displayValue, fromTSV, toTSV } from '../src/lib/format.js';
 import { arrayJSON, arrayLiteral } from '../src/lib/arrays.js';
+import { parseViewHash, viewHash } from '../src/lib/view.js';
 import type { Column } from '../src/lib/types.js';
 
 const column: Column = { name: 'value', type: 'numeric', kind: 'number', primaryKey: false, generated: false, identity: null, defaultValue: null, nullable: true };
@@ -50,4 +51,19 @@ describe('arrays as JSON', () => {
 		expect(arrayJSON('{1,2}', { ...array('number'), element: undefined })).toBeNull();
 		for (const json of ['', '{"a": 1}', '[1,', '[1] 2']) expect(() => arrayLiteral(json, 'number')).toThrow();
 	});
+});
+
+test('view hash round-trips filters, sort, page and FK references', () => {
+	const view = {
+		filters: [
+			{ column: 'a.b', operator: 'eq' as const, value: 'x.y & z=1 #ü +' },
+			{ column: 'status', operator: 'isNull' as const, value: '' },
+			{ column: 'status', operator: 'like' as const, value: '%.%' }
+		],
+		sort: [{ column: 'placed.at', direction: 'desc' as const }, { column: 'id', direction: 'asc' as const }],
+		page: 2, reference: { 'customer id': '38' }
+	};
+	expect(parseViewHash(viewHash({ schema: 's', table: 't', ...view }))).toEqual(view);
+	expect(viewHash({ schema: 's', table: 't', filters: [], sort: [], page: 0, reference: null })).toBe('');
+	expect(parseViewHash('')).toEqual({ filters: [], sort: [], page: 0, reference: null });
 });

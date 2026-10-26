@@ -13,6 +13,8 @@ const staticSite = (out: string): Adapter => ({
 		builder.writeClient(out);
 		builder.writePrerendered(out);
 		await builder.generateFallback(`${out}/index.html`);
+		// GitHub Pages answers unknown paths with 404.html: deep links load the app too.
+		builder.copy(`${out}/index.html`, `${out}/404.html`);
 	}
 });
 

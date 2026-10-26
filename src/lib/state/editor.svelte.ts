@@ -1,6 +1,7 @@
 import { database, deleteRows, saveTable, tableRows, changeSchema } from '#lib/db.remote.js';
 import { fresh, message } from '#lib/utils.js';
 import type { SchemaChange } from '#lib/schema.js';
+import type { TableView } from '#lib/view.js';
 import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values } from '#lib/types.js';
 
 const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
@@ -52,10 +53,36 @@ export class EditorState {
 	get navigationBlocked() { return this.busy || this.editing || this.inserting || this.schemaEditing; }
 	get hasFilters() { return this.filters.length > 0 || this.reference !== null; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
+	/** What the URL records; see EditorApp for the sync. */
+	get view(): TableView {
+		return { schema: this.activeSchema, table: this.activeTableName, filters: this.filters, sort: this.sort, page: this.page, reference: this.reference };
+	}
 
-	async initialize(connection: string) {
+	/** `view` comes from the URL; an unknown table falls back to the first one. */
+	async initialize(connection: string, view?: TableView) {
 		this.connection = connection;
+		if (view) this.#assign(view);
 		await this.reload();
+	}
+
+	#assign(view: TableView) {
+		this.activeSchema = view.schema;
+		this.activeTableName = view.table;
+		this.filters = view.filters.map((filter) => ({ ...filter }));
+		this.sort = view.sort.map((rule) => ({ ...rule }));
+		this.page = view.page;
+		this.reference = view.reference && { ...view.reference };
+	}
+
+	/** Apply a view from the URL (link, Back/Forward); a no-op when nothing differs. */
+	async show(view: TableView) {
+		if (this.navigationBlocked || JSON.stringify(view) === JSON.stringify(this.view)) return;
+		const known = this.tables.find((table) => table.schema === view.schema && table.name === view.table);
+		const fallback = known ?? this.tables.find((table) => table.schema === view.schema) ?? this.tables[0];
+		if (!fallback) return;
+		this.#assign(known ? view : { schema: fallback.schema, table: fallback.name, filters: [], sort: [], page: 0, reference: null });
+		this.savedAt = null;
+		await this.fetch();
 	}
 
 	async reload() {

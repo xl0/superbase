@@ -3,13 +3,14 @@
 	import { Background, Controls, SvelteFlow, type Edge } from '@xyflow/svelte';
 	import { Graph, layout } from '@dagrejs/dagre';
 	import { RotateCw } from '@lucide/svelte';
+	import { page } from '$app/state';
 	import { editor } from '#lib/state/editor.svelte.js';
+	import { tablesHref } from '#lib/links.js';
 	import { tableKey, type Table } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import SchemaTableNode, { HEADER, ROW, WIDTH, type TableNode } from './SchemaTableNode.svelte';
 
-	let { onopen }: { onopen: (table: Table) => void } = $props();
 	let schema = $state(editor.activeSchema || 'public');
 	const nodeTypes = { table: SchemaTableNode };
 
@@ -42,7 +43,7 @@
 			const { x, y, width, height } = graph.node(tableKey(table.schema, table.name));
 			return {
 				id: tableKey(table.schema, table.name), type: 'table', position: { x: x - width / 2, y: y - height / 2 },
-				data: { table, external: table.schema !== schema, onopen }
+				data: { table, external: table.schema !== schema, href: tablesHref(page.params.db!, { schema: table.schema, table: table.name, filters: [], sort: [], page: 0, reference: null }) }
 			};
 		});
 		return { nodes, edges };

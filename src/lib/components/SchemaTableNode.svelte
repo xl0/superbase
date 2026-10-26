@@ -7,7 +7,7 @@
 	export const HEADER = 36;
 	export const ROW = 28;
 	/** `external`: referenced from the shown schema but living in another one. */
-	export type TableNode = Node<{ table: Table; external: boolean; onopen: (table: Table) => void }, 'table'>;
+	export type TableNode = Node<{ table: Table; external: boolean; href: string }, 'table'>;
 </script>
 
 <script lang="ts">
@@ -22,7 +22,7 @@
 	<div class="flex items-center gap-2 border-b bg-muted/60 pr-1 pl-3" style:height="{HEADER}px">
 		<span class="truncate font-mono font-medium">{data.external ? `${data.table.schema}.` : ''}{data.table.name}</span>
 		<Button variant="ghost" size="icon-xs" class="nodrag ml-auto" aria-label={`Open ${data.table.schema}.${data.table.name} in the table editor`}
-			title="Open in the table editor" onclick={() => data.onopen(data.table)}><ArrowUpRight /></Button>
+			title="Open in the table editor" href={data.href}><ArrowUpRight /></Button>
 	</div>
 	{#each data.table.columns as column (column.name)}
 		<div class="relative flex items-center gap-2 border-t px-3 first-of-type:border-t-0" style:height="{ROW}px">

@@ -51,18 +51,25 @@ export interface Row {
 	draft?: boolean;
 }
 
-/** id is a generation: it changes whenever the server switches databases. */
+/** A database the server has open. `key` (`host:port/database · user · sslmode`, no password) names it in requests. */
 export interface ConnectionInfo {
-	id: string;
+	key: string;
 	host: string;
 	port: string;
 	database: string;
 	user: string;
 }
 
+/** What one page shows: its database, if open. */
 export interface ConnectionStatus {
 	connection: ConnectionInfo | null;
 	/** Pinned to DATABASE_URL: no connection switching. */
+	locked: boolean;
+}
+
+/** Every database the server has open. */
+export interface ServerStatus {
+	connections: ConnectionInfo[];
 	locked: boolean;
 }
 

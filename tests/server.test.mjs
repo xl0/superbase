@@ -23,13 +23,13 @@ test('production server: same-origin commands work; foreign origins and Host hea
 			body: JSON.stringify({ payload: Buffer.from(stringify(args)).toString('base64url'), refreshes: [] })
 		});
 		// The command really runs: the connection attempt reaches the (closed) port.
-		const connect = { url: 'postgres://x@127.0.0.1:1/db', sslMode: 'disable', expected: null };
+		const connect = { url: 'postgres://x@127.0.0.1:1/db', sslMode: 'disable' };
 		assert.match(await (await call('connect', connect)).text(), /ECONNREFUSED/);
-		assert.match(await (await call('runSql', { connection: 'stale', session: 'x', sql: 'select 1' })).text(), /Connection changed/);
+		assert.match(await (await call('runSql', { connection: 'stale', session: 'x', sql: 'select 1' })).text(), /not connected to this database/);
 		assert.equal((await call('connect', connect, { Origin: 'http://evil.example' })).status, 403);
 		const exportBody = new URLSearchParams({ export: JSON.stringify({ connection: 'stale', schema: 'public', table: 'items' }) });
 		assert.equal((await fetch(`${origin}/export`, { method: 'POST', headers: { Origin: 'http://evil.example' }, body: exportBody })).status, 403);
-		assert.match(await (await fetch(`${origin}/export`, { method: 'POST', headers: { Origin: origin }, body: exportBody })).text(), /Connection changed/);
+		assert.match(await (await fetch(`${origin}/export`, { method: 'POST', headers: { Origin: origin }, body: exportBody })).text(), /not connected to this database/);
 		// fetch normalizes Host; raw HTTP exercises a DNS-rebinding style Host header.
 		const status = await new Promise((resolve, reject) => {
 			get(origin, { headers: { Host: 'evil.example' } }, (response) => { response.resume(); resolve(response.statusCode); }).on('error', reject);

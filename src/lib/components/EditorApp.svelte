@@ -80,7 +80,7 @@
 	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && !exportOpen && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
-		void editor.initialize(status.connection!.id, urlView ?? undefined);
+		void editor.initialize(status.connection!.key, urlView ?? undefined);
 		const poll = () => { void editor.poll(liveActive); };
 		const timer = window.setInterval(poll, 5_000);
 		document.addEventListener('visibilitychange', poll);

@@ -9,12 +9,13 @@
 	import LoadingShell from '#lib/components/LoadingShell.svelte';
 
 	const status = connectionStatus();
-	// Open the connected database; after a server restart, the saved connection used last (its route connects it).
+	// Open the saved connection used last (its route connects it if needed), else any open database.
 	const target = $derived.by(() => {
 		if (!status.ready) return null;
-		if (status.current.connection) return databaseId(status.current.connection);
 		const profile = status.current.locked ? undefined : lastProfile();
-		return profile ? connectionId(profileTarget(profile.url)) : null;
+		if (profile) return connectionId(profileTarget(profile.url));
+		const open = status.current.connections[0];
+		return open ? databaseId(open) : null;
 	});
 	$effect(() => { if (target) void goto(tablesHref(target), { replace: true }); });
 </script>
@@ -30,5 +31,5 @@
 {:else if !status.ready || target}
 	<LoadingShell />
 {:else}
-	<ConnectScreen status={status.current} />
+	<ConnectScreen status={{ connection: null, locked: status.current.locked }} />
 {/if}

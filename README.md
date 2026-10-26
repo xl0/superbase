@@ -29,8 +29,9 @@ The address bar follows you: database, workspace, table, filters and sort, so Ba
 work and views can be bookmarked or shared. The database appears only as a short hash of its
 host, port, name and user; opening a link reconnects the matching saved connection.
 
-The server holds one database connection shared by every tab. It listens on 127.0.0.1 and
-refuses requests whose Host is not localhost, so other websites can't drive it.
+Each tab works on the database in its URL, so tabs on different databases don't interfere. The
+server listens on 127.0.0.1 and refuses requests whose Host is not localhost, so other websites
+can't drive it.
 
 From a checkout: `bun install --frozen-lockfile && bun run build && bun run start`.
 
@@ -111,11 +112,11 @@ The side panel lists the sections:
 - **Indexes:** every index per schema, with definitions; drop with a preview.
 - **Performance:** the most expensive statements from `pg_stat_statements`, sortable, with
   cache hit rates; enables the extension for you if it's missing (the server must preload it).
-- **Extensions:** enable (choosing the schema), update or disable.
 - **Activity:** live overview (connections against `max_connections`, active, idle in transaction,
   blocked, top blocker, longest running) and the database's sessions with state, duration, waits
   and blockers; filter by state, role, application or root blockers, hover a query to read it,
   and cancel or terminate a session with a preview.
+- **Extensions:** enable (choosing the schema), update or disable.
 - **Configuration:** search_path, timezone, timeouts and work_mem as database or role defaults.
 
 ![Schema diagram of the shop tables](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/schema-diagram.png)

@@ -15,18 +15,19 @@
 	let problem = $state('');
 	/** The id this page already tried to connect to: one attempt, then the connection manager. */
 	let attempted = '';
-	const connected = $derived(status.ready && status.current.connection ? databaseId(status.current.connection) : null);
+	/** The open database this URL names; requests carry its key. */
+	const connection = $derived(status.ready ? status.current.connections.find((open) => databaseId(open) === params.db) : undefined);
 
-	// The URL names its database: open it if connected, otherwise connect the saved profile with that id.
-	// Connecting switches the server for every tab (one global connection).
+	// Use the open database the URL names, otherwise connect the saved profile with that id.
 	$effect(() => {
 		const db = params.db;
-		if (!status.ready || connected === db || attempted === db) return;
+		if (!status.ready || connection || attempted === db) return;
 		attempted = db;
-		if (status.current.locked && connected) { void goto(tablesHref(connected), { replace: true }); return; }
+		const pinned = status.current.locked && status.current.connections[0];
+		if (pinned) { void goto(tablesHref(databaseId(pinned)), { replace: true }); return; }
 		const profile = loadProfiles().find((profile) => connectionId(profileTarget(profile.url)) === db);
 		if (!profile) { problem = 'This link points to a database that is not among your saved connections.'; return; }
-		connect({ url: profile.url, sslMode: profile.sslMode, expected: status.current.connection?.id ?? null })
+		connect({ url: profile.url, sslMode: profile.sslMode })
 			.then(() => { rememberProfile(profile.id); return status.refresh(); })
 			.catch((cause) => { problem = `Could not connect to “${profile.name}”: ${message(cause)}`; });
 	});
@@ -40,11 +41,11 @@
 			<Button size="sm" onclick={() => void status.refresh()}>Retry</Button>
 		</div>
 	</main>
-{:else if connected && connected === params.db}
-	{#key status.current!.connection?.id}<EditorApp status={status.current!} />{/key}
+{:else if connection}
+	{#key connection.key}<EditorApp status={{ connection, locked: status.current!.locked }} />{/key}
 	{@render children()}
 {:else if problem}
-	<ConnectScreen status={status.current!} error={problem} />
+	<ConnectScreen status={{ connection: null, locked: status.current!.locked }} error={problem} />
 {:else}
 	<LoadingShell />
 {/if}

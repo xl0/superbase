@@ -25,8 +25,8 @@ PostgreSQL validates. Keep code and tests minimal.
 - Live demo: static build with PGlite in the browser on sample data (GitHub Pages).
 - Releases: `bun run release` → CI stages npm (2FA approve), pushes ghcr.io/xl0/superbase and
   xl0xl0/superbase images and creates the GitHub Release. The demo deploys from master on every push.
-- Connections: global server connection, saved browser profiles, SSL modes, locked mode via
-  `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
+- Connections: a server pool per database (requests name it), saved browser profiles, SSL modes,
+  locked mode via `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
 - Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
   fingerprints/fences, copy-schema SQL, auto-reconnect and draft-ownership machinery.
 

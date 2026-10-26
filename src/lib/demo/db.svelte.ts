@@ -19,7 +19,7 @@ import * as schemaDb from '#lib/queries/schema.js';
 import * as databaseDb from '#lib/queries/database.js';
 import { exportCsv } from '#lib/queries/export.js';
 import { SQL_MAX_RESULTS, SQL_MAX_ROWS, type SqlRunArgs, type SqlRunResult } from '#lib/sql.js';
-import type { ConnectionStatus, CsvExportArgs } from '#lib/types.js';
+import type { ConnectionInfo, CsvExportArgs, ServerStatus } from '#lib/types.js';
 import seed from './seed.sql?raw';
 
 type Demo = { pglite: PGlite; pool: pg.Pool; text: Pick<QueryOptions, 'parsers' | 'serializers'> };
@@ -110,10 +110,10 @@ class DemoQuery<T> {
 
 const query = <A, T>(load: (args: A) => Promise<T>) => (args: A) => new DemoQuery(() => load(args));
 
-export const connectionStatus = () => new DemoQuery<ConnectionStatus>(async () => ({
-	connection: { id: 'demo', host: 'PGlite', port: '', database: 'postgres', user: 'postgres' }, locked: false
+export const connectionStatus = () => new DemoQuery<ServerStatus>(async () => ({
+	connections: [{ key: 'demo', host: 'PGlite', port: '', database: 'postgres', user: 'postgres' }], locked: false
 }));
-export const connect = async (): Promise<ConnectionStatus> => { throw new Error('The demo has one built-in database.'); };
+export const connect = async (): Promise<ConnectionInfo> => { throw new Error('The demo has one built-in database.'); };
 
 export const database = query(withPool((pool) => db.listTables(pool)));
 export const tableRows = query(withPool(db.listRows));

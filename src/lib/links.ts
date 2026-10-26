@@ -3,7 +3,7 @@ import { connectionId, connectionTarget } from './connection-profiles.js';
 import type { ConnectionInfo } from './types.js';
 import { viewHash, type TableView } from './view.js';
 
-/** URL id of a connected database (see connectionId). */
+/** URL id of an open database: stable across SSL modes and passwords (see connectionId). */
 export const databaseId = (info: ConnectionInfo) => connectionId(connectionTarget(info));
 
 export const tablesHref = (db: string, view?: TableView) =>

@@ -40,7 +40,7 @@ export function profileTarget(url: string): string {
 	return `${parsed.hostname}:${parsed.port || '5432'}${decodeURIComponent(parsed.pathname)}${user ? ` · ${user}` : ''}`;
 }
 
-export function connectionTarget(info: ConnectionInfo): string {
+export function connectionTarget(info: Pick<ConnectionInfo, 'host' | 'port' | 'database' | 'user'>): string {
 	return `${info.host}:${info.port}/${info.database} · ${info.user}`;
 }
 

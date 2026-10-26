@@ -34,7 +34,7 @@ export class SqlState {
 	#opened = '';
 
 	constructor(connection: ConnectionInfo) {
-		this.connection = connection.id;
+		this.connection = connection.key;
 		this.#draftKey = `superbase.sql-draft:${connection.user}@${connection.host}:${connection.port}/${connection.database}`;
 		try {
 			const saved = JSON.parse(localStorage.getItem(this.#draftKey) ?? 'null');

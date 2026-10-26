@@ -58,12 +58,12 @@
 		pending = true;
 		error = '';
 		try {
-			const next = await connect({ ...choice, expected: status.connection?.id ?? null });
+			const next = await connect(choice);
 			rememberProfile(choice.id ?? null);
 			onswitch();
-			// A full load onto the new database's route resets every piece of client state. Switching
-			// adds a history entry (Back returns to the old database); leaving the connect screen does not.
-			const href = tablesHref(databaseId(next.connection!));
+			// A full load onto the new database's route resets this page's state (other tabs keep theirs).
+			// Switching adds a history entry (Back returns to the old database); leaving the connect screen does not.
+			const href = tablesHref(databaseId(next));
 			if (status.connection) window.location.assign(href); else window.location.replace(href);
 		} catch (cause) {
 			error = message(cause);
@@ -81,7 +81,9 @@
 			const others = loadProfiles().filter((item) => item.id !== profile.id);
 			storeProfiles([...others, profile].sort((a, b) => a.name.localeCompare(b.name)));
 			profiles = loadProfiles();
-			dialogOpen = false;
+			// A new connection is opened right away; a failure stays in the dialog, the profile stays saved.
+			if (editing) dialogOpen = false;
+			else void change(profile);
 		} catch (cause) { error = message(cause); }
 	}
 

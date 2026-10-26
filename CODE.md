@@ -1,12 +1,12 @@
 # superbase — code map
 
 Postgres table + SQL editor: SvelteKit 3 / Svelte 5 SPA (SSR off), SvelteKit remote functions,
-shadcn-svelte, Tailwind v4, `pg` directly. One Node process, one database target.
+shadcn-svelte, Tailwind v4, `pg` directly. One Node process; a pool per open database.
 
 ## Deployment modes and trust model
 
-- **Local** (`DATABASE_URL` unset): browsers pick a URL; `server/connections.ts` keeps one
-  global pool. Bound to 127.0.0.1; `hooks.server.ts` rejects non-loopback Host headers
+- **Local** (`DATABASE_URL` unset): browsers pick a URL; `server/connections.ts` keeps a pool
+  per database. Bound to 127.0.0.1; `hooks.server.ts` rejects non-loopback Host headers
   (DNS rebinding). SvelteKit's origin check guards commands and form POSTs.
 - **Locked** (`DATABASE_URL` set): pinned to that database; `connect` refuses.
   `HOST` other than loopback disables the Host check: auth is expected in front.
@@ -24,16 +24,19 @@ operators) — for correctness, not as a security boundary.
 
 ## Connection lifecycle
 
-`connections.ts`: `current = { info, pool, sql }`. `info.id` is a random generation that
-changes on every switch. Every remote call passes the generation it loaded; a mismatch throws
-"Connection changed in another tab", so stale tabs never act on a new database.
-Connect test-queries a candidate pool before replacing the old one. SSL is a separate setting
+`connections.ts` maps a key, `host:port/database · user · sslmode` (no password, from pg's own
+URL parsing), to `{ info, pool, sql }`. `connect` (a POST: the only request with a password)
+opens or reuses that key's pool after a test query and returns `info`; every other request
+carries the key of the database its page shows, so it can only act on that one, and tabs on
+different databases are independent. An unknown key (server restarted) asks to reload; the
+route then reconnects the saved profile. Idle pools hold no clients, so pools are never closed.
+Locked mode has one pinned connection and refuses other keys. SSL is a separate setting
 (`connection-options.ts`); URLs may carry only `sslmode` (imported into the setting, then
 stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
 on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
 Profiles (`connection-profiles.ts`) are a plain localStorage list; the active one is matched by
-host/port/db/user. A successful switch fully loads the new database's route. One-off URLs are
-never stored.
+host/port/db/user. A successful connect fully loads the new database's route (other tabs keep
+theirs). One-off URLs are never stored, so they cannot reconnect after a server restart.
 
 ## Routes and history
 
@@ -41,9 +44,9 @@ never stored.
 table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 `#f.status=eq.pending&sort=placed_at.desc`), so filter values never reach the server.
 - `[db]` is `connectionId` (FNV-1a) of the password-free target. `db/[db]/+layout.svelte` opens
-  the app when the server is connected to it, otherwise connects the saved profile with that id
-  (one attempt), otherwise shows the connection manager; locked mode redirects to its database.
-  `/` redirects to the connected database or the last-used profile.
+  the app with the open database whose id matches (passing its key down), otherwise connects the
+  saved profile with that id (one attempt), otherwise shows the connection manager; locked mode
+  redirects to its database. `/` redirects to the last-used profile, else any open database.
 - The layout keeps `EditorApp` and all three workspaces mounted; the empty pages only select one.
 - `EditorApp` syncs both ways: URL → `editor.show(view)` (deferred while `navigationBlocked`, so
   Back during an edit applies once it ends) and editor state → `goto` (new history entry;

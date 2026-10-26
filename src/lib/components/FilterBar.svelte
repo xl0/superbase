@@ -157,7 +157,14 @@
 			allowDeselect={false} onValueChange={(column) => { if (column) begin(column); }}>
 			<Combobox.Input aria-label="Add filter" {placeholder} maxlength={1024} autocomplete="off" spellcheck={false}
 				onfocus={() => { if (!blocked) columnOpen = true; }}
-				oninput={(event) => query = event.currentTarget.value}>
+				oninput={(event) => query = event.currentTarget.value}
+				onkeydown={(event) => {
+					// Once something is typed, Tab accepts the highlighted (or first) column like Enter.
+					if (event.key !== 'Tab' || event.shiftKey || !columnOpen || !query.trim()) return;
+					const active = event.currentTarget.getAttribute('aria-activedescendant');
+					const column = (active && document.getElementById(active)?.dataset.value) || columns[0]?.name;
+					if (column) { event.preventDefault(); begin(column); }
+				}}>
 				{#snippet child({ props })}<Input {...props} class="h-8 flex-1 basis-52 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent" />{/snippet}
 			</Combobox.Input>
 			<Combobox.Portal>

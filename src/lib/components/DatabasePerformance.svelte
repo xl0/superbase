@@ -18,7 +18,6 @@
 	] as const;
 	type Column = (typeof COLUMNS)[number][0];
 	const ALL = '*';
-	const RESET_SQL = 'select pg_stat_statements_reset();';
 	const ENABLE_SQL = 'create extension if not exists pg_stat_statements;';
 	const id = $props.id();
 	let stats = $state.raw<QueryStats | null>(null);
@@ -32,6 +31,7 @@
 	/** The statement awaiting confirmation: enable the extension, or reset the statistics. */
 	let pending = $state<'enable' | 'reset' | null>(null);
 	const queries = $derived(stats?.available ? stats.queries : []);
+	const resetSql = $derived(stats?.available ? `select ${stats.schema}.pg_stat_statements_reset();` : '');
 	const totalTime = $derived(queries.reduce((sum, item) => sum + item.totalTime, 0));
 	const totals = $derived(queries.reduce((sum, item) => ({ calls: sum.calls + item.calls, rows: sum.rows + item.rows }), { calls: 0, rows: 0 }));
 	const roles = $derived([...new Set(queries.map((item) => item.role))].sort());
@@ -192,5 +192,5 @@
 
 <SqlDialog open={!!pending} title={pending === 'enable' ? 'Enable pg_stat_statements' : 'Reset query statistics'}
 	description={pending === 'enable' ? undefined : 'Clears pg_stat_statements for the whole server, not just this database.'}
-	sql={pending === 'enable' ? ENABLE_SQL : pending ? RESET_SQL : ''} destructive={pending === 'reset'} action={pending === 'reset' ? 'Reset' : 'Apply'}
+	sql={pending === 'enable' ? ENABLE_SQL : pending ? resetSql : ''} destructive={pending === 'reset'} action={pending === 'reset' ? 'Reset' : 'Apply'}
 	onclose={() => pending = null} onapplied={load} />

@@ -91,7 +91,8 @@ export interface QueryStat {
 	hitRate: number | null;
 }
 export type QueryStats =
-	| { available: true; queries: QueryStat[]; hitRate: number | null }
+	/** `schema`: where the extension is installed, quoted as needed (it may be off the search_path). */
+	| { available: true; schema: string; queries: QueryStat[]; hitRate: number | null }
 	/** The extension is missing (`installed` false) or installed but not preloaded by the server. */
 	| { available: false; installed: boolean; reason: string };
 

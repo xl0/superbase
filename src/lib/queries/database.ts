@@ -104,7 +104,7 @@ export async function queryStats(pool: pg.Pool): Promise<QueryStats> {
 			pool.query(`select (blks_hit / nullif(blks_hit + blks_read, 0)::float8) as "hitRate"
 				from pg_stat_database where datname = current_database()`)
 		]);
-		return { available: true, queries: queries.rows, hitRate: database.rows[0]?.hitRate ?? null };
+		return { available: true, schema, queries: queries.rows, hitRate: database.rows[0]?.hitRate ?? null };
 	} catch (error) {
 		// Installed but not in shared_preload_libraries: the view raises instead of returning rows.
 		return { available: false, installed: true, reason: (error as Error).message };

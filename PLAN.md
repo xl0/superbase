@@ -36,8 +36,8 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] Review leftovers: qualify `pg_stat_statements_reset()` with the extension's schema; count
-  `enum[]` columns as enum users; Dockerfile installs `pg` without the lockfile.
+- [ ] Review leftovers: count `enum[]` columns as enum users; Dockerfile installs `pg` without
+  the lockfile.
 
 ## Later / maybe
 

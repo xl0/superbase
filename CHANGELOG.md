@@ -33,6 +33,7 @@
 - Editing a role changes only the attributes you changed, so admins without superuser (PostgreSQL 16+) can edit roles.
 - With port 3000 taken, the launcher printed and opened :3000 as well as the port it actually used.
 - Schema forms (indexes, constraints, edit column) always read the current table definition.
+- Resetting query statistics works when pg_stat_statements is installed in a schema outside the search path.
 
 ## [0.2.0] - 2026-10-25
 

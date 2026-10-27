@@ -149,12 +149,19 @@ export function createPolicy(table: string, spec: PolicySpec): string {
 export const REALTIME_SCHEMA = '__superbase';
 export function realtimeSql(table: string, enable: boolean): string {
 	if (!enable) return `drop trigger superbase_realtime on ${table};`;
-	return `create schema if not exists __superbase;
-create or replace function __superbase.notify_change() returns trigger language plpgsql as $$
-begin
-  perform pg_notify('superbase', json_build_object('schema', tg_table_schema, 'table', tg_table_name, 'op', tg_op)::text);
-  return null;
-end $$;
+	// Set up once, by whoever comes first: replacing the function needs its owner, and even
+	// `create schema if not exists` needs CREATE on the database. USAGE lets other roles attach it.
+	return `do $do$ begin
+  if to_regprocedure('__superbase.notify_change()') is null then
+    create schema if not exists __superbase;
+    create function __superbase.notify_change() returns trigger language plpgsql as $$
+    begin
+      perform pg_notify('superbase', json_build_object('schema', tg_table_schema, 'table', tg_table_name, 'op', tg_op)::text);
+      return null;
+    end $$;
+    grant usage on schema __superbase to public;
+  end if;
+end $do$;
 create trigger superbase_realtime after insert or update or delete or truncate on ${table}
   for each statement execute function __superbase.notify_change();`;
 }

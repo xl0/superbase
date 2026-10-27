@@ -35,6 +35,8 @@ export interface Table {
 	kind: 'table' | 'view' | 'materialized view';
 	/** Row-level security is enabled. */
 	rls: boolean;
+	/** Has the `superbase_realtime` trigger: changes are pushed instead of polled. */
+	realtime: boolean;
 	columns: Column[];
 	/** Catalog estimate, not an exact count. */
 	rowCount: number;

@@ -6,6 +6,7 @@
 
 - Browser history and shareable links: the database, workspace and table are in the path, and filters, sort, page and followed foreign keys in the hash. Links to a saved connection reconnect to it.
 - Views and materialized views in the table editor, read-only; materialized views can be refreshed from their menu.
+- Realtime per table (⚡ next to Live, or Database → Realtime): a statement-level trigger notifies via LISTEN/NOTIFY and open table editors refresh at once instead of polling. Superbase's own objects live in the `__superbase` schema. If notifications can't arrive (transaction-mode poolers), the app says so and keeps polling.
 - View as role: on RLS tables, the table editor can read and edit rows as another role with session settings, to test policies.
 - Database → Policies: row-level security per table (enable, disable, force), policies (create, edit, drop) and table privileges; also as a side panel from the table editor.
 - Database → Roles: create, edit and drop roles, including login, password, BYPASSRLS and membership.

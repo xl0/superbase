@@ -66,6 +66,17 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 - Writes run in one transaction with a ROW EXCLUSIVE lock and fresh metadata. Updates/deletes
   match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.
   Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
+- Realtime (opt-in per table, `Table.realtime`): `ddl.realtimeSql` adds a statement-level
+  `superbase_realtime` trigger calling `__superbase.notify_change()` (the tool-owned schema; dropping
+  it with cascade removes every realtime trigger, as Database → Realtime offers), which `pg_notify`s channel
+  `superbase` with schema/table/op only. `connections.subscribeChanges` keeps one LISTEN client per
+  database while subscribed; `/events?connection=<key>` streams it as SSE. `EditorApp` opens one
+  EventSource while any table has realtime and refetches the open table through `editor.poll`
+  (coalesced); the 5 s poll then runs only every 30 s as a safety net. Not in the static demo.
+  Self-check: after LISTEN the server notifies itself through the pool; no echo within 5 s (e.g. a
+  transaction-mode pooler) marks the connection `realtimeUnavailable`, the stream sends an
+  `unavailable` event and editors keep polling (`editor.realtimeIssue` explains why).
+  Toggling (toolbar ⚡ via `editor.setRealtime`, or the Realtime page) applies at once, unpreviewed.
 - "View as role" (`TableTarget.as`, `editor.viewAs`): row reads, writes and CSV export run in a
   transaction after `actAs` (`set local role` + `set_config(…, true)`); metadata and locks stay with
   the connection role. `RoleMenu` shows on RLS tables (`Table.rls`) or while a role is active.

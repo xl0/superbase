@@ -105,4 +105,29 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 			await pool.query(`drop table ${table}; drop role if exists ${name}; drop role if exists ${name}_x`);
 		}
 	});
+
+	test('realtime trigger notifies the superbase channel per statement and reads back as a table flag', async () => {
+		const table = ddl.qualify(schema, 'live');
+		await executeDdl(pool, `create table ${table} (id int primary key);`);
+		const installed = (await pool.query(`select to_regnamespace('${ddl.REALTIME_SCHEMA}') is not null as installed`)).rows[0].installed;
+		await executeDdl(pool, ddl.realtimeSql(table, true));
+		const listener = new pg.Client({ connectionString: url });
+		await listener.connect();
+		try {
+			const received: string[] = [];
+			listener.on('notification', (message) => received.push(message.payload ?? ''));
+			await listener.query('listen superbase');
+			await pool.query(`insert into ${table} select generate_series(1, 3)`);
+			await Bun.sleep(200);
+			expect(received.map((payload) => JSON.parse(payload))).toEqual([{ schema, table: 'live', op: 'INSERT' }]);
+			const flag = async () => (await listTables(pool)).tables.find((entry) => entry.schema === schema && entry.name === 'live')!.realtime;
+			expect(await flag()).toBe(true);
+			await executeDdl(pool, ddl.realtimeSql(table, false));
+			expect(await flag()).toBe(false);
+		} finally {
+			await listener.end();
+			// Only remove the shared schema if this test created it: otherwise it would drop realtime set up by hand.
+			if (!installed) await pool.query(`drop schema ${ddl.REALTIME_SCHEMA} cascade`);
+		}
+	});
 });

@@ -143,6 +143,22 @@ export function createPolicy(table: string, spec: PolicySpec): string {
 	return `create policy ${ident(spec.name)} on ${table} as ${spec.permissive ? 'permissive' : 'restrictive'} for ${spec.command} to ${roles}${using}${check};`;
 }
 
+/** Realtime: a statement-level trigger notifies channel `superbase` with the table and operation (never row data).
+ * The shared function lives in schema `__superbase` (the underscores mark it as tool-owned); dropping that schema
+ * with cascade removes every realtime trigger too. */
+export const REALTIME_SCHEMA = '__superbase';
+export function realtimeSql(table: string, enable: boolean): string {
+	if (!enable) return `drop trigger superbase_realtime on ${table};`;
+	return `create schema if not exists __superbase;
+create or replace function __superbase.notify_change() returns trigger language plpgsql as $$
+begin
+  perform pg_notify('superbase', json_build_object('schema', tg_table_schema, 'table', tg_table_name, 'op', tg_op)::text);
+  return null;
+end $$;
+create trigger superbase_realtime after insert or update or delete or truncate on ${table}
+  for each statement execute function __superbase.notify_change();`;
+}
+
 export const TABLE_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as const;
 
 /** GRANT/REVOKE statements turning `before` into `after` (role → privileges); other privileges are left alone. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, LockKeyhole, LockKeyholeOpen, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
+	import { Download, LockKeyhole, LockKeyholeOpen, Plus, Radio, RotateCw, Settings2, Trash2, X, Zap } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -14,6 +14,8 @@
 	let deleteTrigger = $state<HTMLButtonElement | null>(null);
 	let refreshButton = $state<HTMLButtonElement | null>(null);
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
+	/** Realtime is a trigger, so tables only; the static demo has no event stream. */
+	const realtimeControl = $derived(editor.table.kind === 'table' && import.meta.env.MODE !== 'demo');
 
 	function exportRows(options: boolean, anchor: HTMLElement) {
 		onedit({ kind: 'exportCsv', options, query: {
@@ -51,10 +53,22 @@
 						disabled={blocked || !editor.table.columns.length} aria-label="Query export options" title="Choose export columns"
 						onclick={(event) => exportRows(true, event.currentTarget)}><Settings2 /></Button>
 				</div>
-				<Button variant={editor.live ? 'secondary' : 'outline'} size="sm" class="text-xs" aria-label="Live updates" aria-pressed={editor.live}
-					title="Check for changes every 5 seconds while this tab is visible" onclick={() => editor.setLive(!editor.live)}>
-					<Radio class={editor.live ? 'text-primary' : ''} />Live
-				</Button>
+				<!-- Live: this tab's auto-refresh. ⚡: the table's realtime trigger (a database change, applied at once). -->
+				<div class="flex shrink-0">
+					<Button variant={editor.live ? 'secondary' : 'outline'} size="sm" class={['text-xs', realtimeControl && 'rounded-r-none']}
+						aria-label="Live updates" aria-pressed={editor.live} onclick={() => editor.setLive(!editor.live)}
+						title={editor.realtime && editor.table.realtime ? 'Live: refreshes as soon as the table changes (realtime)' : 'Live: checks for changes every 5 seconds while this tab is visible'}>
+						<Radio class={editor.live ? 'text-primary' : ''} />Live
+					</Button>
+					{#if realtimeControl}
+						<Button variant={editor.table.realtime ? 'secondary' : 'outline'} size="icon-sm" class="rounded-l-none border-l-0" disabled={blocked}
+							aria-label="Realtime" aria-pressed={editor.table.realtime} onclick={() => void editor.setRealtime(!editor.table.realtime)}
+							title={editor.realtimeIssue ?? (editor.table.realtime ? 'Realtime on: changes are pushed at once. Click to drop the trigger and poll instead.'
+								: 'Turn on realtime: adds a notify trigger to this table so open editors refresh instantly.')}>
+							<Zap class={editor.table.realtime ? editor.realtimeIssue ? 'text-amber-300' : 'text-primary' : ''} />
+						</Button>
+					{/if}
+				</div>
 				<Button variant="outline" size="sm" class="text-xs" disabled={blocked || !editor.tableEditable} onclick={() => editor.startInsert()}><Plus />Insert row</Button>
 				{#if editor.selectedCount > 0}
 					<Button variant="ghost" size="icon-sm" disabled={editor.busy} aria-label="Clear row selection" onclick={() => editor.clearRowSelection()}><X /></Button>

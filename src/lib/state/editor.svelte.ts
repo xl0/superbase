@@ -2,9 +2,10 @@ import { database, deleteRows, saveTable, tableRows, changeSchema } from '#lib/d
 import { fresh, message } from '#lib/utils.js';
 import type { SchemaChange } from '#lib/schema.js';
 import type { TableView } from '#lib/view.js';
+import { qualify, realtimeSql } from '#lib/ddl.js';
 import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values, type ViewAs } from '#lib/types.js';
 
-const EMPTY_TABLE: Table = { schema: '', name: '', kind: 'table', rls: false, columns: [], rowCount: 0 };
+const EMPTY_TABLE: Table = { schema: '', name: '', kind: 'table', rls: false, realtime: false, columns: [], rowCount: 0 };
 
 // Plain copies: identities are kept in $state and sent to the server later.
 const copyIdentity = (identity: RowIdentity): RowIdentity => ({ ...identity, pk: { ...identity.pk } });
@@ -18,6 +19,8 @@ export class EditorState {
 	role = $state('');
 	bypass = $state(false);
 	roles = $state<string[]>([]);
+	/** The shared realtime function exists (schema `__superbase`). */
+	realtimeInstalled = $state(false);
 	/** Grid reads and writes act as this role (RLS testing); null = the connection role as is. */
 	viewAs = $state.raw<ViewAs | null>(null);
 	ready = $state(false);
@@ -41,6 +44,10 @@ export class EditorState {
 	cellSelected = $state(false);
 	live = $state(true);
 	polling = $state(false);
+	/** The realtime event stream is connected (EditorApp); realtime tables then skip the timed poll. */
+	realtime = $state(false);
+	/** Why realtime cannot work on this database (notifications never arrive), or null. */
+	realtimeIssue = $state<string | null>(null);
 	externalChange = $state(false);
 	liveError = $state<string | null>(null);
 	error = $state<string | null>(null);
@@ -113,6 +120,7 @@ export class EditorState {
 			this.role = result.role;
 			this.bypass = result.bypass;
 			this.roles = result.roles;
+			this.realtimeInstalled = result.realtimeInstalled;
 			this.ready = true;
 			if (this.table === EMPTY_TABLE) {
 				const first = this.tables.find((table) => table.schema === this.activeSchema)
@@ -242,6 +250,20 @@ export class EditorState {
 		const first = this.tables.find((table) => table.schema === schema);
 		if (first) await this.selectTable(schema, first.name);
 	}
+	/** Adds or drops the open table's realtime trigger right away; sort, filters and page survive. */
+	async setRealtime(enable: boolean) {
+		if (this.navigationBlocked || this.loading || this.table.kind !== 'table') return;
+		this.busy = true;
+		this.error = null;
+		try {
+			await changeSchema({ connection: this.connection, sql: realtimeSql(qualify(this.activeSchema, this.activeTableName), enable) });
+		} catch (error) {
+			this.error = message(error);
+			return;
+		} finally { this.busy = false; }
+		await this.#reload();
+	}
+
 	/** Selections are dropped: their rows were read as the previous role. */
 	async setViewAs(next: ViewAs | null) {
 		if (this.navigationBlocked) return;

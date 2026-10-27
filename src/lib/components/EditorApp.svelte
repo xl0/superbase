@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Check, Database, Server, SquareTerminal, Table2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
@@ -85,10 +86,41 @@
 
 	onMount(() => {
 		void editor.initialize(status.connection!.key, urlView ?? undefined);
-		const poll = () => { void editor.poll(liveActive); };
-		const timer = window.setInterval(poll, 5_000);
-		document.addEventListener('visibilitychange', poll);
-		return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
+		// Realtime tables refresh on their notifications while the stream is up, polled only every 30 s as a safety net
+		// (a notification arriving mid-save or mid-load is skipped). A tab becoming visible always catches up.
+		let tick = 0;
+		const timer = window.setInterval(() => {
+			if (!(editor.realtime && editor.table.realtime) || ++tick % 6 === 0) void editor.poll(liveActive);
+		}, 5_000);
+		const visible = () => { void editor.poll(liveActive); };
+		document.addEventListener('visibilitychange', visible);
+		return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+	});
+
+	// Realtime: one event stream per database while any table has the trigger (not in the static demo).
+	const anyRealtime = $derived(import.meta.env.MODE !== 'demo' && editor.tables.some((table) => table.realtime));
+	let refreshing = false, again = false;
+	/** Coalesces bursts of notifications: one refetch at a time, plus one more if changes arrived meanwhile. */
+	function refreshLive() {
+		if (refreshing) { again = true; return; }
+		refreshing = true;
+		void editor.poll(liveActive).finally(() => {
+			refreshing = false;
+			if (again) { again = false; refreshLive(); }
+		});
+	}
+	$effect(() => {
+		if (!anyRealtime) return;
+		const source = new EventSource(`${resolve('/events')}?connection=${encodeURIComponent(status.connection!.key)}`);
+		source.onopen = () => { editor.realtime = true; };
+		source.onerror = () => { editor.realtime = false; };
+		// Notifications proved undeliverable (e.g. a transaction pooler): stop retrying and keep polling.
+		source.addEventListener('unavailable', (event) => { editor.realtimeIssue = event.data; editor.realtime = false; source.close(); });
+		source.onmessage = (event) => {
+			const change: { schema: string; table: string } = JSON.parse(event.data);
+			if (change.schema === editor.activeSchema && change.table === editor.activeTableName) refreshLive();
+		};
+		return () => { source.close(); editor.realtime = false; };
 	});
 
 	const unsavedWork = () => editor.navigationBlocked || sql.protectedWork;
@@ -149,7 +181,7 @@
 						aria-current={workspace === 'sql' ? 'page' : undefined} disabled={editor.navigationBlocked} href={sqlHref(db)}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
-					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, enums, policies, roles, performance, activity, extensions, configuration"
+					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, enums, policies, roles, realtime, performance, activity, extensions, configuration"
 						aria-current={workspace === 'database' ? 'page' : undefined} disabled={editor.navigationBlocked} href={databaseHref(db, databaseSection)}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->

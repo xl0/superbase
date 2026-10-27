@@ -14,6 +14,8 @@ PostgreSQL validates. Keep code and tests minimal.
 
 - Table editor: exact values (arrays shown/edited as JSON), cell/range/paste edits with optimistic
   row-version conflicts, insert form, FK picker/navigation, filters, multi-sort, live polling, CSV export.
+- Realtime per table: notify trigger (`__superbase`) → LISTEN → SSE; falls back to polling when
+  notifications don't arrive (transaction-mode poolers).
 - Schema editing via previewed SQL: tables, columns, PK, indexes, UNIQUE/CHECK/FK.
 - SQL console with per-tab sessions, transactions, cancel, autosaved draft; snippet library with
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
@@ -39,7 +41,6 @@ Nothing queued; pick from the list below.
 - Read-only mode for the viewer deployment (would need SQL console restrictions).
 - Schema diagram editing: drag column→column to open the FK form prefilled; table menu on cards.
 - Schema management; nested/OR filters.
-- Event-driven refresh instead of polling, only with a real delivery path.
 - Load-over-time charts: sample pg_stat_database/pg_stat_statements counters in the server
   process (in-memory ring buffer, no database objects); history only while the server runs.
 - AI assistant in the SQL editor (shelved): pi-agent-core loop and tools in the browser

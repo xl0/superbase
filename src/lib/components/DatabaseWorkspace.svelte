@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Activity, Gauge, List, ListTree, Network, Puzzle, ShieldCheck, SlidersHorizontal, Users } from '@lucide/svelte';
+	import { Activity, Gauge, List, ListTree, Network, Puzzle, ShieldCheck, SlidersHorizontal, Users, Zap } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { databaseHref } from '#lib/links.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -9,6 +9,7 @@
 	import DatabaseExtensions from './DatabaseExtensions.svelte';
 	import DatabaseIndexes from './DatabaseIndexes.svelte';
 	import DatabasePolicies from './DatabasePolicies.svelte';
+	import DatabaseRealtime from './DatabaseRealtime.svelte';
 	import DatabaseRoles from './DatabaseRoles.svelte';
 	import DatabasePerformance from './DatabasePerformance.svelte';
 	import SchemaDiagram from './SchemaDiagram.svelte';
@@ -20,6 +21,7 @@
 		enums: { label: 'Enums', icon: List },
 		policies: { label: 'Policies', icon: ShieldCheck },
 		roles: { label: 'Roles', icon: Users },
+		...(import.meta.env.MODE === 'demo' ? {} : { realtime: { label: 'Realtime', icon: Zap } }),
 		performance: { label: 'Performance', icon: Gauge },
 		activity: { label: 'Activity', icon: Activity },
 		extensions: { label: 'Extensions', icon: Puzzle },
@@ -48,6 +50,7 @@
 		{:else if section === 'enums'}<DatabaseEnums />
 		{:else if section === 'policies'}<DatabasePolicies />
 		{:else if section === 'roles'}<DatabaseRoles />
+		{:else if section === 'realtime'}<DatabaseRealtime />
 		{:else if section === 'performance'}<DatabasePerformance />
 		{:else if section === 'activity'}<DatabaseActivity />
 		{:else if section === 'extensions'}<DatabaseExtensions />

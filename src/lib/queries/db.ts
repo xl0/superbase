@@ -24,7 +24,7 @@ function kindOf(typeName: string, typeKind: string, category: string): ColumnKin
 	return 'text';
 }
 
-type TableRow = { id: string; schema: string; name: string; kind: string; rls: boolean; row_count: number };
+type TableRow = { id: string; schema: string; name: string; kind: string; rls: boolean; realtime: boolean; row_count: number };
 type ColumnRow = {
 	table_id: string;
 	name: string;
@@ -66,6 +66,7 @@ export async function loadMetadata(
 		and n.nspname !~ '^pg_(toast_)?temp_' ${scope}`;
 	const tables = await db.query<TableRow>(
 			`select c.oid::text as id, n.nspname as schema, c.relname as name, c.relkind as kind, c.relrowsecurity as rls,
+			        exists (select from pg_trigger t where t.tgrelid = c.oid and t.tgname = 'superbase_realtime') as realtime,
 			        c.reltuples as row_count
 			 from pg_class c
 			 join pg_namespace n on n.oid = c.relnamespace
@@ -149,6 +150,7 @@ export async function loadMetadata(
 		name: table.name,
 		kind: table.kind === 'v' ? 'view' : table.kind === 'm' ? 'materialized view' : 'table',
 		rls: table.rls,
+		realtime: table.realtime,
 		columns: columnsByTable.get(table.id) ?? [],
 		// Views have no statistics; -1 hides the estimate.
 		rowCount: table.kind === 'v' ? -1 : Math.round(Number(table.row_count))
@@ -185,13 +187,14 @@ function primaryKey(table: Table): string[] {
 }
 
 /** Tables plus what "view as role" needs: the connection role, whether it bypasses RLS, other roles. */
-export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string; role: string; bypass: boolean; roles: string[] }> {
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }> {
 	const [tables, info] = await Promise.all([
 		cachedTables(pool, true),
-		pool.query<{ version: string; role: string; bypass: boolean; roles: string[] }>(`
+		pool.query<{ version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }>(`
 			select current_setting('server_version') as version, current_user as role,
 			       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as bypass,
-			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles`)
+			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles,
+			       to_regprocedure('__superbase.notify_change()') is not null as "realtimeInstalled"`)
 	]);
 	return { tables: [...tables.values()], ...info.rows[0] };
 }

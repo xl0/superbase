@@ -13,7 +13,7 @@ async function fixture() {
 	let ddl: ((args: any) => Promise<void>) | undefined;
 	let read: ((args: any) => Promise<{ rows: Row[]; hasMore: boolean }>) | undefined;
 	const column = (name: string, primaryKey = false) => ({ name, primaryKey, type: 'text', kind: 'text' as const, nullable: !primaryKey, generated: false, identity: null, defaultValue: null });
-	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, kind: 'table' as const, rls: false, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
+	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, kind: 'table' as const, rls: false, realtime: false, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
 	const row = (id: string, value = 'original'): Row => ({ key: id, values: { id, value }, identity: { pk: { id }, version: '1', relation: '123' } });
 	const api = {
 		database: () => ({ refresh: async () => {}, current: { tables, version: '18' } }),
@@ -30,7 +30,8 @@ async function fixture() {
 	let source = await readFile(new URL('../src/lib/state/editor.svelte.ts', import.meta.url), 'utf8');
 	source = source.replace(/^import \{ database, deleteRows, saveTable, tableRows, changeSchema \}.*$/m, `const { database, deleteRows, saveTable, tableRows, changeSchema } = globalThis[${JSON.stringify(key)}];`)
 		.replace("'#lib/types.js'", JSON.stringify(new URL('../src/lib/types.ts', import.meta.url).href))
-		.replace("'#lib/utils.js'", JSON.stringify(new URL('../src/lib/utils.ts', import.meta.url).href));
+		.replace("'#lib/utils.js'", JSON.stringify(new URL('../src/lib/utils.ts', import.meta.url).href))
+		.replace("'#lib/ddl.js'", JSON.stringify(new URL('../src/lib/ddl.ts', import.meta.url).href));
 	const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
 	const compiled = compileModule(js, { filename: 'editor.svelte.js', generate: 'client' }).js.code
 		.replace(/(['"])svelte\/internal\/client\1/, JSON.stringify(import.meta.resolve('svelte/internal/client')));

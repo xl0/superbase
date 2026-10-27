@@ -75,7 +75,11 @@ accordingly.
 - On tables with row-level security, **Role** views and edits rows as another role, with optional
   session settings (e.g. `app.tenant_id`), so you see what its policies allow.
 - Views and materialized views open read-only (a materialized view's ⋮ menu refreshes its data).
-- **Live** re-reads the visible page every five seconds without disturbing your edits.
+- **Live** re-reads the visible page every five seconds without disturbing your edits. For instant
+  updates, turn on realtime with the ⚡ next to it (or in Database → Realtime): a small notify
+  trigger (the shared function lives in a `__superbase` schema) makes open editors refresh as soon
+  as the table changes. Notifications need a direct or session-mode connection; through a
+  transaction-mode pooler (e.g. Supabase's port 6543) the app notices and keeps polling.
 - The download button exports all rows matching the filters as CSV, in grid order.
 
 ![Editing a JSON cell](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/cell-editor.png)
@@ -116,6 +120,8 @@ The side panel lists the sections:
   policies (command, roles, permissive/restrictive, USING / WITH CHECK); and set which roles may
   select, insert, update or delete at all. The same panel opens from the table editor (the RLS
   button or ⋮ → Policies & access).
+- **Realtime:** turn instant updates on or off per table, or remove the `__superbase` schema (and
+  with it every realtime trigger, after a confirmation).
 - **Roles:** create, edit or drop roles (login and password, BYPASSRLS, create DB, membership).
 - **Enums:** create enum types, rename them or their values, add values, or drop them.
 - **Indexes:** every index per schema, with definitions; drop with a preview.

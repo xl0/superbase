@@ -52,6 +52,9 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
   Back during an edit applies once it ends) and editor state → `goto` (new history entry;
   canonicalizing a bare/unknown table replaces). `show` sets state synchronously, so the two
   settle without loops; the editor → URL effect must not track `page.url`.
+- A schema without a table (`/tables/<schema>`) opens the schema's first table, or stays on an
+  empty schema: `editor.schemas` comes from `listTables` (every usable schema except
+  `__superbase`), not from the tables, so an empty schema can be active with no table open.
 - Demo: `404.html` copies the app shell so GitHub Pages serves deep links.
 
 ## Rows (`queries/db.ts`)
@@ -93,7 +96,9 @@ the validator. `queries/schema.ts` also lists approved column types (builtins, e
 arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 `SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
 `SchemaConstraints` are list + form children that bind their `change`. Editing a constraint is
-drop + add. Duplicate uses `LIKE … INCLUDING ALL`, copies non-generated columns with
+drop + add. `tableDefinition` (⋮ → Definition, a read-only side panel that blocks nothing) rebuilds
+a table's or view's DDL from `pg_get_*def` and the catalogs in a read-only transaction with
+`search_path = pg_catalog`, so every user object comes out qualified; a test round-trips it. Duplicate uses `LIKE … INCLUDING ALL`, copies non-generated columns with
 `overriding system value`, and advances identity sequences.
 
 ## SQL console (`server/sql.ts`)
@@ -135,6 +140,9 @@ renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE
 + create in one transaction; `ddl.grantChanges` diffs the grid into grant/revoke, leaving other
 privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (attributes only
 when changed, membership as grant/revoke, rename last); the preview masks passwords.
+Schemas (`listSchemas`, all non-system ones with table/function counts): create, rename/owner,
+drop (cascade needs the typed name). Triggers (`listTriggers`, non-internal, events decoded from
+`tgtype`) show their and their function's definition; enable/disable apply at once, drop previews.
 Enums (`listEnums`, with columns using each) are edited in place by `ddl.enumChanges` (rename values,
 append values, rename the type last; Postgres cannot remove values). `DatabaseIndexes`/`DatabaseEnums`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
 `alter database|role … set|reset` SQL and run it through `executeDdl`. `search_path` values are

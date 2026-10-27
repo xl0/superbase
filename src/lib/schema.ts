@@ -56,8 +56,8 @@ export interface SchemaDefinition {
 
 export type SchemaEditMode =
 	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'duplicateTable' | 'addColumn' | 'addPrimaryKey' | 'indexes' | 'constraints' | 'refreshView' }
-	/** RLS, policies and privileges in a side panel (TableAccessPanel). */
-	| { kind: 'access' }
+	/** Side panels: RLS, policies and privileges (TableAccessPanel), or the DDL (TableDefinitionPanel). */
+	| { kind: 'access' } | { kind: 'definition' }
 	| { kind: 'alterColumn' | 'dropColumn'; column: string }
 	| { kind: 'exportCsv'; query?: RowQuery; options?: boolean };
 

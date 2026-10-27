@@ -16,7 +16,7 @@ async function fixture() {
 	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, kind: 'table' as const, rls: false, realtime: false, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
 	const row = (id: string, value = 'original'): Row => ({ key: id, values: { id, value }, identity: { pk: { id }, version: '1', relation: '123' } });
 	const api = {
-		database: () => ({ refresh: async () => {}, current: { tables, version: '18' } }),
+		database: () => ({ refresh: async () => {}, current: { tables, schemas: ['public'], version: '18' } }),
 		tableRows: (args: any) => {
 			const resource = { current: null as any, refresh: async () => { resource.current = await (read?.(args) ?? Promise.resolve({ rows: [row(args.page ? '2' : '1')], hasMore: true })); } };
 			return resource;

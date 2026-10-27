@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { Activity, DatabaseIndex, DatabaseSetting, EnumType, Extension, Policies, QueryStats, Role } from '../database.js';
+import type { Activity, DatabaseIndex, DatabaseSetting, EnumType, Extension, Policies, QueryStats, Role, SchemaInfo, Trigger } from '../database.js';
 import { CONFIG_SETTINGS } from '../database.js';
 
 export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
@@ -47,6 +47,30 @@ export async function listRoles(pool: pg.Pool): Promise<Role[]> {
 		       array(select b.rolname::text from pg_auth_members m join pg_roles b on b.oid = m.roleid
 		             where m.member = r.oid order by 1) as "memberOf"
 		from pg_roles r where r.rolname !~ '^pg_' order by r.rolname`)).rows;
+}
+
+export async function listSchemas(pool: pg.Pool): Promise<SchemaInfo[]> {
+	return (await pool.query<SchemaInfo>(`
+		select n.nspname as name, pg_get_userbyid(n.nspowner) as owner,
+		       (select count(*)::int from pg_class c where c.relnamespace = n.oid and c.relkind in ('r', 'p', 'v', 'm', 'f')) as tables,
+		       (select count(*)::int from pg_proc p where p.pronamespace = n.oid) as functions
+		from pg_namespace n
+		where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+		order by n.nspname`)).rows;
+}
+
+export async function listTriggers(pool: pg.Pool): Promise<Trigger[]> {
+	// tgtype bits: 1 row, 2 before, 4 insert, 8 delete, 16 update, 32 truncate, 64 instead of.
+	return (await pool.query<Trigger>(`
+		select n.nspname as schema, c.relname as table, t.tgname as name, t.tgenabled <> 'D' as enabled,
+		       case when t.tgtype & 2 <> 0 then 'before' when t.tgtype & 64 <> 0 then 'instead of' else 'after' end as timing,
+		       array_remove(array[case when t.tgtype & 4 <> 0 then 'insert' end, case when t.tgtype & 16 <> 0 then 'update' end,
+		         case when t.tgtype & 8 <> 0 then 'delete' end, case when t.tgtype & 32 <> 0 then 'truncate' end], null) as events,
+		       t.tgtype & 1 <> 0 as "forEachRow", t.tgfoid::regprocedure::text as function,
+		       pg_get_triggerdef(t.oid) as definition, pg_get_functiondef(t.tgfoid) as "functionDefinition"
+		from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+		where not t.tgisinternal and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+		order by n.nspname, c.relname, t.tgname`)).rows;
 }
 
 export async function listEnums(pool: pg.Pool): Promise<EnumType[]> {

@@ -22,7 +22,7 @@
 
 	/** Every form produces one SchemaChange: SQL that is previewed, then applied in one transaction. */
 	let { mode, table: initialTable, onclose, returnFocus }: {
-		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
+		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' | 'definition' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
 	} = $props();
 	const intent = untrack(() => mode);
 	const table = untrack(() => initialTable);
@@ -35,7 +35,7 @@
 		indexes: 'Indexes', constraints: 'Constraints', refreshView: 'Refresh materialized view' }[intent.kind];
 	let catalog = $state<SchemaCatalog | null>(null);
 	let definition = $state<SchemaDefinition | null>(null);
-	let schema = $state(table.schema);
+	let schema = $state(table.schema || editor.activeSchema); // No open table in an empty schema.
 	let name = $state(intent.kind === 'renameTable' ? table.name : '');
 	let columns = $state<ddl.ColumnSpec[]>([]);
 	let keys = $state<string[]>([]);

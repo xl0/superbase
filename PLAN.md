@@ -21,7 +21,8 @@ PostgreSQL validates. Keep code and tests minimal.
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
 - Database workspace: schema diagram, all indexes (drop), query performance (pg_stat_statements),
   activity (sessions, blockers, cancel/terminate), extensions (enable/update/disable), curated
-  database/role defaults, enums, RLS policies, table privileges and roles, as previewed SQL.
+  database/role defaults, enums, RLS policies, table privileges and roles, schemas, triggers,
+  as previewed SQL; table/view definitions.
 - Layout: left rail with three workspaces sharing one resizable side panel.
 - CLI: `npx|bunx @xl0/superbase [url] [--port] [--host] [--no-open]` (unscoped name rejected by npm).
 - Live demo: static build with PGlite in the browser on sample data (GitHub Pages).
@@ -40,7 +41,8 @@ Nothing queued; pick from the list below.
 
 - Read-only mode for the viewer deployment (would need SQL console restrictions).
 - Schema diagram editing: drag column→column to open the FK form prefilled; table menu on cards.
-- Schema management; nested/OR filters.
+- Nested/OR filters.
+- Functions page (list, read source, drop), like Triggers.
 - Load-over-time charts: sample pg_stat_database/pg_stat_statements counters in the server
   process (in-memory ring buffer, no database objects); history only while the server runs.
 - AI assistant in the SQL editor (shelved): pi-agent-core loop and tools in the browser

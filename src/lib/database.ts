@@ -54,6 +54,30 @@ export interface Role {
 	current: boolean;
 }
 
+/** A non-system schema with counts of what `drop … cascade` would take with it. */
+export interface SchemaInfo {
+	name: string;
+	owner: string;
+	/** Tables, views, materialized views and foreign tables. */
+	tables: number;
+	functions: number;
+}
+
+/** A user trigger (not the internal ones behind foreign keys). */
+export interface Trigger {
+	schema: string;
+	table: string;
+	name: string;
+	enabled: boolean;
+	timing: 'before' | 'after' | 'instead of';
+	events: ('insert' | 'update' | 'delete' | 'truncate')[];
+	forEachRow: boolean;
+	/** Signature, schema-qualified unless on the search_path. */
+	function: string;
+	definition: string;
+	functionDefinition: string;
+}
+
 /** A user-defined enum type; `columns` counts table columns using it. */
 export interface EnumType {
 	schema: string;

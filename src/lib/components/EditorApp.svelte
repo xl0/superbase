@@ -23,6 +23,7 @@
 	import DatabaseWorkspace from './DatabaseWorkspace.svelte';
 	import Workspace from './Workspace.svelte';
 	import TableAccessPanel from './TableAccessPanel.svelte';
+	import TableDefinitionPanel from './TableDefinitionPanel.svelte';
 	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
@@ -42,9 +43,9 @@
 		if (workspace === 'database') databaseSection = page.params.section;
 	});
 
-	/** The table view the URL names; null off the tables workspace or before a table is named. */
-	const urlView = $derived<TableView | null>(workspace === 'tables' && page.params.table
-		? { schema: page.params.schema ?? '', table: page.params.table, ...parseViewHash(page.url.hash) } : null);
+	/** The table view the URL names (no table: the schema's first, or none in an empty schema); null off the tables workspace or before a schema is named. */
+	const urlView = $derived<TableView | null>(workspace === 'tables' && page.params.schema
+		? { schema: page.params.schema, table: page.params.table ?? '', ...parseViewHash(page.url.hash) } : null);
 	// URL → editor: links, Back/Forward, typed URLs. While edits are open the URL may run ahead;
 	// the view applies once they finish.
 	$effect(() => {
@@ -54,19 +55,20 @@
 	// Editor → URL: sorting, filtering, paging, FK jumps and schema changes add history entries.
 	// show() updates the state synchronously, so a URL-driven change finds the URL already matching.
 	$effect(() => {
-		if (workspace !== 'tables' || !editor.ready || !editor.activeTableName) return;
+		if (workspace !== 'tables' || !editor.ready || !editor.activeSchema) return;
 		const href = tablesHref(db, editor.view);
 		// Untracked URL: a URL change alone (Back while edits are open) must not push the old view again.
 		untrack(() => {
 			const target = new URL(href, page.url.href);
 			if (target.pathname === page.url.pathname && target.hash === page.url.hash) return;
 			// Canonicalizing a bare or stale URL (no or unknown table) replaces it.
-			const named = urlView && editor.tables.some((table) => table.schema === urlView.schema && table.name === urlView.table);
+			const named = urlView && (urlView.table ? editor.tables.some((table) => table.schema === urlView.schema && table.name === urlView.table)
+				: editor.schemas.includes(urlView.schema) && !editor.tables.some((table) => table.schema === urlView.schema));
 			void goto(target, { replace: !named, reset: false });
 		});
 	});
-	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' }>; table: Table; anchor: HTMLElement | null } | null>(null);
-	let accessTable = $state.raw<Table | null>(null);
+	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' | 'definition' }>; table: Table; anchor: HTMLElement | null } | null>(null);
+	let sidePanel = $state.raw<{ kind: 'access' | 'definition'; table: Table } | null>(null);
 
 	/** Menus pass their own table, so actions on an inactive sidebar table never retarget the grid. */
 	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table: Table = editor.table) {
@@ -77,8 +79,9 @@
 				...(editor.viewAs ? { as: editor.viewAs } : {}) }, table, !!mode.options, trigger);
 			return;
 		}
+		if (mode.kind === 'definition') { sidePanel = { kind: 'definition', table }; return; } // Read-only: blocks nothing.
 		editor.schemaEditing = true;
-		if (mode.kind === 'access') accessTable = table;
+		if (mode.kind === 'access') sidePanel = { kind: 'access', table };
 		else schemaEdit = { mode, anchor: trigger, table };
 	}
 
@@ -188,11 +191,11 @@
 				<div class="min-w-0 flex-1" style:display={workspace === 'tables' ? 'flex' : 'none'}>
 					<Workspace label="Tables">
 						{#snippet sidebar()}<Sidebar oncreate={() => openSchema({ kind: 'createTable' })} onedit={openSchema} />{/snippet}
-						{#if editor.tables.length === 0}
+						{#if editor.schemaTables.length === 0}
 							<div class="grid flex-1 place-items-center p-6">
 								<div class="max-w-md space-y-3 text-center">
 									<Database class="mx-auto size-8 text-muted-foreground" />
-									<h1 class="text-lg font-semibold">No tables yet</h1>
+									<h1 class="text-lg font-semibold">{editor.activeSchema ? `No tables in ${editor.activeSchema}` : 'No tables yet'}</h1>
 									{#if editor.error}<p role="alert" class="text-xs break-words text-destructive">{editor.error}</p>{/if}
 									<div class="flex justify-center gap-2">
 										<Button size="sm" disabled={editor.navigationBlocked || editor.loading} onclick={() => openSchema({ kind: 'createTable' })}>Create table</Button>
@@ -255,4 +258,5 @@
 </div>
 <CsvExport bind:this={csvExport} bind:open={exportOpen} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} table={schemaEdit.table} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}
-{#if accessTable}<TableAccessPanel table={accessTable} onclose={() => { accessTable = null; editor.schemaEditing = false; }} />{/if}
+{#if sidePanel?.kind === 'access'}<TableAccessPanel table={sidePanel.table} onclose={() => { sidePanel = null; editor.schemaEditing = false; }} />
+{:else if sidePanel?.kind === 'definition'}<TableDefinitionPanel table={sidePanel.table} onclose={() => sidePanel = null} />{/if}

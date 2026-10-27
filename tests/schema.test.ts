@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import pg from 'pg';
 import * as ddl from '../src/lib/ddl.js';
-import { executeDdl, getSchemaDefinition, listSchemaCatalog } from '../src/lib/queries/schema.js';
+import { executeDdl, getSchemaDefinition, listSchemaCatalog, tableDefinition } from '../src/lib/queries/schema.js';
 import { listTables } from '../src/lib/queries/db.js';
 import { listPolicies, listRoles } from '../src/lib/queries/database.js';
 import type { SchemaType } from '../src/lib/schema.js';
@@ -66,6 +66,34 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 		const copy = ddl.qualify(schema, 'copy');
 		await pool.query(`insert into ${copy} (title) values ('c')`);
 		expect((await pool.query(`select id::text, title from ${copy} order by id`)).rows.map((row) => row.id)).toEqual(['1', '2', '3']);
+	});
+
+	test('a table definition recreates the table it was read from', async () => {
+		const s = ddl.ident(schema);
+		const odd = ddl.qualify(schema, 'Odd "name"');
+		await executeDdl(pool, `
+			create table ${s}.parent (id int primary key);
+			create function ${s}.touch() returns trigger language plpgsql as $$ begin return new; end $$;
+			create table ${odd} (
+				id bigint generated always as identity primary key,
+				parent int references ${s}.parent(id) on delete cascade,
+				price numeric(10, 2) not null default 0 check (price >= 0),
+				label text collate "C" unique,
+				doubled numeric generated always as (price * 2) stored
+			);
+			create index on ${odd} (lower(label)) where label is not null;
+			create trigger touch before update on ${odd} for each row execute function ${s}.touch();
+			alter table ${odd} enable row level security;
+			create policy cheap on ${odd} as restrictive for select to public using (price < 100);
+			comment on table ${odd} is 'It''s odd';
+			comment on column ${odd}.price is 'In cents';`);
+		const target = { connection: 'test', schema, table: 'Odd "name"' };
+		const before = await tableDefinition(pool, target);
+		// The round trip proves it valid and stable; these prove nothing was left out.
+		for (const part of ['GENERATED ALWAYS AS IDENTITY', 'COLLATE pg_catalog."C"', 'STORED', 'ON DELETE CASCADE', 'CHECK', 'UNIQUE', 'CREATE INDEX',
+			'CREATE TRIGGER', 'ENABLE ROW LEVEL SECURITY', 'AS RESTRICTIVE FOR SELECT TO public', "IS 'It''s odd'", "IS 'In cents'"]) expect(before).toContain(part);
+		await executeDdl(pool, `drop table ${odd}; ${before}`);
+		expect(await tableDefinition(pool, target)).toBe(before);
 	});
 
 	test('policies round-trip: commands drop clauses they cannot have, roles and RLS state read back', async () => {

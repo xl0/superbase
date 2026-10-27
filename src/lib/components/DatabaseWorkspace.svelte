@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Activity, Gauge, List, ListTree, Network, Puzzle, ShieldCheck, SlidersHorizontal, Users, Zap } from '@lucide/svelte';
+	import { Activity, Folders, Gauge, List, ListTree, Network, Puzzle, ShieldCheck, SlidersHorizontal, Users, Workflow, Zap } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { databaseHref } from '#lib/links.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -12,13 +12,17 @@
 	import DatabaseRealtime from './DatabaseRealtime.svelte';
 	import DatabaseRoles from './DatabaseRoles.svelte';
 	import DatabasePerformance from './DatabasePerformance.svelte';
+	import DatabaseSchemas from './DatabaseSchemas.svelte';
+	import DatabaseTriggers from './DatabaseTriggers.svelte';
 	import SchemaDiagram from './SchemaDiagram.svelte';
 	import Workspace from './Workspace.svelte';
 
 	const SECTIONS = {
-		schema: { label: 'Schema', icon: Network },
+		schema: { label: 'Schema diagram', icon: Network },
+		schemas: { label: 'Schemas', icon: Folders },
 		indexes: { label: 'Indexes', icon: ListTree },
 		enums: { label: 'Enums', icon: List },
+		triggers: { label: 'Triggers', icon: Workflow },
 		policies: { label: 'Policies', icon: ShieldCheck },
 		roles: { label: 'Roles', icon: Users },
 		...(import.meta.env.MODE === 'demo' ? {} : { realtime: { label: 'Realtime', icon: Zap } }),
@@ -46,8 +50,10 @@
 	{/snippet}
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if section === 'schema'}<SchemaDiagram />
+		{:else if section === 'schemas'}<DatabaseSchemas />
 		{:else if section === 'indexes'}<DatabaseIndexes />
 		{:else if section === 'enums'}<DatabaseEnums />
+		{:else if section === 'triggers'}<DatabaseTriggers />
 		{:else if section === 'policies'}<DatabasePolicies />
 		{:else if section === 'roles'}<DatabaseRoles />
 		{:else if section === 'realtime'}<DatabaseRealtime />

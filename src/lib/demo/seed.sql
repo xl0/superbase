@@ -69,6 +69,16 @@ from orders o join products p on (o.id * 7 + p.id * 3) % 5 = 0;
 update orders o set total = s.sum from (
   select oi.order_id, sum(oi.quantity * p.price) as sum from order_items oi join products p on p.id = oi.product_id group by 1
 ) s where s.order_id = o.id;
+-- Keeps orders.total in step with its items.
+create function order_total() returns trigger language plpgsql as $$
+begin
+  update orders o set total = (select sum(oi.quantity * p.price) from order_items oi join products p on p.id = oi.product_id
+                               where oi.order_id = o.id)
+  where o.id in (new.order_id, old.order_id);
+  return null;
+end $$;
+create trigger order_items_total after insert or update or delete on order_items
+  for each row execute function order_total();
 create view customer_orders as
 select c.name, c.country, count(o.id) as orders, sum(o.total) as spent
 from customers c left join orders o on o.customer_id = c.id

@@ -75,6 +75,8 @@ accordingly.
 - On tables with row-level security, **Role** views and edits rows as another role, with optional
   session settings (e.g. `app.tenant_id`), so you see what its policies allow.
 - Views and materialized views open read-only (a materialized view's ⋮ menu refreshes its data).
+- **⋮ → Definition** shows the table's or view's DDL (columns, constraints, indexes, triggers,
+  RLS, policies, comments), rebuilt from the catalogs, with a Copy button.
 - **Live** re-reads the visible page every five seconds without disturbing your edits. For instant
   updates, turn on realtime with the ⚡ next to it (or in Database → Realtime): a small notify
   trigger (the shared function lives in a `__superbase` schema) makes open editors refresh as soon
@@ -114,8 +116,12 @@ only loads its text; nothing runs until you press Run.
 
 The side panel lists the sections:
 
-- **Schema:** a diagram of one schema's tables and foreign keys (including references to other
+- **Schema diagram:** one schema's tables and foreign keys (including references to other
   schemas); ↗ opens a table.
+- **Schemas:** create, rename, change owner or drop (cascade asks for the name); open one in the
+  table editor, even while it's empty.
+- **Triggers:** per schema, with timing, events and function; expand one to read it and its
+  function's source; enable or disable at once, or drop with a preview.
 - **Policies:** row-level security per table: turn RLS on, off or forced; create, edit or drop
   policies (command, roles, permissive/restrictive, USING / WITH CHECK); and set which roles may
   select, insert, update or delete at all. The same panel opens from the table editor (the RLS

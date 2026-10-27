@@ -11,6 +11,9 @@
 - Database → Policies: row-level security per table (enable, disable, force), policies (create, edit, drop) and table privileges; also as a side panel from the table editor.
 - Database → Roles: create, edit and drop roles, including login, password, BYPASSRLS and membership.
 - Database → Enums: create, rename, add values to, or drop enum types.
+- Database → Schemas: create, rename, change owner or drop schemas. Empty schemas appear in the table editor, ready for a first table.
+- Database → Triggers: list triggers with their and their function's definitions; enable, disable or drop them.
+- Table definition (⋮ → Definition): a table's or view's DDL rebuilt from the catalogs, ready to copy.
 - Database → Activity: client sessions with state, running time, waits and blocking sessions; cancel a query or terminate a session.
 
 ### Changed

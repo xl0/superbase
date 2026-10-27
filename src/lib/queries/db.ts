@@ -5,7 +5,7 @@ import type {
 	SaveArgs, Table, Values, ViewAs
 } from '../types.js';
 import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
-import { ident, qualify } from '../ddl.js';
+import { ident, qualify, REALTIME_SCHEMA } from '../ddl.js';
 
 /** Per-query parser: every value stays PostgreSQL's exact text output (numeric, JSON, arrays…). */
 export const textTypes = { getTypeParser: () => (value: string) => value };
@@ -187,16 +187,20 @@ function primaryKey(table: Table): string[] {
 }
 
 /** Tables plus what "view as role" needs: the connection role, whether it bypasses RLS, other roles. */
-export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }> {
+/** `schemas`: every non-system schema the role can use (empty ones too), except superbase's own. */
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; schemas: string[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }> {
 	const [tables, info] = await Promise.all([
 		cachedTables(pool, true),
-		pool.query<{ version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }>(`
-			select current_setting('server_version') as version, current_user as role,
+		pool.query<{ schemas: string[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }>(`
+			select array(select nspname::text from pg_namespace where nspname !~ '^pg_' and nspname not in ('information_schema', '${REALTIME_SCHEMA}')
+			             and has_schema_privilege(oid, 'USAGE')) as schemas,
+			       current_setting('server_version') as version, current_user as role,
 			       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as bypass,
 			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles,
 			       to_regprocedure('__superbase.notify_change()') is not null as "realtimeInstalled"`)
 	]);
-	return { tables: [...tables.values()], ...info.rows[0] };
+	const { schemas, ...rest } = info.rows[0];
+	return { tables: [...tables.values()], schemas: [...new Set([...schemas, ...[...tables.values()].map((table) => table.schema)])].sort(), ...rest };
 }
 
 /** Act as `as.role` for the rest of the transaction, with its session settings (RLS testing). */

@@ -102,3 +102,10 @@ create materialized view public.posts_per_user as
 select u.id as user_id, u.full_name, count(p.id) as posts, coalesce(sum(p.views), 0) as views
 from public.users u left join public.posts p on p.author_id = u.id
 group by u.id, u.full_name;
+create function public.log_post_change() returns trigger language plpgsql as $$
+begin
+  insert into public.audit_log (message) values (lower(tg_op) || ' post ' || coalesce(new.id, old.id));
+  return null;
+end $$;
+create trigger posts_audit after insert or update or delete on public.posts
+  for each row execute function public.log_post_change();

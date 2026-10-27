@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Copy, Download, EllipsisVertical, KeyRound, ListTree, LockKeyhole, Pencil, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
+	import { Copy, Download, EllipsisVertical, FileCode, KeyRound, ListTree, LockKeyhole, Pencil, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { editable, type Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -34,6 +34,7 @@
 		exportOptionsOpening = false;
 	}}>
 		<DropdownMenu.Item disabled={blocked} onSelect={() => void copyName()}><Copy />Copy name</DropdownMenu.Item>
+		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'definition' }, trigger, table)}><FileCode />Definition</DropdownMenu.Item>
 		<DropdownMenu.Separator />
 		{#if table.kind === 'table'}
 			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'renameTable' }, trigger, table)}><Pencil />Rename table</DropdownMenu.Item>

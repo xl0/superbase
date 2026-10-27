@@ -21,6 +21,8 @@ export class EditorState {
 	roles = $state<string[]>([]);
 	/** The shared realtime function exists (schema `__superbase`). */
 	realtimeInstalled = $state(false);
+	/** Usable schemas, including ones without tables. */
+	schemas = $state<string[]>([]);
 	/** Grid reads and writes act as this role (RLS testing); null = the connection role as is. */
 	viewAs = $state.raw<ViewAs | null>(null);
 	ready = $state(false);
@@ -61,7 +63,6 @@ export class EditorState {
 	tableKey = $derived(tableKey(this.activeSchema, this.activeTableName));
 	table = $derived(this.tables.find((table) => table.schema === this.activeSchema && table.name === this.activeTableName) ?? EMPTY_TABLE);
 	tableEditable = $derived(editable(this.table));
-	schemas = $derived([...new Set(this.tables.map((table) => table.schema))]);
 	schemaTables = $derived(this.tables.filter((table) => table.schema === this.activeSchema));
 	get navigationBlocked() { return this.busy || this.editing || this.inserting || this.schemaEditing; }
 	get hasFilters() { return this.filters.length > 0 || this.reference !== null; }
@@ -73,7 +74,7 @@ export class EditorState {
 		return { schema: this.activeSchema, table: this.activeTableName, filters: this.filters, sort: this.sort, page: this.page, reference: this.reference };
 	}
 
-	/** `view` comes from the URL; an unknown table falls back to the first one. */
+	/** `view` comes from the URL; an unknown table falls back to the schema's first one (none in an empty schema). */
 	async initialize(connection: string, view?: TableView) {
 		this.connection = connection;
 		if (view) this.#assign(view);
@@ -92,10 +93,11 @@ export class EditorState {
 	/** Apply a view from the URL (link, Back/Forward); a no-op when nothing differs. */
 	async show(view: TableView) {
 		if (this.navigationBlocked || JSON.stringify(view) === JSON.stringify(this.view)) return;
-		const known = this.tables.find((table) => table.schema === view.schema && table.name === view.table);
-		const fallback = known ?? this.tables.find((table) => table.schema === view.schema) ?? this.tables[0];
-		if (!fallback) return;
-		this.#assign(known ? view : { schema: fallback.schema, table: fallback.name, filters: [], sort: [], page: 0, reference: null });
+		const known = this.tables.some((table) => table.schema === view.schema && table.name === view.table);
+		const schema = this.schemas.includes(view.schema) ? view.schema : this.tables[0]?.schema;
+		if (!schema) return;
+		const first = this.tables.find((table) => table.schema === schema)?.name ?? '';
+		this.#assign(known ? view : { schema, table: first, filters: [], sort: [], page: 0, reference: null });
 		this.savedAt = null;
 		await this.fetch();
 	}
@@ -121,12 +123,14 @@ export class EditorState {
 			this.bypass = result.bypass;
 			this.roles = result.roles;
 			this.realtimeInstalled = result.realtimeInstalled;
+			this.schemas = result.schemas;
 			this.ready = true;
 			if (this.table === EMPTY_TABLE) {
-				const first = this.tables.find((table) => table.schema === this.activeSchema)
-					?? this.tables.find((table) => table.schema === 'public') ?? this.tables[0];
-				this.activeSchema = first?.schema ?? '';
-				this.activeTableName = first?.name ?? '';
+				// Keep an existing (possibly empty) schema; otherwise prefer public's tables.
+				const schema = this.schemas.includes(this.activeSchema) ? this.activeSchema
+					: (this.tables.find((table) => table.schema === 'public') ?? this.tables[0])?.schema ?? this.schemas[0] ?? '';
+				this.activeSchema = schema;
+				this.activeTableName = this.tables.find((table) => table.schema === schema)?.name ?? '';
 				this.sort = [];
 				this.filters = [];
 				this.reference = null;
@@ -247,8 +251,7 @@ export class EditorState {
 		));
 	}
 	async setSchema(schema: string) {
-		const first = this.tables.find((table) => table.schema === schema);
-		if (first) await this.selectTable(schema, first.name);
+		await this.selectTable(schema, this.tables.find((table) => table.schema === schema)?.name ?? '');
 	}
 	/** Adds or drops the open table's realtime trigger right away; sort, filters and page survive. */
 	async setRealtime(enable: boolean) {

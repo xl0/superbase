@@ -30,8 +30,8 @@ export interface PolicyTable {
 	enabled: boolean;
 	forced: boolean;
 	policies: Policy[];
-	/** Explicit privileges of roles other than the owner (`public` = everyone). */
-	grants: { role: string; privilege: string }[];
+	/** Explicit privileges of roles other than the owner (`public` = everyone), with every role that granted each. */
+	grants: { role: string; privilege: string; grantors: string[] }[];
 }
 /** A role (server-wide). `memberOf` lists roles whose privileges it can use. */
 export interface Role {

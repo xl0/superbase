@@ -140,7 +140,8 @@ pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensi
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
 Policies: `listPolicies` returns tables with RLS state, policies (`pg_policy`, roles resolved, `public`
-for none) and non-owner grants (`aclexplode(relacl)`, distinct: one row per grantor). The roles a
+for none) and non-owner grants (`aclexplode(relacl)`, grouped with their grantors: a revoke removes only one
+grantor's grant, so the grid marks privileges also granted by roles other than the owner). The roles a
 policy can name and whether `current_user` bypasses RLS come from `editor` (`listTables`). `TableAccess`
 renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE grid) for both
 `DatabasePolicies` and the table editor's `TableAccessPanel` (`SchemaEditMode` `access`).

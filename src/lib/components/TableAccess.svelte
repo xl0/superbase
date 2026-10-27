@@ -35,6 +35,9 @@
 	}, {}));
 	let privileges = $derived(structuredClone(granted));
 	const grantSql = $derived(grantChanges(target, granted, privileges));
+	/** `role:privilege` → its grantors, where someone besides the owner granted it: one revoke may not remove it. */
+	const otherGrantors = $derived(new Map(table.grants.filter((grant) => grant.grantors.some((grantor) => grantor !== table.owner))
+		.map((grant) => [`${grant.role}:${grant.privilege}`, grant.grantors])));
 	const ungranted = $derived(['public', ...editor.roles].filter((name) => name !== table.owner && !(name in privileges)));
 
 	function open(policy: Policy | null) {
@@ -122,13 +125,20 @@
 						<tr>
 							<td class="py-1 pr-4 font-mono">{name}</td>
 							{#each TABLE_PRIVILEGES as privilege}
-								<td class="px-2 py-1 text-center"><Checkbox aria-label={`${privilege} for ${name}`} checked={privileges[name].includes(privilege)}
-									onCheckedChange={(checked) => toggle(name, privilege, !!checked)} /></td>
+								{@const grantors = otherGrantors.get(`${name}:${privilege}`)}
+								<td class="px-2 py-1 text-center whitespace-nowrap" title={grantors && `Granted by ${grantors.join(', ')}`}>
+									<Checkbox aria-label={`${privilege} for ${name}`} checked={privileges[name].includes(privilege)}
+										onCheckedChange={(checked) => toggle(name, privilege, !!checked)} />{#if grantors}<span class="ml-0.5 align-top text-amber-300">*</span>{/if}
+								</td>
 							{/each}
 						</tr>
 					{/each}
 				</tbody>
 			</table>
+			{#if otherGrantors.size}
+				<p class="text-[11px] text-amber-300">* Also granted by roles other than the owner (hover for who). A revoke removes only the grant
+					made by you (by the owner, when a superuser revokes); the others stay until their grantors revoke them.</p>
+			{/if}
 		{/if}
 		<div class="flex flex-wrap items-center gap-2">
 			{#if ungranted.length}

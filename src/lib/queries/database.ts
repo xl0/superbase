@@ -30,10 +30,12 @@ export async function listPolicies(pool: pg.Pool): Promise<PolicyTable[]> {
 		                  'using', pg_get_expr(p.polqual, p.polrelid),
 		                  'check', pg_get_expr(p.polwithcheck, p.polrelid)) order by p.polname)
 		                 from pg_policy p where p.polrelid = c.oid), '[]') as policies,
-		                -- One row per grantor: distinct.
-		                coalesce((select json_agg(distinct jsonb_build_object(
-		                  'role', case when a.grantee = 0 then 'public' else pg_get_userbyid(a.grantee) end, 'privilege', a.privilege_type))
-		                 from aclexplode(c.relacl) a where a.grantee <> c.relowner), '[]') as grants
+		                -- aclexplode has one row per grantor; a revoke removes only one grantor's grant.
+		                coalesce((select json_agg(json_build_object(
+		                  'role', case when a.grantee = 0 then 'public' else pg_get_userbyid(a.grantee) end, 'privilege', a.privilege_type,
+		                  'grantors', a.grantors))
+		                 from (select grantee, privilege_type, array_agg(distinct pg_get_userbyid(grantor)) as grantors
+		                       from aclexplode(c.relacl) where grantee <> c.relowner group by grantee, privilege_type) a), '[]') as grants
 		         from pg_class c join pg_namespace n on n.oid = c.relnamespace
 		         where c.relkind in ('r', 'p') and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
 		       ) t), '[]') as tables`)).rows[0].tables;

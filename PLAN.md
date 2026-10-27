@@ -39,7 +39,7 @@ Nothing queued; pick from the list below.
 - Read-only mode for the viewer deployment (would need SQL console restrictions).
 - Roles/grants/RLS inspection.
 - Schema diagram editing: drag column→column to open the FK form prefilled; table menu on cards.
-- Views; enum/schema management; nested/OR filters; virtualization if large pages need it.
+- Views; enum/schema management; nested/OR filters.
 - Event-driven refresh instead of polling, only with a real delivery path.
 - Load-over-time charts: sample pg_stat_database/pg_stat_statements counters in the server
   process (in-memory ring buffer, no database objects); history only while the server runs.

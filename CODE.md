@@ -147,6 +147,8 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
   main area. Database sections (schema, indexes, performance, extensions, configuration) are
   side panel items.
 - `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for side panels and sheets.
+- `ui/` popover, dialog and sheet contents default `preventOverflowTextSelection` to false: bits-ui
+  otherwise sets `user-select` on `<body>` per click, restyling every grid cell (~145 ms at 500 rows).
 - Theme: dark charcoal palette in `app.css`, shared by shadcn components and the grid.
 
 ## Demo build

@@ -16,6 +16,7 @@
 ### Fixed
 
 - Tab in the filter bar accepts the highlighted column instead of leaving the field.
+- Clicks inside the cell editor and other popups are instant on large pages (they restyled the whole page).
 
 ## [0.2.0] - 2026-10-25
 

@@ -109,7 +109,8 @@ asking backend, read in one statement with the server-wide connection count; blo
 pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
-`DatabaseIndexes`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
+Enums (`listEnums`, with columns using each) are edited in place by `ddl.enumChanges` (rename values,
+append values, rename the type last; Postgres cannot remove values). `DatabaseIndexes`/`DatabaseEnums`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
 `alter database|role … set|reset` SQL and run it through `executeDdl`. `search_path` values are
 written as SQL lists; other values are quoted literals.
 

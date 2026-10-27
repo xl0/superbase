@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { Activity, Gauge, ListTree, Network, Puzzle, SlidersHorizontal } from '@lucide/svelte';
+	import { Activity, Gauge, List, ListTree, Network, Puzzle, SlidersHorizontal } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { databaseHref } from '#lib/links.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import DatabaseActivity from './DatabaseActivity.svelte';
 	import DatabaseConfig from './DatabaseConfig.svelte';
+	import DatabaseEnums from './DatabaseEnums.svelte';
 	import DatabaseExtensions from './DatabaseExtensions.svelte';
 	import DatabaseIndexes from './DatabaseIndexes.svelte';
 	import DatabasePerformance from './DatabasePerformance.svelte';
@@ -14,6 +15,7 @@
 	const SECTIONS = {
 		schema: { label: 'Schema', icon: Network },
 		indexes: { label: 'Indexes', icon: ListTree },
+		enums: { label: 'Enums', icon: List },
 		performance: { label: 'Performance', icon: Gauge },
 		activity: { label: 'Activity', icon: Activity },
 		extensions: { label: 'Extensions', icon: Puzzle },
@@ -39,6 +41,7 @@
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if section === 'schema'}<SchemaDiagram />
 		{:else if section === 'indexes'}<DatabaseIndexes />
+		{:else if section === 'enums'}<DatabaseEnums />
 		{:else if section === 'performance'}<DatabasePerformance />
 		{:else if section === 'activity'}<DatabaseActivity />
 		{:else if section === 'extensions'}<DatabaseExtensions />

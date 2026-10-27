@@ -109,6 +109,7 @@ The side panel lists the sections:
 
 - **Schema:** a diagram of one schema's tables and foreign keys (including references to other
   schemas); ↗ opens a table.
+- **Enums:** create enum types, rename them or their values, add values, or drop them.
 - **Indexes:** every index per schema, with definitions; drop with a preview.
 - **Performance:** the most expensive statements from `pg_stat_statements`: share of total time,
   calls, max/mean/min time, rows and cache hit rate, sortable and filterable by role, with a

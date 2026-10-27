@@ -21,6 +21,7 @@ export const saveTable = command('unchecked', (args: SaveArgs) => db.saveTable(c
 export const deleteRows = command('unchecked', (args: DeleteArgs) => db.deleteRows(connections.activePool(args.connection), args));
 export const schemaCatalog = query('unchecked', ({ connection }: Target) => schemaDb.listSchemaCatalog(connections.activePool(connection)));
 export const schemaDefinition = query('unchecked', (args: TableTarget) => schemaDb.getSchemaDefinition(connections.activePool(args.connection), args));
+export const enums = query('unchecked', ({ connection }: Target) => databaseDb.listEnums(connections.activePool(connection)));
 export const indexes = query('unchecked', ({ connection }: Target) => databaseDb.listIndexes(connections.activePool(connection)));
 export const queryStats = query('unchecked', ({ connection }: Target) => databaseDb.queryStats(connections.activePool(connection)));
 export const activity = query('unchecked', ({ connection }: Target) => databaseDb.listActivity(connections.activePool(connection)));

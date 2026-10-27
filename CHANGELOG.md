@@ -5,6 +5,7 @@
 ### Added
 
 - Browser history and shareable links: the database, workspace and table are in the path, and filters, sort, page and followed foreign keys in the hash. Links to a saved connection reconnect to it.
+- Database → Enums: create, rename, add values to, or drop enum types.
 - Database → Activity: client sessions with state, running time, waits and blocking sessions; cancel a query or terminate a session.
 
 ### Changed

@@ -10,6 +10,14 @@ export interface DatabaseIndex {
 	constraint: string | null;
 }
 
+/** A user-defined enum type; `columns` counts table columns using it. */
+export interface EnumType {
+	schema: string;
+	name: string;
+	values: string[];
+	columns: number;
+}
+
 /** One normalized statement from pg_stat_statements (times in milliseconds). */
 export interface QueryStat {
 	query: string;

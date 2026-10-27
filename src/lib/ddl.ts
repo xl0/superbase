@@ -129,6 +129,16 @@ export function duplicateTable(source: Table, name: string, includeRows: boolean
 	return statements.join('\n');
 }
 
+/** Enum edits Postgres supports in place: rename values, append new ones, rename the type (last, so earlier statements use the old name). */
+export function enumChanges(schema: string, name: string, values: { original: string | null; value: string }[], nextName: string): string {
+	const type = qualify(schema, name);
+	const statements = values.flatMap(({ original, value }) =>
+		original === null ? value ? [`alter type ${type} add value ${literal(value)};`] : []
+		: value !== original ? [`alter type ${type} rename value ${literal(original)} to ${literal(value)};`] : []);
+	if (nextName !== name) statements.push(`alter type ${type} rename to ${ident(nextName)};`);
+	return statements.join('\n');
+}
+
 export function constraintSql(spec: ConstraintSpec): string {
 	const columns = (names: string[]) => names.map(ident).join(', ');
 	switch (spec.kind) {

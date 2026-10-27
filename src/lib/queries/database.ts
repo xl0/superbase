@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { Activity, DatabaseIndex, DatabaseSetting, Extension, QueryStats } from '../database.js';
+import type { Activity, DatabaseIndex, DatabaseSetting, EnumType, Extension, QueryStats } from '../database.js';
 import { CONFIG_SETTINGS } from '../database.js';
 
 export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
@@ -13,6 +13,18 @@ export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
 		join pg_namespace n on n.oid = t.relnamespace
 		where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
 		order by n.nspname, t.relname, c.relname`)).rows;
+}
+
+export async function listEnums(pool: pg.Pool): Promise<EnumType[]> {
+	return (await pool.query<EnumType>(`
+		select n.nspname as schema, t.typname as name,
+		       array(select e.enumlabel::text from pg_enum e where e.enumtypid = t.oid order by e.enumsortorder) as values,
+		       (select count(*)::int from pg_attribute a join pg_class c on c.oid = a.attrelid
+		        where a.atttypid = t.oid and not a.attisdropped and c.relkind in ('r', 'p', 'v', 'm', 'f')) as columns
+		from pg_type t
+		join pg_namespace n on n.oid = t.typnamespace
+		where t.typtype = 'e' and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+		order by n.nspname, t.typname`)).rows;
 }
 
 /** Top statements of the current database by total execution time (PostgreSQL 13+ column names). */

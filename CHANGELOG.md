@@ -12,6 +12,7 @@
 
 - Tabs can work on different databases at the same time: the server keeps a connection pool per database, and each request names the database its page shows. A server restart now asks to reload (which reconnects a saved connection) instead of reporting a change in another tab.
 - Saving a new connection connects to it right away.
+- Array cells copy as JSON, and pasting a JSON array into an array cell converts it (Postgres literals paste as before).
 - Performance page laid out like Supabase's: time share bars, min time, role filter, a details panel per statement and CSV export.
 
 ### Fixed

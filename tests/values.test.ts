@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { error } from '@sveltejs/kit';
 import { message } from '../src/lib/utils.js';
 import { displayValue, fromTSV, toTSV } from '../src/lib/format.js';
-import { arrayJSON, arrayLiteral } from '../src/lib/arrays.js';
+import { arrayCopyText, arrayJSON, arrayLiteral, arrayPasteValue } from '../src/lib/arrays.js';
 import { parseViewHash, viewHash } from '../src/lib/view.js';
 import type { Column } from '../src/lib/types.js';
 
@@ -66,4 +66,12 @@ test('view hash round-trips filters, sort, page and FK references', () => {
 	expect(parseViewHash(viewHash({ schema: 's', table: 't', ...view }))).toEqual(view);
 	expect(viewHash({ schema: 's', table: 't', filters: [], sort: [], page: 0, reference: null })).toBe('');
 	expect(parseViewHash('')).toEqual({ filters: [], sort: [], page: 0, reference: null });
+});
+
+test('array clipboard: JSON converts on paste, literals pass through', () => {
+	const tags: Column = { ...column, type: 'text[]', kind: 'array', element: 'text' };
+	expect(arrayCopyText('{a,"b c"}', tags)).toBe('["a","b c"]');
+	expect(arrayPasteValue('["a","b c"]', tags)).toBe('{"a","b c"}');
+	for (const literal of ['{a,b}', '[0:1]={a,b}', '']) expect(arrayPasteValue(literal, tags)).toBe(literal);
+	expect(() => arrayPasteValue('["a",', tags)).toThrow();
 });

@@ -11,6 +11,7 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { message } from '#lib/utils.js';
 	import { displayValue, fromTSV, toTSV } from '#lib/format.js';
+	import { arrayCopyText, arrayPasteValue } from '#lib/arrays.js';
 	import { tableKey, writable, type CellValue, type Column, type Row, type Table } from '#lib/types.js';
 
 	let { table, rows, rowOffset, onedit }: {
@@ -125,7 +126,10 @@
 		const box = bounds();
 		if (editing || event.target !== viewport || !box) return;
 		event.preventDefault();
-		const values = rows.slice(box.r1, box.r2 + 1).map((row) => table.columns.slice(box.c1, box.c2 + 1).map((column) => editor.getValue(row, column.name)));
+		const values = rows.slice(box.r1, box.r2 + 1).map((row) => table.columns.slice(box.c1, box.c2 + 1).map((column) => {
+			const value = editor.getValue(row, column.name);
+			return column.kind === 'array' && typeof value === 'string' ? arrayCopyText(value, column) : value;
+		}));
 		event.clipboardData?.setData('text/plain', toTSV(values));
 	}
 
@@ -140,7 +144,7 @@
 			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {
 				const row = rows[focus.r + r], column = table.columns[focus.c + c], value = pasted[r][c];
 				if (!row || !column) throw new Error('Clipboard data extends beyond the loaded grid');
-				(changes[r] ??= { row, values: {} }).values[column.name] = value;
+				(changes[r] ??= { row, values: {} }).values[column.name] = column.kind === 'array' && typeof value === 'string' ? arrayPasteValue(value, column) : value;
 			}
 			await editor.updateRows(changes);
 		} catch (error) { editor.error = message(error); }

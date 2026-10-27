@@ -58,6 +58,14 @@ export function arrayJSON(value: string, column: Column): string | null {
 	return items && itemJSON(items, column.element!);
 }
 
+/** Clipboard text: arrays copy as the JSON shown in the grid. */
+export const arrayCopyText = (value: string, column: Column) => arrayJSON(value, column) ?? value;
+
+/** Pasted text for an array column: a JSON array converts; a literal (`{…}`, `[0:1]={…}`) passes as is. */
+export function arrayPasteValue(text: string, column: Column): string {
+	return column.element && text.trimStart().startsWith('[') && !/^\s*\[-?\d+:-?\d+\]/.test(text) ? arrayLiteral(text, column.element) : text;
+}
+
 const quote = (text: string) => `"${text.replace(/["\\]/g, '\\$&')}"`;
 
 /** JSON array → PostgreSQL array literal. Numbers keep their spelling; PostgreSQL validates the elements. */

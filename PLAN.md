@@ -36,7 +36,7 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] Review leftover: the Dockerfile installs `pg` without the lockfile.
+Nothing queued; pick from the list below.
 
 ## Later / maybe
 

@@ -14,7 +14,8 @@ shadcn-svelte, Tailwind v4, `pg` directly. One Node process; a pool per open dat
   `ORIGIN` is set (adapter-node assumes HTTPS), tries ports 3000+ when none is given, and opens
   a browser. A positional postgres URL sets `DATABASE_URL`. The npm package ships `bin` and the
   built `build/` (no source maps); `pg` is its only runtime dependency, everything else is bundled.
-  The `Dockerfile` builds with Bun and runs the same launcher on `node:24-alpine` as user `node`,
+  The `Dockerfile` builds with Bun and runs the same launcher on `node:24-alpine` as user `node`
+  (runtime `node_modules` from `bun install --production --frozen-lockfile`),
   with `HOST=0.0.0.0`; `ORIGIN` must match the public URL for commands to pass the origin check.
 
 Whoever reaches the app can run arbitrary SQL with the configured role. So remote functions are

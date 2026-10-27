@@ -6,11 +6,17 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
+# Runtime dependencies (pg and its own) at the lockfile's versions.
+FROM oven/bun:1.3.13-alpine AS deps
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --production --frozen-lockfile --ignore-scripts
+
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 COPY package.json ./
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+COPY --from=deps /app/node_modules ./node_modules
 COPY bin ./bin
 COPY --from=build /app/build ./build
 USER node

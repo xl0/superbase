@@ -114,6 +114,8 @@ const bumped = pkgText.replace(`"version": "${current}"`, `"version": "${version
 if (bumped === pkgText) die("could not rewrite the version in package.json")
 
 // Verify before writing anything, so a failing check leaves the tree clean.
+// Without a database the DB tests skip silently, and CI has none: they must run here.
+if (!process.env.TEST_DATABASE_URL) die("set TEST_DATABASE_URL so the database tests run")
 console.log(`\n=== verifying ${version} ===\n`)
 await $`bun run verify`
 await $`npm pack --dry-run --ignore-scripts`

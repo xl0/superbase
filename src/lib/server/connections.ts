@@ -33,6 +33,8 @@ function describe(config: pg.ClientConfig, sslMode: string): ConnectionInfo {
 	return { ...target, key: `${connectionTarget(target)} · ${sslMode}` };
 }
 
+const password = (config: pg.ClientConfig) => new pg.Client(config).password;
+
 function open(config: pg.ClientConfig, info: ConnectionInfo): Connection {
 	const pool = new pg.Pool({
 		...config, max: 5, application_name: 'superbase',
@@ -115,7 +117,11 @@ export function subscribeChanges(key: string, listener: (payload: string) => voi
 	};
 }
 
-/** Opens, or reuses, the pool for a URL. The returned key is what later requests name. */
+/**
+ * Opens, or reuses, the pool for a URL. The returned key is what later requests name. The key leaves out
+ * the password, so a pool is reused only with the same one: a wrong password never "connects", and new
+ * working credentials replace the pool (ending its SQL sessions; realtime streams reconnect).
+ */
 export async function connect(args: { url: string; sslMode: SslMode }): Promise<ConnectionInfo> {
 	if (locked) throw new Error('This server is pinned to DATABASE_URL.');
 	// URL options would override `ssl`, so connectionOptions only allows an importable sslmode.
@@ -123,7 +129,7 @@ export async function connect(args: { url: string; sslMode: SslMode }): Promise<
 	const config = { connectionString: url, ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode === 'verify-full' } };
 	const info = describe(config, sslMode);
 	const existing = connections.get(info.key);
-	if (existing) return existing.info;
+	if (existing && password(existing.config) === password(config)) return existing.info;
 	let next = open(config, info);
 	try {
 		try {
@@ -138,9 +144,9 @@ export async function connect(args: { url: string; sslMode: SslMode }): Promise<
 		close(next);
 		throw new Error(safeErrorMessage(error));
 	}
-	// Another tab may have opened the same database meanwhile.
-	const raced = connections.get(info.key);
-	if (raced) { close(next); return raced.info; }
+	// Verified: the newest credentials win, also over a pool another tab opened meanwhile.
+	const replaced = connections.get(info.key);
 	connections.set(info.key, next);
+	if (replaced) close(replaced);
 	return info;
 }

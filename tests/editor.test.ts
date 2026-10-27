@@ -258,3 +258,17 @@ test('attempted writes invalidate older polls even after failed writes finish', 
 	}
 });
 
+
+test('a poll asked for while one runs reads again after it (realtime notifications are not lost)', async () => {
+	const { editor: s, deferRead, row } = await fixture();
+	s.setLive(true);
+	const early = deferred<RowsPage>();
+	let reads = 0;
+	deferRead(() => ++reads === 1 ? early.promise : Promise.resolve({ rows: [row('changed')], hasMore: false }));
+	const polling = s.poll();
+	await s.poll(); // A notification arrives mid-poll.
+	early.resolve({ rows: [row('1')], hasMore: true });
+	await polling;
+	assert.equal(reads, 2);
+	assert.equal(s.rows[0].key, 'changed');
+});

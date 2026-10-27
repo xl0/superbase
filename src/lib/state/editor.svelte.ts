@@ -57,6 +57,8 @@ export class EditorState {
 	rowSelection = $state<Record<string, Record<string, RowIdentity>>>({});
 	#request = 0;
 	#liveGeneration = 0;
+	/** A poll was asked for while one ran, which may have read before the change: poll again after it. */
+	#pollAgain = false;
 
 	tableKey = $derived(tableKey(this.activeSchema, this.activeTableName));
 	table = $derived(this.tables.find((table) => table.schema === this.activeSchema && table.name === this.activeTableName) ?? EMPTY_TABLE);
@@ -189,9 +191,10 @@ export class EditorState {
 	}
 
 	async poll(isActive: () => boolean = () => true) {
+		if (this.polling) { this.#pollAgain = true; return; }
 		const eligible = () => this.live && this.ready && !!this.activeTableName &&
 			!this.loading && !this.busy && !this.schemaEditing && isActive();
-		if (this.polling || !eligible()) return;
+		if (!eligible()) return;
 		const request = this.#request;
 		const generation = this.#liveGeneration;
 		const current = () => request === this.#request && generation === this.#liveGeneration && eligible();
@@ -217,6 +220,10 @@ export class EditorState {
 			if (current()) this.liveError = message(error);
 		} finally {
 			this.polling = false;
+			if (this.#pollAgain) {
+				this.#pollAgain = false;
+				await this.poll(isActive);
+			}
 		}
 	}
 

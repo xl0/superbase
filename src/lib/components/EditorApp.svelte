@@ -93,17 +93,8 @@
 	});
 
 	// Realtime: one event stream per database while any table has the trigger (not in the static demo).
+	// Bursts coalesce in editor.poll: one read at a time, plus one more if changes arrived meanwhile.
 	const anyRealtime = $derived(import.meta.env.MODE !== 'demo' && editor.tables.some((table) => table.realtime));
-	let refreshing = false, again = false;
-	/** Coalesces bursts of notifications: one refetch at a time, plus one more if changes arrived meanwhile. */
-	function refreshLive() {
-		if (refreshing) { again = true; return; }
-		refreshing = true;
-		void editor.poll(liveActive).finally(() => {
-			refreshing = false;
-			if (again) { again = false; refreshLive(); }
-		});
-	}
 	$effect(() => {
 		if (!anyRealtime) return;
 		const source = new EventSource(`${resolve('/events')}?connection=${encodeURIComponent(connection.key)}`);
@@ -113,7 +104,7 @@
 		source.addEventListener('unavailable', (event) => { editor.realtimeIssue = event.data; editor.realtime = false; source.close(); });
 		source.onmessage = (event) => {
 			const change: { schema: string; table: string } = JSON.parse(event.data);
-			if (change.schema === editor.activeSchema && change.table === editor.activeTableName) refreshLive();
+			if (change.schema === editor.activeSchema && change.table === editor.activeTableName) void editor.poll(liveActive);
 		};
 		return () => { source.close(); editor.realtime = false; };
 	});

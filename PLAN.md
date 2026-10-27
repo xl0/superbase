@@ -36,8 +36,7 @@ PostgreSQL validates. Keep code and tests minimal.
 
 ## TODO
 
-- [ ] Review leftovers: count `enum[]` columns as enum users; Dockerfile installs `pg` without
-  the lockfile.
+- [ ] Review leftover: the Dockerfile installs `pg` without the lockfile.
 
 ## Later / maybe
 

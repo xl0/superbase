@@ -35,20 +35,23 @@ const server = createServer((request, response) => {
 	handler(request, response);
 });
 
+// One listener: a callback passed to each listen() attempt would stay attached after EADDRINUSE and fire too.
+server.once('listening', () => {
+	const url = `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`;
+	console.log(`Superbase: ${url}`);
+	if (open) {
+		const [command, ...options] = process.platform === 'darwin' ? ['open'] : process.platform === 'win32' ? ['cmd', '/c', 'start', '""'] : ['xdg-open'];
+		spawn(command, [...options, url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+	}
+});
+
 /** Without an explicit port, try 3000 and the next few if they are taken. */
 function listen(candidate, attempts) {
 	server.once('error', (error) => {
 		if (error.code === 'EADDRINUSE' && attempts > 1) listen(candidate + 1, attempts - 1);
 		else { console.error(`Cannot listen on ${host}:${candidate}: ${error.message}`); process.exit(1); }
 	});
-	server.listen(candidate, host, () => {
-		const url = `http://${host.includes(':') ? `[${host}]` : host}:${candidate}`;
-		console.log(`Superbase: ${url}`);
-		if (open) {
-			const [command, ...options] = process.platform === 'darwin' ? ['open'] : process.platform === 'win32' ? ['cmd', '/c', 'start', '""'] : ['xdg-open'];
-			spawn(command, [...options, url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
-		}
-	});
+	server.listen(candidate, host);
 }
 listen(port ?? 3000, port === undefined ? 10 : 1);
 

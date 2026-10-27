@@ -54,8 +54,6 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 		const title = definition.columns.find((column) => column.name === 'title')!;
 		expect([title.type, title.nullable, title.defaultValue, title.comment]).toEqual(['text', false, null, null]);
 		expect(definition.constraints.map((constraint) => [constraint.name, constraint.kind])).toEqual([['short', 'c'], ['title_key', 'u']]);
-		const child = await getSchemaDefinition(pool, { connection: 'test', schema, table: 'child' });
-		expect(child.constraints[0].foreignKey).toMatchObject({ table: 'odd "table"', columns: ['id'], onDelete: 'cascade' });
 
 		// Failed scripts roll back entirely.
 		await expect(executeDdl(pool, `alter table ${table} add column extra int; alter table ${table} add column extra int;`)).rejects.toThrow();
@@ -104,7 +102,7 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 			ddl.createPolicy(table, { name: 'read "own"', command: 'select', permissive: true, roles: [role], using: `owner = current_user`, check: 'ignored' }),
 			ddl.createPolicy(table, { name: 'add', command: 'insert', permissive: false, roles: [], using: 'ignored', check: 'owner is not null' })
 		].join('\n'));
-		const secured = (await listPolicies(pool)).tables.find((entry) => entry.schema === schema && entry.table === 'secured')!;
+		const secured = (await listPolicies(pool)).find((entry) => entry.schema === schema && entry.table === 'secured')!;
 		expect(secured).toMatchObject({ enabled: true, forced: false, owner: role });
 		expect(secured.policies).toEqual([
 			{ name: 'add', command: 'insert', permissive: false, roles: ['public'], using: null, check: '(owner IS NOT NULL)' },
@@ -120,13 +118,15 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 		try {
 			expect((await listRoles(pool)).find((role) => role.name === name)).toMatchObject({ login: false, bypass: true, memberOf: [] });
 			await executeDdl(pool, ddl.grantChanges(table, {}, { [name]: ['SELECT', 'UPDATE'], public: ['SELECT'] }));
-			const grants = async () => (await listPolicies(pool)).tables.find((entry) => entry.schema === schema && entry.table === 'granted')!.grants
+			const grants = async () => (await listPolicies(pool)).find((entry) => entry.schema === schema && entry.table === 'granted')!.grants
 				.map((grant) => `${grant.role}:${grant.privilege}`).sort();
 			expect(await grants()).toEqual(['public:SELECT', `${name}:SELECT`, `${name}:UPDATE`]);
 			await executeDdl(pool, ddl.grantChanges(table, { [name]: ['SELECT', 'UPDATE'], public: ['SELECT'] }, { [name]: ['SELECT', 'DELETE'] }));
 			expect(await grants()).toEqual([`${name}:DELETE`, `${name}:SELECT`]);
 			const old = { name, login: false, bypass: true, createdb: false, memberOf: [] };
 			expect(ddl.alterRole(old, { ...old, password: '' })).toBe('');
+			// Only changed attributes: PG16+ rejects naming CREATEDB/BYPASSRLS without holding them.
+			expect(ddl.alterRole(old, { ...old, login: true, password: '' })).toBe(`alter role ${ddl.ident(name)} with login;`);
 			await executeDdl(pool, ddl.alterRole(old, { ...old, name: `${name}_x`, bypass: false, password: '' }));
 			expect((await listRoles(pool)).find((role) => role.name === `${name}_x`)).toMatchObject({ bypass: false });
 		} finally {

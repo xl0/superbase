@@ -99,13 +99,6 @@ class DemoQuery<T> {
 			(error) => { this.error = error; }
 		).finally(() => { this.#pending = undefined; });
 	}
-
-	then<R1 = T, R2 = never>(resolve?: (value: T) => R1 | PromiseLike<R1>, reject?: (error: unknown) => R2 | PromiseLike<R2>) {
-		return this.refresh().then(() => {
-			if (this.error) throw this.error;
-			return this.current as T;
-		}).then(resolve, reject);
-	}
 }
 
 const query = <A, T>(load: (args: A) => Promise<T>) => (args: A) => new DemoQuery(() => load(args));

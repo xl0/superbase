@@ -34,8 +34,9 @@ Locked mode has one pinned connection and refuses other keys. SSL is a separate 
 (`connection-options.ts`); URLs may carry only `sslmode` (imported into the setting, then
 stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
 on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
-Profiles (`connection-profiles.ts`) are a plain localStorage list; the active one is matched by
-host/port/db/user. A successful connect fully loads the new database's route (other tabs keep
+Profiles (`connection-profiles.ts`) are a plain localStorage list. A successful connect stores the
+target the server resolved the profile's URL to (`target`, pg defaults for user/port/database
+applied): it gives the profile's URL id and marks the active one. A successful connect fully loads the new database's route (other tabs keep
 theirs). One-off URLs are never stored, so they cannot reconnect after a server restart.
 
 ## Routes and history
@@ -47,7 +48,8 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
   the app with the open database whose id matches (passing its key down), otherwise connects the
   saved profile with that id (one attempt), otherwise shows the connection manager; locked mode
   redirects to its database. `/` redirects to the last-used profile, else any open database.
-- The layout keeps `EditorApp` and all three workspaces mounted; the empty pages only select one.
+- The layout keeps `EditorApp` mounted; the empty pages only select a workspace. Tables and SQL stay
+  mounted while hidden; Database mounts while open.
 - `EditorApp` syncs both ways: URL → `editor.show(view)` (deferred while `navigationBlocked`, so
   Back during an edit applies once it ends) and editor state → `goto` (new history entry;
   canonicalizing a bare/unknown table replaces). `show` sets state synchronously, so the two
@@ -71,7 +73,7 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
   Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
 - Realtime (opt-in per table, `Table.realtime`): `ddl.realtimeSql` adds a statement-level
   `superbase_realtime` trigger calling `__superbase.notify_change()` (the tool-owned schema; dropping
-  it with cascade removes every realtime trigger, as Database → Realtime offers), which `pg_notify`s channel
+  it with cascade, e.g. from Database → Schemas, removes every realtime trigger), which `pg_notify`s channel
   `superbase` with schema/table/op only. `connections.subscribeChanges` keeps one LISTEN client per
   database while subscribed; `/events?connection=<key>` streams it as SSE. `EditorApp` opens one
   EventSource while any table has realtime and refetches the open table through `editor.poll`
@@ -79,7 +81,8 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
   Self-check: after LISTEN the server notifies itself through the pool; no echo within 5 s (e.g. a
   transaction-mode pooler) marks the connection `realtimeUnavailable`, the stream sends an
   `unavailable` event and editors keep polling (`editor.realtimeIssue` explains why).
-  Toggling (toolbar ⚡ via `editor.setRealtime`, or the Realtime page) applies at once, unpreviewed.
+  Toggling (toolbar ⚡, `editor.setRealtime`) applies at once, unpreviewed; the table list marks
+  realtime tables with ⚡. Database → Triggers hides `superbase_realtime`.
 - "View as role" (`TableTarget.as`, `editor.viewAs`): row reads, writes and CSV export run in a
   transaction after `actAs` (`set local role` + `set_config(…, true)`); metadata and locks stay with
   the connection role. `RoleMenu` shows on RLS tables (`Table.rls`) or while a role is active.
@@ -95,8 +98,9 @@ as a preview, and `executeDdl` runs it in one transaction (`lock_timeout` 3 s). 
 the validator. `queries/schema.ts` also lists approved column types (builtins, enums, domains,
 arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 `SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
-`SchemaConstraints` are list + form children that bind their `change`. Editing a constraint is
-drop + add. `tableDefinition` (⋮ → Definition, a read-only side panel that blocks nothing) rebuilds
+`SchemaConstraints` are list + form children that bind their `change`. Editing a constraint edits
+its `pg_get_constraintdef` text, so clauses the add form lacks survive: a changed definition is drop
++ add, a new name alone a rename. `tableDefinition` (⋮ → Definition, a read-only side panel that blocks nothing) rebuilds
 a table's or view's DDL from `pg_get_*def` and the catalogs in a read-only transaction with
 `search_path = pg_catalog`, so every user object comes out qualified; a test round-trips it. Duplicate uses `LIKE … INCLUDING ALL`, copies non-generated columns with
 `overriding system value`, and advances identity sequences.
@@ -132,27 +136,33 @@ pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensi
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
 Policies: `listPolicies` returns tables with RLS state, policies (`pg_policy`, roles resolved, `public`
-for none) and non-owner grants (`aclexplode(relacl)`), the roles a policy can name, and whether
-`current_user` bypasses RLS (superuser/BYPASSRLS; owners of unforced tables too). `TableAccess`
+for none) and non-owner grants (`aclexplode(relacl)`, distinct: one row per grantor). The roles a
+policy can name and whether `current_user` bypasses RLS come from `editor` (`listTables`). `TableAccess`
 renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE grid) for both
 `DatabasePolicies` and the table editor's `TableAccessPanel` (`SchemaEditMode` `access`).
 `ddl.createPolicy` omits USING for insert and WITH CHECK for select/delete; editing a policy is drop
 + create in one transaction; `ddl.grantChanges` diffs the grid into grant/revoke, leaving other
-privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (attributes only
-when changed, membership as grant/revoke, rename last); the preview masks passwords.
+privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (alter names only changed
+attributes: PG16+ rejects naming BYPASSRLS/CREATEDB without holding them; membership as
+grant/revoke, rename last); the preview masks passwords.
 Schemas (`listSchemas`, all non-system ones with table/function counts): create, rename/owner,
-drop (cascade needs the typed name). Triggers (`listTriggers`, non-internal, events decoded from
-`tgtype`) show their and their function's definition; enable/disable apply at once, drop previews.
+drop (cascade needs the typed name). Triggers (`listTriggers`, non-internal, no partition clones, events decoded from
+`tgtype`) show their and their function's definition, and can be dropped. Indexes skip partitions'
+copies of a partitioned index (`relispartition`).
 Enums (`listEnums`, with columns using each) are edited in place by `ddl.enumChanges` (rename values,
-append values, rename the type last; Postgres cannot remove values). `DatabaseIndexes`/`DatabaseEnums`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
-`alter database|role … set|reset` SQL and run it through `executeDdl`. `search_path` values are
-written as SQL lists; other values are quoted literals.
+append values, rename the type last; Postgres cannot remove values). Config writes
+`alter database|role … set|reset`: `search_path` values as SQL lists, others as quoted literals.
+
+Every change on these pages goes through `SqlDialog`: form fields as children, the SQL preview,
+Apply runs it via `changeSchema` (`executeDdl`, one transaction), closes, then `onapplied` reloads.
+An empty `sql` means nothing to apply. `SchemaFilter` is the shared schema picker + search box.
 
 ## CSV export
 
 `/export` takes one form-POSTed JSON `CsvExportArgs` into a hidden iframe so the browser streams
-the attachment; an error response loads in the frame and is shown as a toast. `queries/export.ts`
-declares a read-only cursor (same `rowSelection` as the grid when a query is given) and streams
+the attachment (one toolbar button, `CsvExport`, captures the grid's query and lets the user pick
+columns); an error response loads in the frame and is shown as a toast. `queries/export.ts`
+declares a read-only cursor with the grid's `rowSelection` and the chosen columns, and streams
 256-row batches; cancel/abort destroys the leased client.
 
 ## Browser state and UI
@@ -178,10 +188,9 @@ declares a read-only cursor (same `rowSelection` as the grid when a query is giv
 - `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
   the editor reports document edits only, so opening and applying unchanged never rewrites a
   value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).
-- `EditorApp` switches three workspaces from the left rail (Tables, SQL, Database; hidden ones
-  stay mounted). Each is a `Workspace`: a resizable side panel (one width shared by all) and a
-  main area. Database sections (schema, indexes, performance, extensions, configuration) are
-  side panel items.
+- `EditorApp` switches three workspaces from the left rail (Tables, SQL, Database). Each is a
+  `Workspace`: a resizable side panel (one width shared by all) and a main area. Database sections
+  are side panel items.
 - `PanelResizer` / `ResizableSheet` provide pointer+keyboard resizing for side panels and sheets.
 - `ui/` popover, dialog and sheet contents default `preventOverflowTextSelection` to false: bits-ui
   otherwise sets `user-select` on `<body>` per click, restyling every grid cell (~145 ms at 500 rows).
@@ -239,5 +248,5 @@ SQL sessions, CSV and the production HTTP boundary.
 - `src/routes/db/[db]` — app routes; `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
 - `src/lib/view.ts` (URL hash encoding), `src/lib/links.ts` (route builders).
 
-Not supported: editing views, OR filters, saved SQL history, schema management, replacing an
-existing primary key.
+Not supported: editing views, OR filters, saved SQL history, replacing an existing primary key,
+enabling/disabling triggers (SQL editor).

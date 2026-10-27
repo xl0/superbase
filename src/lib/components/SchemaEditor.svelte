@@ -6,7 +6,7 @@
 	import type { SchemaCatalog, SchemaChange, SchemaDefinition, SchemaEditMode } from '#lib/schema.js';
 	import type { Table } from '#lib/types.js';
 	import * as ddl from '#lib/ddl.js';
-	import { message } from '#lib/utils.js';
+	import { fresh, message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -22,7 +22,7 @@
 
 	/** Every form produces one SchemaChange: SQL that is previewed, then applied in one transaction. */
 	let { mode, table: initialTable, onclose, returnFocus }: {
-		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' | 'definition' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
+		mode: Exclude<SchemaEditMode, { kind: 'access' | 'definition' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
 	} = $props();
 	const intent = untrack(() => mode);
 	const table = untrack(() => initialTable);
@@ -95,8 +95,8 @@
 				const needsCatalog = creating || intent.kind === 'addColumn' || intent.kind === 'alterColumn';
 				const needsDefinition = intent.kind === 'alterColumn' || intent.kind === 'indexes' || intent.kind === 'constraints';
 				[catalog, definition] = await Promise.all([
-					needsCatalog ? schemaCatalog({ connection: editor.connection }) : null,
-					needsDefinition ? schemaDefinition({ connection: editor.connection, schema: table.schema, table: table.name }) : null
+					needsCatalog ? fresh(schemaCatalog({ connection: editor.connection })) : null,
+					needsDefinition ? fresh(schemaDefinition({ connection: editor.connection, schema: table.schema, table: table.name })) : null
 				]);
 				if (creating) {
 					if (!catalog!.schemas.includes(schema)) schema = catalog!.schemas.includes('public') ? 'public' : catalog!.schemas[0];

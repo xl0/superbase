@@ -32,7 +32,6 @@ export async function listSchemaCatalog(pool: pg.Pool): Promise<SchemaCatalog> {
 	return { schemas: schemas.rows.map((row) => row.schema), types: types.rows };
 }
 
-const ACTION = `case %s when 'r' then 'restrict' when 'c' then 'cascade' when 'n' then 'set null' when 'd' then 'set default' else 'no action' end`;
 const names = (relation: string, numbers: string) => `array(select a.attname::text from unnest(${numbers}) with ordinality k(num, position)
 	join pg_attribute a on a.attrelid = ${relation} and a.attnum = k.num order by k.position)`;
 
@@ -49,17 +48,12 @@ export async function getSchemaDefinition(pool: pg.Pool, target: TableTarget): P
 			'primaryKey', coalesce((select to_jsonb(${names('i.indrelid', '(i.indkey::smallint[])[0:i.indnkeyatts - 1]')})
 				from pg_index i where i.indrelid = c.oid and i.indisprimary), '[]'),
 			'indexes', coalesce((select jsonb_agg(jsonb_build_object(
-				'name', ic.relname, 'definition', pg_get_indexdef(i.indexrelid), 'unique', i.indisunique, 'primary', i.indisprimary,
+				'name', ic.relname, 'definition', pg_get_indexdef(i.indexrelid),
 				'constraint', (select conname from pg_constraint where conindid = i.indexrelid and conrelid = c.oid and contype in ('p', 'u', 'x'))
 				) order by ic.relname) from pg_index i join pg_class ic on ic.oid = i.indexrelid where i.indrelid = c.oid), '[]'),
 			'constraints', coalesce((select jsonb_agg(jsonb_build_object(
-				'name', con.conname, 'kind', con.contype, 'definition', pg_get_constraintdef(con.oid),
-				'columns', ${names('con.conrelid', 'con.conkey')}, 'expression', pg_get_expr(con.conbin, con.conrelid),
-				'foreignKey', case when con.contype = 'f' then jsonb_build_object(
-					'schema', rn.nspname, 'table', rc.relname, 'columns', ${names('con.confrelid', 'con.confkey')},
-					'onUpdate', ${ACTION.replace('%s', 'con.confupdtype')}, 'onDelete', ${ACTION.replace('%s', 'con.confdeltype')}) end
+				'name', con.conname, 'kind', con.contype, 'definition', pg_get_constraintdef(con.oid)
 				) order by con.conname) from pg_constraint con
-				left join pg_class rc on rc.oid = con.confrelid left join pg_namespace rn on rn.oid = rc.relnamespace
 				where con.conrelid = c.oid and con.contype in ('u', 'c', 'f')), '[]')
 		) as definition
 		from pg_class c join pg_namespace n on n.oid = c.relnamespace

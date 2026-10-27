@@ -3,7 +3,7 @@
 	import { X } from '@lucide/svelte';
 	import { policies } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
-	import type { Policies } from '#lib/database.js';
+	import type { PolicyTable } from '#lib/database.js';
 	import type { Table } from '#lib/types.js';
 	import { fresh, message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -13,10 +13,10 @@
 	/** The table editor's side panel for one table's RLS, policies and privileges. */
 	let { table, onclose }: { table: Table; onclose: () => void } = $props();
 	const id = $props.id();
-	let data = $state.raw<Policies | null>(null);
+	let data = $state.raw<PolicyTable[] | null>(null);
 	let error = $state('');
 	let changed = false;
-	const entry = $derived(data?.tables.find((candidate) => candidate.schema === table.schema && candidate.table === table.name));
+	const entry = $derived(data?.find((candidate) => candidate.schema === table.schema && candidate.table === table.name));
 
 	async function load() {
 		try { data = await fresh(policies({ connection: editor.connection })); error = ''; }
@@ -42,7 +42,7 @@
 	</div>
 	{#if error}<p role="alert" class="p-4 text-xs text-destructive">{error}</p>{/if}
 	{#if entry && data}
-		<TableAccess table={entry} roles={data.roles} role={data.role} bypass={data.bypass} privilegesOpen
+		<TableAccess table={entry} privilegesOpen
 			onapplied={async () => { changed = true; await load(); }} />
 	{:else if data}
 		<p class="p-4 text-xs text-muted-foreground">This table was not found; refresh the table list.</p>

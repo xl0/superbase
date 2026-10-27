@@ -78,11 +78,12 @@ accordingly.
 - **⋮ → Definition** shows the table's or view's DDL (columns, constraints, indexes, triggers,
   RLS, policies, comments), rebuilt from the catalogs, with a Copy button.
 - **Live** re-reads the visible page every five seconds without disturbing your edits. For instant
-  updates, turn on realtime with the ⚡ next to it (or in Database → Realtime): a small notify
-  trigger (the shared function lives in a `__superbase` schema) makes open editors refresh as soon
-  as the table changes. Notifications need a direct or session-mode connection; through a
+  updates, turn on realtime with the ⚡ next to it (realtime tables show a ⚡ in the table list): a
+  small notify trigger (the shared function lives in a `__superbase` schema; drop that schema with
+  cascade to remove them all) makes open editors refresh as soon as the table changes. Notifications need a direct or session-mode connection; through a
   transaction-mode pooler (e.g. Supabase's port 6543) the app notices and keeps polling.
-- The download button exports all rows matching the filters as CSV, in grid order.
+- The download button exports the rows matching the filters as CSV, in grid order, with the
+  columns you pick.
 
 ![Editing a JSON cell](https://raw.githubusercontent.com/xl0/superbase/master/docs/screenshots/cell-editor.png)
 
@@ -121,13 +122,11 @@ The side panel lists the sections:
 - **Schemas:** create, rename, change owner or drop (cascade asks for the name); open one in the
   table editor, even while it's empty.
 - **Triggers:** per schema, with timing, events and function; expand one to read it and its
-  function's source; enable or disable at once, or drop with a preview.
+  function's source; drop with a preview.
 - **Policies:** row-level security per table: turn RLS on, off or forced; create, edit or drop
   policies (command, roles, permissive/restrictive, USING / WITH CHECK); and set which roles may
   select, insert, update or delete at all. The same panel opens from the table editor (the RLS
   button or ⋮ → Policies & access).
-- **Realtime:** turn instant updates on or off per table, or remove the `__superbase` schema (and
-  with it every realtime trigger, after a confirmation).
 - **Roles:** create, edit or drop roles (login and password, BYPASSRLS, create DB, membership).
 - **Enums:** create enum types, rename them or their values, add values, or drop them.
 - **Indexes:** every index per schema, with definitions; drop with a preview.

@@ -5,6 +5,8 @@ import type { ConnectionOptions } from './connection-options.js';
 export interface ConnectionProfile extends ConnectionOptions {
 	id: string;
 	name: string;
+	/** `connectionTarget` the server resolved the URL to (pg defaults for user, port, database applied), set on connect. */
+	target?: string;
 }
 const KEY = 'superbase.connection-profiles.v1';
 const LAST_KEY = 'superbase.last-profile';
@@ -25,14 +27,19 @@ export function lastProfile(): ConnectionProfile | undefined {
 	} catch { return undefined; }
 }
 
-export function rememberProfile(id: string | null): void {
+/** After a successful connect: the profile (null for a one-off URL) becomes the last one, and learns its target. */
+export function rememberProfile(id: string | null, info: ConnectionInfo): void {
 	try {
-		if (id) localStorage.setItem(LAST_KEY, id);
-		else localStorage.removeItem(LAST_KEY);
+		if (!id) { localStorage.removeItem(LAST_KEY); return; }
+		localStorage.setItem(LAST_KEY, id);
+		storeProfiles(loadProfiles().map((profile) => profile.id === id ? { ...profile, target: connectionTarget(info) } : profile));
 	} catch { /* Storage denied: no automatic reconnect. */ }
 }
 
-/** Password-free label: host:port/database · user. */
+/** The URL id of a profile's database, once it has connected (see `target`). */
+export const profileId = (profile: ConnectionProfile) => profile.target ? connectionId(profile.target) : null;
+
+/** Password-free label from the URL alone: host:port/database · user. */
 export function profileTarget(url: string): string {
 	const parsed = URL.parse(url);
 	if (!parsed) return '';

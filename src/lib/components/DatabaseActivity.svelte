@@ -2,16 +2,16 @@
 	import { onMount } from 'svelte';
 	import { LinkPreview } from 'bits-ui';
 	import { EllipsisVertical, Pause, Play, Search } from '@lucide/svelte';
-	import { activity, changeSchema } from '#lib/db.remote.js';
+	import { activity } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { Activity, Session } from '#lib/database.js';
 	import { fresh, message } from '#lib/utils.js';
 	import { highlightSql } from '#lib/sql-highlight.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
+	import SqlDialog from './SqlDialog.svelte';
 
 	const ALL = '*';
 	let data = $state.raw<Activity | null>(null);
@@ -23,8 +23,6 @@
 	let application = $state(ALL);
 	let rootBlockers = $state(false);
 	let action = $state.raw<{ session: Session; kind: 'cancel' | 'terminate' } | null>(null);
-	let applying = $state(false);
-	let applyError = $state('');
 
 	const sessions = $derived(data?.sessions ?? []);
 	/** PID → number of sessions waiting on its locks. */
@@ -58,17 +56,6 @@
 		if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
 		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
 		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-	}
-
-	async function run() {
-		applying = true;
-		applyError = '';
-		try {
-			await changeSchema({ connection: editor.connection, sql });
-			action = null;
-			await load();
-		} catch (cause) { applyError = message(cause); }
-		finally { applying = false; }
 	}
 </script>
 
@@ -162,8 +149,8 @@
 										{#snippet child({ props })}<Button {...props} variant="ghost" size="icon-xs" aria-label={`Actions for session ${session.pid}`}><EllipsisVertical /></Button>{/snippet}
 									</DropdownMenu.Trigger>
 									<DropdownMenu.Content align="end">
-										<DropdownMenu.Item disabled={session.state !== 'active'} onSelect={() => { action = { session, kind: 'cancel' }; applyError = ''; }}>Cancel query</DropdownMenu.Item>
-										<DropdownMenu.Item variant="destructive" onSelect={() => { action = { session, kind: 'terminate' }; applyError = ''; }}>Terminate session</DropdownMenu.Item>
+										<DropdownMenu.Item disabled={session.state !== 'active'} onSelect={() => action = { session, kind: 'cancel' }}>Cancel query</DropdownMenu.Item>
+										<DropdownMenu.Item variant="destructive" onSelect={() => action = { session, kind: 'terminate' }}>Terminate session</DropdownMenu.Item>
 									</DropdownMenu.Content>
 								</DropdownMenu.Root>
 							</td>
@@ -177,20 +164,7 @@
 	</section>
 </div>
 
-<Dialog.Root bind:open={() => !!action, (open) => { if (!open && !applying) action = null; }}>
-	<Dialog.Content class="gap-4">
-		<Dialog.Header>
-			<Dialog.Title>{action?.kind === 'cancel' ? 'Cancel query' : 'Terminate session'} <code>{action?.session.pid}</code></Dialog.Title>
-			<Dialog.Description class="text-xs">{action?.kind === 'cancel'
-				? 'Stops the running query; the session stays connected and an open transaction becomes aborted.'
-				: 'Closes the connection; any open transaction is rolled back.'}</Dialog.Description>
-		</Dialog.Header>
-		<pre class="rounded-md bg-muted p-2 font-mono text-xs">{sql}</pre>
-		{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-		<Dialog.Footer>
-			<Button variant="outline" size="sm" disabled={applying} onclick={() => action = null}>Close</Button>
-			<Button variant="destructive" size="sm" disabled={applying} onclick={run}>{applying ? 'Running…' : action?.kind === 'cancel' ? 'Cancel query' : 'Terminate'}</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
-
+<SqlDialog open={!!action} title={action?.kind === 'cancel' ? 'Cancel query' : 'Terminate session'} subject={action ? String(action.session.pid) : undefined}
+	description={action?.kind === 'cancel' ? 'Stops the running query; the session stays connected and an open transaction becomes aborted.'
+		: 'Closes the connection; any open transaction is rolled back.'}
+	{sql} destructive action={action?.kind === 'cancel' ? 'Cancel query' : 'Terminate'} onclose={() => action = null} onapplied={load} />

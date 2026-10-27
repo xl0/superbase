@@ -21,8 +21,8 @@ PostgreSQL validates. Keep code and tests minimal.
   favourites and built-in examples (adapted from Supabase Studio, Apache-2.0).
 - Database workspace: schema diagram, all indexes (drop), query performance (pg_stat_statements),
   activity (sessions, blockers, cancel/terminate), extensions (enable/update/disable), curated
-  database/role defaults, enums, RLS policies, table privileges and roles, schemas, triggers,
-  as previewed SQL; table/view definitions.
+  database/role defaults, enums, RLS policies, table privileges and roles, schemas, triggers (drop),
+  as previewed SQL through one shared dialog; table/view definitions.
 - Layout: left rail with three workspaces sharing one resizable side panel.
 - CLI: `npx|bunx @xl0/superbase [url] [--port] [--host] [--no-open]` (unscoped name rejected by npm).
 - Live demo: static build with PGlite in the browser on sample data (GitHub Pages).
@@ -30,12 +30,14 @@ PostgreSQL validates. Keep code and tests minimal.
   xl0xl0/superbase images and creates the GitHub Release. The demo deploys from master on every push.
 - Connections: a server pool per database (requests name it), saved browser profiles, SSL modes,
   locked mode via `DATABASE_URL`, `HOST`/`ORIGIN` for container deployments.
-- Simplification pass (Oct 2026): removed per-browser sessions, validation layer, DDL
-  fingerprints/fences, copy-schema SQL, auto-reconnect and draft-ownership machinery.
+- Simplification passes (Oct 2026): removed per-browser sessions, validation layer, DDL
+  fingerprints/fences, copy-schema SQL, auto-reconnect and draft-ownership machinery; then the
+  Realtime page, trigger enable/disable, table-menu CSV export and form-based constraint edits.
 
 ## TODO
 
-Nothing queued; pick from the list below.
+- [ ] Review leftovers: qualify `pg_stat_statements_reset()` with the extension's schema; count
+  `enum[]` columns as enum users; Dockerfile installs `pg` without the lockfile.
 
 ## Later / maybe
 

@@ -15,24 +15,15 @@ export async function exportCsv(pool: pg.Pool, target: CsvExportArgs, signal?: A
 	let header: pg.QueryArrayResult;
 	try {
 		await client.query('begin read only');
-		let projection = 't.*', selection = '', values: (string | number)[] = [];
-		if (target.query || target.columns) {
-			const [table] = await loadMetadata(client, target);
-			if (!table) throw new Error(`Table ${target.schema}.${target.table} not found`);
-			// Selected columns keep table order; filtering and sorting still see every column.
-			if (target.columns) {
-				projection = table.columns.filter((column) => target.columns!.includes(column.name))
-					.map((column) => `t.${ident(column.name)}`).join(', ');
-			}
-			if (target.query) {
-				const query = rowSelection(table, target.query);
-				selection = `${query.where} ${query.order ? `order by ${query.order}` : ''}`;
-				values = query.values;
-			}
-		}
+		const [table] = await loadMetadata(client, target);
+		if (!table) throw new Error(`Table ${target.schema}.${target.table} not found`);
+		// Selected columns keep table order; filtering and sorting still see every column.
+		const projection = table.columns.filter((column) => target.columns.includes(column.name)).map((column) => `t.${ident(column.name)}`).join(', ');
 		if (!projection) throw new Error('Select at least one column');
+		const { where, order, values } = rowSelection(table, target.query);
 		await actAs(client, target.as);
-		await client.query(`declare superbase_csv no scroll cursor for select ${projection} from ${qualify(target.schema, target.table)} t ${selection}`, values);
+		await client.query(`declare superbase_csv no scroll cursor for select ${projection} from ${qualify(target.schema, target.table)} t
+			${where} ${order ? `order by ${order}` : ''}`, values);
 		header = await client.query({ text: 'fetch 0 from superbase_csv', ...textRows });
 	} catch (error) {
 		await client.query('rollback').catch(() => {});

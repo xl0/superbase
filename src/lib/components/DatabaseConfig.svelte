@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { changeSchema, settings } from '#lib/db.remote.js';
+	import { settings } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { DatabaseSetting } from '#lib/database.js';
 	import { ident, literal } from '#lib/ddl.js';
@@ -8,15 +8,13 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
+	import SqlDialog from './SqlDialog.svelte';
 
 	const id = $props.id();
 	let data = $state.raw<{ database: string; role: string; settings: DatabaseSetting[] } | null>(null);
 	let error = $state('');
 	let pending = $state<{ setting: DatabaseSetting; scope: 'database' | 'role'; value: string } | null>(null);
-	let applying = $state(false);
-	let applyError = $state('');
 	const sql = $derived.by(() => {
 		if (!pending || !data) return '';
 		const target = pending.scope === 'database' ? `database ${ident(data.database)}` : `role ${ident(data.role)}`;
@@ -33,18 +31,6 @@
 
 	function begin(setting: DatabaseSetting) {
 		pending = { setting, scope: 'database', value: setting.databaseDefault ?? '' };
-		applyError = '';
-	}
-
-	async function apply() {
-		applying = true;
-		applyError = '';
-		try {
-			await changeSchema({ connection: editor.connection, sql });
-			pending = null;
-			await load();
-		} catch (cause) { applyError = message(cause); }
-		finally { applying = false; }
 	}
 </script>
 
@@ -75,37 +61,26 @@
 	</div>
 </div>
 
-<Dialog.Root bind:open={() => !!pending, (open) => { if (!open && !applying) pending = null; }}>
-	<Dialog.Content class="gap-4">
-		{#if pending}
-			<Dialog.Header>
-				<Dialog.Title class="font-mono">{pending.setting.name}</Dialog.Title>
-				<Dialog.Description class="text-xs">{pending.setting.description}</Dialog.Description>
-			</Dialog.Header>
-			<div class="grid gap-4 sm:grid-cols-2">
-				<div class="space-y-2">
-					<Label for={`${id}-scope`} class="text-xs">Default for</Label>
-					<Select.Root type="single" bind:value={pending.scope} allowDeselect={false}
-						onValueChange={(scope) => { if (pending) pending.value = (scope === 'database' ? pending.setting.databaseDefault : pending.setting.roleDefault) ?? ''; }}>
-						<Select.Trigger id={`${id}-scope`} class="w-full text-xs">{pending.scope === 'database' ? `Database ${data?.database}` : `Role ${data?.role}`}</Select.Trigger>
-						<Select.Content>
-							<Select.Item value="database" label={`Database ${data?.database}`} />
-							<Select.Item value="role" label={`Role ${data?.role}`} />
-						</Select.Content>
-					</Select.Root>
-				</div>
-				<div class="space-y-2">
-					<Label for={`${id}-value`} class="text-xs">Value{pending.setting.unit ? ` (default unit ${pending.setting.unit})` : ''}</Label>
-					<Input id={`${id}-value`} bind:value={pending.value} placeholder="Empty resets to the server default" spellcheck={false} class="font-mono text-xs" />
-				</div>
+<SqlDialog open={!!pending} title="Set" subject={pending?.setting.name} description={pending?.setting.description} {sql}
+	onclose={() => pending = null} onapplied={load}>
+	{#if pending}
+		<div class="grid gap-4 sm:grid-cols-2">
+			<div class="space-y-2">
+				<Label for={`${id}-scope`} class="text-xs">Default for</Label>
+				<Select.Root type="single" bind:value={pending.scope} allowDeselect={false}
+					onValueChange={(scope) => { if (pending) pending.value = (scope === 'database' ? pending.setting.databaseDefault : pending.setting.roleDefault) ?? ''; }}>
+					<Select.Trigger id={`${id}-scope`} class="w-full text-xs">{pending.scope === 'database' ? `Database ${data?.database}` : `Role ${data?.role}`}</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="database" label={`Database ${data?.database}`} />
+						<Select.Item value="role" label={`Role ${data?.role}`} />
+					</Select.Content>
+				</Select.Root>
 			</div>
-			<pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{sql}</pre>
-			<p class="text-xs text-muted-foreground">Takes effect for new connections; reconnect to see it here.</p>
-			{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-			<Dialog.Footer>
-				<Button variant="outline" size="sm" disabled={applying} onclick={() => pending = null}>Cancel</Button>
-				<Button size="sm" disabled={applying} onclick={apply}>{applying ? 'Applying…' : 'Apply'}</Button>
-			</Dialog.Footer>
-		{/if}
-	</Dialog.Content>
-</Dialog.Root>
+			<div class="space-y-2">
+				<Label for={`${id}-value`} class="text-xs">Value{pending.setting.unit ? ` (default unit ${pending.setting.unit})` : ''}</Label>
+				<Input id={`${id}-value`} bind:value={pending.value} placeholder="Empty resets to the server default" spellcheck={false} class="font-mono text-xs" />
+			</div>
+		</div>
+		<p class="text-xs text-muted-foreground">Takes effect for new connections; reconnect to see it here.</p>
+	{/if}
+</SqlDialog>

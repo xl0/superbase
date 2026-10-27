@@ -66,13 +66,6 @@ export interface ConnectionInfo {
 	user: string;
 }
 
-/** What one page shows: its database, if open. */
-export interface ConnectionStatus {
-	connection: ConnectionInfo | null;
-	/** Pinned to DATABASE_URL: no connection switching. */
-	locked: boolean;
-}
-
 /** Every database the server has open. */
 export interface ServerStatus {
 	connections: ConnectionInfo[];
@@ -136,10 +129,10 @@ export interface RowsArgs extends TableTarget, RowQuery {
 }
 
 export interface CsvExportArgs extends TableTarget {
-	/** Omitted means all columns; explicit selections are emitted in table column order. */
-	columns?: string[];
-	/** Omitted for full-table export; present to apply the grid's filters and ordering. */
-	query?: RowQuery;
+	/** Emitted in table column order. */
+	columns: string[];
+	/** The grid's filters and ordering. */
+	query: RowQuery;
 }
 
 export interface SaveArgs extends TableTarget {

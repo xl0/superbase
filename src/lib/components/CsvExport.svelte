@@ -1,31 +1,34 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { X } from '@lucide/svelte';
-	import type { CsvExportArgs, Table } from '#lib/types.js';
+	import { Download, X } from '@lucide/svelte';
+	import { editor } from '#lib/state/editor.svelte.js';
+	import type { CsvExportArgs } from '#lib/types.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { message } from '#lib/utils.js';
 
-	let { open = $bindable(false) }: { open?: boolean } = $props();
+	/** Toolbar export: choose columns, then download every row matching the grid's filters, in grid order. */
 	const id = $props.id();
-	let args = $state.raw<CsvExportArgs | null>(null);
+	let open = $state(false);
+	let args = $state.raw<Omit<CsvExportArgs, 'columns'> | null>(null);
 	let columns = $state<string[]>([]);
 	let selected = $state<string[]>([]);
-	let anchor: HTMLElement | null = null;
 	let error = $state<string | null>(null);
 	let payload = $state('');
 	let form = $state<HTMLFormElement | null>(null);
 
-	/** Capture a table/query now, independently of later grid navigation. */
-	export function start(target: CsvExportArgs, table: Table, options: boolean, trigger: HTMLElement | null) {
+	/** Capture the table and query now, independently of later grid navigation. */
+	function start() {
 		error = null;
-		if (!options) { void download(target); return; }
-		args = target;
-		columns = table.columns.map((column) => column.name);
+		args = {
+			connection: editor.connection, schema: editor.activeSchema, table: editor.activeTableName,
+			query: { sort: $state.snapshot(editor.sort), filters: $state.snapshot(editor.filters), ...(editor.reference ? { reference: { ...editor.reference } } : {}) },
+			...(editor.viewAs ? { as: editor.viewAs } : {})
+		};
+		columns = editor.table.columns.map((column) => column.name);
 		selected = [...columns];
-		anchor = trigger;
 		open = true;
 	}
 
@@ -48,18 +51,20 @@
 	}
 </script>
 
+<Button variant="outline" size="icon-sm" disabled={editor.navigationBlocked || editor.loading || !editor.table.columns.length}
+	aria-label="Export CSV" title="Download rows matching the filters as CSV" onclick={start}><Download /></Button>
+
 <iframe hidden name={`${id}-download`} title="CSV download" src="about:blank" sandbox="allow-same-origin allow-downloads" onload={loaded}></iframe>
 <form bind:this={form} hidden method="POST" action="/export" target={`${id}-download`}>
 	<input type="hidden" name="export" value={payload} />
 </form>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="flex max-h-[calc(100dvh-2rem)] flex-col gap-4"
-		onCloseAutoFocus={(event) => { event.preventDefault(); if (anchor?.isConnected) anchor.focus(); }}>
+	<Dialog.Content class="flex max-h-[calc(100dvh-2rem)] flex-col gap-4">
 		<Dialog.Header class="pr-8">
 			<Dialog.Title>Export CSV</Dialog.Title>
 			<Dialog.Description class="break-words">
-				<span class="font-mono">{args?.schema}.{args?.table}</span> · {args?.query ? 'all rows matching the current filters, in grid order' : 'all rows'}
+				<span class="font-mono">{args?.schema}.{args?.table}</span> · all rows matching the current filters, in grid order
 			</Dialog.Description>
 		</Dialog.Header>
 		<div class="flex items-center gap-3 border-b pb-3">

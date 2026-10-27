@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Eye, Layers, Plus, Search, Table2 } from '@lucide/svelte';
+	import { Eye, Layers, Plus, Search, Table2, Zap } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { tablesHref } from '#lib/links.js';
@@ -55,6 +55,7 @@
 				{@const Icon = table.kind === 'view' ? Eye : table.kind === 'materialized view' ? Layers : Table2}
 				<Icon class={['size-3.5', active && 'text-foreground']} aria-label={table.kind === 'table' ? undefined : table.kind} />
 				<span class="truncate">{table.name}</span>
+				{#if table.realtime}<Zap class="ml-auto size-3 shrink-0 text-primary" aria-label="realtime" />{/if}
 			</Button>
 			<TableMenu {table} {onedit} />
 		</div>

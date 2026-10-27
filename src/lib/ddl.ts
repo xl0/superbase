@@ -176,9 +176,13 @@ export function grantChanges(table: string, before: Record<string, string[]>, af
 
 export type RoleSpec = { name: string; login: boolean; password: string; bypass: boolean; createdb: boolean; memberOf: string[] };
 
-const roleOptions = (spec: RoleSpec) =>
-	`${spec.login ? 'login' : 'nologin'} ${spec.bypass ? 'bypassrls' : 'nobypassrls'} ${spec.createdb ? 'createdb' : 'nocreatedb'}`
-	+ (spec.login && spec.password ? ` password ${literal(spec.password)}` : '');
+/** With `old`, only changed attributes: PG16+ lets only holders of BYPASSRLS/CREATEDB name those at all. */
+const roleOptions = (spec: RoleSpec, old?: Omit<RoleSpec, 'password'>) => [
+	(!old || spec.login !== old.login) && (spec.login ? 'login' : 'nologin'),
+	(!old || spec.bypass !== old.bypass) && (spec.bypass ? 'bypassrls' : 'nobypassrls'),
+	(!old || spec.createdb !== old.createdb) && (spec.createdb ? 'createdb' : 'nocreatedb'),
+	spec.login && spec.password && `password ${literal(spec.password)}`
+].filter(Boolean).join(' ');
 
 export function createRole(spec: RoleSpec): string {
 	return `create role ${ident(spec.name)} with ${roleOptions(spec)}${spec.memberOf.length ? ` in role ${spec.memberOf.map(ident).join(', ')}` : ''};`;
@@ -188,9 +192,8 @@ export function createRole(spec: RoleSpec): string {
 export function alterRole(old: Omit<RoleSpec, 'password'>, spec: RoleSpec): string {
 	const role = ident(old.name);
 	const statements: string[] = [];
-	if (spec.password || spec.login !== old.login || spec.bypass !== old.bypass || spec.createdb !== old.createdb) {
-		statements.push(`alter role ${role} with ${roleOptions(spec)};`);
-	}
+	const options = roleOptions(spec, old);
+	if (options) statements.push(`alter role ${role} with ${options};`);
 	for (const parent of spec.memberOf.filter((name) => !old.memberOf.includes(name))) statements.push(`grant ${ident(parent)} to ${role};`);
 	for (const parent of old.memberOf.filter((name) => !spec.memberOf.includes(name))) statements.push(`revoke ${ident(parent)} from ${role};`);
 	if (spec.name !== old.name) statements.push(`alter role ${role} rename to ${ident(spec.name)};`);

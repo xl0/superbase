@@ -186,18 +186,19 @@ function primaryKey(table: Table): string[] {
 	return table.columns.filter((column) => column.primaryKey).map((column) => column.name);
 }
 
-/** Tables plus what "view as role" needs: the connection role, whether it bypasses RLS, other roles. */
-/** `schemas`: every non-system schema the role can use (empty ones too), except superbase's own. */
-export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; schemas: string[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }> {
+/**
+ * Tables plus what "view as role" needs: the connection role, whether it bypasses RLS, other roles.
+ * `schemas`: every non-system schema the role can use (empty ones too), except superbase's own.
+ */
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; schemas: string[]; version: string; role: string; bypass: boolean; roles: string[] }> {
 	const [tables, info] = await Promise.all([
 		cachedTables(pool, true),
-		pool.query<{ schemas: string[]; version: string; role: string; bypass: boolean; roles: string[]; realtimeInstalled: boolean }>(`
+		pool.query<{ schemas: string[]; version: string; role: string; bypass: boolean; roles: string[] }>(`
 			select array(select nspname::text from pg_namespace where nspname !~ '^pg_' and nspname not in ('information_schema', '${REALTIME_SCHEMA}')
 			             and has_schema_privilege(oid, 'USAGE')) as schemas,
 			       current_setting('server_version') as version, current_user as role,
 			       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as bypass,
-			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles,
-			       to_regprocedure('__superbase.notify_change()') is not null as "realtimeInstalled"`)
+			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles`)
 	]);
 	const { schemas, ...rest } = info.rows[0];
 	return { tables: [...tables.values()], schemas: [...new Set([...schemas, ...[...tables.values()].map((table) => table.schema)])].sort(), ...rest };

@@ -19,8 +19,6 @@ export class EditorState {
 	role = $state('');
 	bypass = $state(false);
 	roles = $state<string[]>([]);
-	/** The shared realtime function exists (schema `__superbase`). */
-	realtimeInstalled = $state(false);
 	/** Usable schemas, including ones without tables. */
 	schemas = $state<string[]>([]);
 	/** Grid reads and writes act as this role (RLS testing); null = the connection role as is. */
@@ -122,7 +120,6 @@ export class EditorState {
 			this.role = result.role;
 			this.bypass = result.bypass;
 			this.roles = result.roles;
-			this.realtimeInstalled = result.realtimeInstalled;
 			this.schemas = result.schemas;
 			this.ready = true;
 			if (this.table === EMPTY_TABLE) {

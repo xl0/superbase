@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Search } from '@lucide/svelte';
-	import { changeSchema, extensions } from '#lib/db.remote.js';
+	import { extensions } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { Extension } from '#lib/database.js';
 	import { ident } from '#lib/ddl.js';
@@ -11,16 +11,14 @@
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import SqlDialog from './SqlDialog.svelte';
 
 	const id = $props.id();
-	let list = $state.raw<Extension[]>([]);
+	let list = $state.raw<Extension[] | null>(null);
 	let error = $state('');
 	let query = $state('');
 	let pending = $state<{ extension: Extension; action: 'enable' | 'update' | 'disable'; schema: string; cascade: boolean } | null>(null);
-	let applying = $state(false);
-	let applyError = $state('');
-	const shown = $derived(list.filter((extension) => `${extension.name} ${extension.comment ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+	const shown = $derived((list ?? []).filter((extension) => `${extension.name} ${extension.comment ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
 		.sort((a, b) => Number(!!b.installedVersion) - Number(!!a.installedVersion)));
 	const sql = $derived.by(() => {
 		if (!pending) return '';
@@ -38,19 +36,11 @@
 
 	function begin(extension: Extension, action: 'enable' | 'update' | 'disable') {
 		pending = { extension, action, schema: extension.requiredSchema ?? 'public', cascade: extension.requires.length > 0 };
-		applyError = '';
 	}
 
-	async function apply() {
-		applying = true;
-		applyError = '';
-		try {
-			await changeSchema({ connection: editor.connection, sql });
-			pending = null;
-			await load();
-			void editor.reload(); // Extensions can add tables and types.
-		} catch (cause) { applyError = message(cause); }
-		finally { applying = false; }
+	async function applied() {
+		await load();
+		void editor.reload(); // Extensions can add tables and types.
 	}
 </script>
 
@@ -88,40 +78,27 @@
 						</td>
 					</tr>
 				{:else}
-					<tr><td colspan="5" class="p-3 text-muted-foreground">{list.length ? 'No matching extensions.' : 'Loading…'}</td></tr>
+					<tr><td colspan="5" class="p-3 text-muted-foreground">{list === null ? 'Loading…' : 'No matching extensions.'}</td></tr>
 				{/each}
 			</tbody>
 		</table>
 	</div>
 </div>
 
-<Dialog.Root bind:open={() => !!pending, (open) => { if (!open && !applying) pending = null; }}>
-	<Dialog.Content class="gap-4">
-		{#if pending}
-			<Dialog.Header>
-				<Dialog.Title>{{ enable: 'Enable', update: 'Update', disable: 'Disable' }[pending.action]} <code>{pending.extension.name}</code></Dialog.Title>
-				<Dialog.Description class="text-xs">{pending.extension.comment}</Dialog.Description>
-			</Dialog.Header>
-			{#if pending.action === 'enable'}
-				<div class="space-y-2">
-					<Label for={`${id}-schema`} class="text-xs">Schema</Label>
-					<Input id={`${id}-schema`} bind:value={pending.schema} readonly={!!pending.extension.requiredSchema} spellcheck={false} class="font-mono text-xs" />
-				</div>
-				{#if pending.extension.requires.length}
-					<div class="flex items-center gap-2">
-						<Checkbox id={`${id}-cascade`} bind:checked={pending.cascade} />
-						<Label for={`${id}-cascade`} class="text-xs">Also install required: {pending.extension.requires.join(', ')}</Label>
-					</div>
-				{/if}
-			{:else if pending.action === 'disable'}
-				<p class="text-xs text-destructive">Objects that depend on this extension block removal; drop them first in the SQL editor.</p>
-			{/if}
-			<pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{sql}</pre>
-			{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-			<Dialog.Footer>
-				<Button variant="outline" size="sm" disabled={applying} onclick={() => pending = null}>Cancel</Button>
-				<Button variant={pending.action === 'disable' ? 'destructive' : 'default'} size="sm" disabled={applying} onclick={apply}>{applying ? 'Applying…' : 'Apply'}</Button>
-			</Dialog.Footer>
+<SqlDialog open={!!pending} title={pending ? { enable: 'Enable', update: 'Update', disable: 'Disable' }[pending.action] : ''} subject={pending?.extension.name}
+	description={pending?.extension.comment ?? undefined} {sql} destructive={pending?.action === 'disable'} onclose={() => pending = null} onapplied={applied}>
+	{#if pending?.action === 'enable'}
+		<div class="space-y-2">
+			<Label for={`${id}-schema`} class="text-xs">Schema</Label>
+			<Input id={`${id}-schema`} bind:value={pending.schema} readonly={!!pending.extension.requiredSchema} spellcheck={false} class="font-mono text-xs" />
+		</div>
+		{#if pending.extension.requires.length}
+			<div class="flex items-center gap-2">
+				<Checkbox id={`${id}-cascade`} bind:checked={pending.cascade} />
+				<Label for={`${id}-cascade`} class="text-xs">Also install required: {pending.extension.requires.join(', ')}</Label>
+			</div>
 		{/if}
-	</Dialog.Content>
-</Dialog.Root>
+	{:else if pending?.action === 'disable'}
+		<p class="text-xs text-destructive">Objects that depend on this extension block removal; drop them first in the SQL editor.</p>
+	{/if}
+</SqlDialog>

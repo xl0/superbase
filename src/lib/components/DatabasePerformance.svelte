@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ArrowDown, Download, RotateCcw, RotateCw, Search, X } from '@lucide/svelte';
-	import { changeSchema, queryStats } from '#lib/db.remote.js';
+	import { queryStats } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { QueryStat, QueryStats } from '#lib/database.js';
 	import { highlightSql } from '#lib/sql-highlight.js';
 	import { fresh, message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import PanelResizer from './PanelResizer.svelte';
+	import SqlDialog from './SqlDialog.svelte';
 
 	const COLUMNS = [
 		['totalTime', 'Time consumed'], ['calls', 'Calls'], ['maxTime', 'Max time'], ['meanTime', 'Mean time'],
@@ -29,9 +29,8 @@
 	let selected = $state.raw<QueryStat | null>(null);
 	let panelWidth = $state(520);
 	let windowWidth = $state(1280);
-	let resetting = $state(false);
-	let applying = $state(false);
-	let applyError = $state('');
+	/** The statement awaiting confirmation: enable the extension, or reset the statistics. */
+	let pending = $state<'enable' | 'reset' | null>(null);
 	const queries = $derived(stats?.available ? stats.queries : []);
 	const totalTime = $derived(queries.reduce((sum, item) => sum + item.totalTime, 0));
 	const totals = $derived(queries.reduce((sum, item) => ({ calls: sum.calls + item.calls, rows: sum.rows + item.rows }), { calls: 0, rows: 0 }));
@@ -55,17 +54,6 @@
 		return item[column].toLocaleString();
 	}
 
-	async function run(sql: string) {
-		applying = true;
-		applyError = '';
-		try {
-			await changeSchema({ connection: editor.connection, sql });
-			resetting = false;
-			await load();
-		} catch (cause) { applyError = message(cause); }
-		finally { applying = false; }
-	}
-
 	/** The rows as shown (filtered and sorted), times in milliseconds. */
 	function exportCsv() {
 		const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
@@ -78,7 +66,7 @@
 	}
 </script>
 
-<svelte:window bind:innerWidth={windowWidth} onkeydown={(event) => { if (event.key === 'Escape' && selected && !resetting && !event.defaultPrevented) selected = null; }} />
+<svelte:window bind:innerWidth={windowWidth} onkeydown={(event) => { if (event.key === 'Escape' && selected && !pending && !event.defaultPrevented) selected = null; }} />
 
 {#snippet sql(text: string)}{#each highlightSql(text) as span}<span class={span.class}>{span.text}</span>{/each}{/snippet}
 
@@ -91,8 +79,7 @@
 				<p class="text-muted-foreground">{stats.reason}</p>
 				{#if !stats.installed}
 					<pre class="rounded-md bg-muted p-2 font-mono">{ENABLE_SQL}</pre>
-					{#if applyError}<p role="alert" class="break-words text-destructive">{applyError}</p>{/if}
-					<Button size="xs" disabled={applying} onclick={() => run(ENABLE_SQL)}>{applying ? 'Enabling…' : 'Enable extension'}</Button>
+					<Button size="xs" onclick={() => pending = 'enable'}>Enable extension</Button>
 				{/if}
 				<p class="text-muted-foreground">The server must also preload it: set <code>shared_preload_libraries = 'pg_stat_statements'</code>
 					in its configuration (or <code>alter system set …</code>) and restart PostgreSQL.</p>
@@ -122,7 +109,7 @@
 				<div class="ml-auto flex gap-2">
 					<Button variant="outline" size="icon-sm" aria-label="Refresh" title="Refresh" onclick={load}><RotateCw /></Button>
 					<Button variant="outline" size="icon-sm" aria-label="Reset statistics" title="Reset statistics"
-						onclick={() => { resetting = true; applyError = ''; }}><RotateCcw /></Button>
+						onclick={() => pending = 'reset'}><RotateCcw /></Button>
 					<Button variant="outline" size="sm" disabled={!shown.length} onclick={exportCsv}><Download />Export CSV</Button>
 				</div>
 			</div>
@@ -165,7 +152,7 @@
 				<div class="space-y-2">
 					<p class="font-medium">Reset report</p>
 					<p class="text-muted-foreground">Consider resetting the statistics after optimizing queries, to measure from a clean slate.</p>
-					<Button variant="outline" size="xs" onclick={() => { resetting = true; applyError = ''; }}>Reset report</Button>
+					<Button variant="outline" size="xs" onclick={() => pending = 'reset'}>Reset report</Button>
 				</div>
 				<div class="space-y-2">
 					<p class="font-medium">How is this report generated?</p>
@@ -203,17 +190,7 @@
 	{/if}
 </div>
 
-<Dialog.Root bind:open={() => resetting, (open) => { if (!applying) resetting = open; }}>
-	<Dialog.Content class="gap-4">
-		<Dialog.Header>
-			<Dialog.Title>Reset query statistics</Dialog.Title>
-			<Dialog.Description class="text-xs">Clears pg_stat_statements for the whole server, not just this database.</Dialog.Description>
-		</Dialog.Header>
-		<pre class="rounded-md bg-muted p-2 font-mono text-xs">{RESET_SQL}</pre>
-		{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-		<Dialog.Footer>
-			<Button variant="outline" size="sm" disabled={applying} onclick={() => resetting = false}>Cancel</Button>
-			<Button variant="destructive" size="sm" disabled={applying} onclick={() => run(RESET_SQL)}>{applying ? 'Resetting…' : 'Reset'}</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+<SqlDialog open={!!pending} title={pending === 'enable' ? 'Enable pg_stat_statements' : 'Reset query statistics'}
+	description={pending === 'enable' ? undefined : 'Clears pg_stat_statements for the whole server, not just this database.'}
+	sql={pending === 'enable' ? ENABLE_SQL : pending ? RESET_SQL : ''} destructive={pending === 'reset'} action={pending === 'reset' ? 'Reset' : 'Apply'}
+	onclose={() => pending = null} onapplied={load} />

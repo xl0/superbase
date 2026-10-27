@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { connectionStatus } from '#lib/db.remote.js';
-	import { connectionId, lastProfile, profileTarget } from '#lib/connection-profiles.js';
+	import { lastProfile, profileId } from '#lib/connection-profiles.js';
 	import { databaseId, tablesHref } from '#lib/links.js';
 	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -13,7 +13,7 @@
 	const target = $derived.by(() => {
 		if (!status.ready) return null;
 		const profile = status.current.locked ? undefined : lastProfile();
-		if (profile) return connectionId(profileTarget(profile.url));
+		if (profile?.target) return profileId(profile);
 		const open = status.current.connections[0];
 		return open ? databaseId(open) : null;
 	});
@@ -31,5 +31,5 @@
 {:else if !status.ready || target}
 	<LoadingShell />
 {:else}
-	<ConnectScreen status={{ connection: null, locked: status.current.locked }} />
+	<ConnectScreen locked={status.current.locked} />
 {/if}

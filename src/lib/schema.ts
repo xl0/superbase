@@ -1,5 +1,3 @@
-import type { RowQuery } from './types.js';
-
 /** Approved column types for the type picker (builtins, enums, domains and their arrays). */
 export interface SchemaType {
 	oid: string;
@@ -29,21 +27,16 @@ export interface SchemaColumn {
 export interface SchemaIndex {
 	name: string;
 	definition: string;
-	unique: boolean;
-	primary: boolean;
 	/** Owning PK/UNIQUE/exclusion constraint: drop that instead of the index. */
 	constraint: string | null;
 }
 export const REFERENTIAL_ACTIONS = ['no action', 'restrict', 'cascade', 'set null', 'set default'] as const;
 export type ReferentialAction = typeof REFERENTIAL_ACTIONS[number];
-/** UNIQUE, CHECK and FOREIGN KEY constraints owned by the table. */
+/** UNIQUE, CHECK and FOREIGN KEY constraints owned by the table; `definition` as pg_get_constraintdef prints it. */
 export interface SchemaConstraint {
 	name: string;
 	kind: 'u' | 'c' | 'f';
 	definition: string;
-	columns: string[];
-	expression: string | null;
-	foreignKey: { schema: string; table: string; columns: string[]; onUpdate: ReferentialAction; onDelete: ReferentialAction } | null;
 }
 export interface SchemaDefinition {
 	schema: string;
@@ -58,8 +51,7 @@ export type SchemaEditMode =
 	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'duplicateTable' | 'addColumn' | 'addPrimaryKey' | 'indexes' | 'constraints' | 'refreshView' }
 	/** Side panels: RLS, policies and privileges (TableAccessPanel), or the DDL (TableDefinitionPanel). */
 	| { kind: 'access' } | { kind: 'definition' }
-	| { kind: 'alterColumn' | 'dropColumn'; column: string }
-	| { kind: 'exportCsv'; query?: RowQuery; options?: boolean };
+	| { kind: 'alterColumn' | 'dropColumn'; column: string };
 
 /** What a schema form wants applied: one DDL script, run in a single transaction. */
 export interface SchemaChange {

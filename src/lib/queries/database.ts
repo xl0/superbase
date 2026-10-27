@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { Activity, DatabaseIndex, DatabaseSetting, EnumType, Extension, Policies, QueryStats, Role, SchemaInfo, Trigger } from '../database.js';
+import type { Activity, DatabaseIndex, DatabaseSetting, EnumType, Extension, PolicyTable, QueryStats, Role, SchemaInfo, Trigger } from '../database.js';
 import { CONFIG_SETTINGS } from '../database.js';
 
 export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
@@ -12,16 +12,14 @@ export async function listIndexes(pool: pg.Pool): Promise<DatabaseIndex[]> {
 		join pg_class t on t.oid = i.indrelid
 		join pg_namespace n on n.oid = t.relnamespace
 		where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+		  and not c.relispartition -- attached to a partitioned table's index, which owns it
 		order by n.nspname, t.relname, c.relname`)).rows;
 }
 
-/** Tables with their RLS state and policies, the roles a policy can name, and whether this role bypasses RLS. */
-export async function listPolicies(pool: pg.Pool): Promise<Policies> {
-	return (await pool.query<Policies>(`
-		select current_user as role,
-		       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as bypass,
-		       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles,
-		       coalesce((select json_agg(t order by t.schema, t.table) from (
+/** Tables with their RLS state, policies and grants. */
+export async function listPolicies(pool: pg.Pool): Promise<PolicyTable[]> {
+	return (await pool.query<{ tables: PolicyTable[] }>(`
+		select coalesce((select json_agg(t order by t.schema, t.table) from (
 		         select n.nspname as schema, c.relname as table, pg_get_userbyid(c.relowner) as owner,
 		                c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
 		                coalesce((select json_agg(json_build_object(
@@ -32,19 +30,20 @@ export async function listPolicies(pool: pg.Pool): Promise<Policies> {
 		                  'using', pg_get_expr(p.polqual, p.polrelid),
 		                  'check', pg_get_expr(p.polwithcheck, p.polrelid)) order by p.polname)
 		                 from pg_policy p where p.polrelid = c.oid), '[]') as policies,
-		                coalesce((select json_agg(json_build_object(
+		                -- One row per grantor: distinct.
+		                coalesce((select json_agg(distinct jsonb_build_object(
 		                  'role', case when a.grantee = 0 then 'public' else pg_get_userbyid(a.grantee) end, 'privilege', a.privilege_type))
 		                 from aclexplode(c.relacl) a where a.grantee <> c.relowner), '[]') as grants
 		         from pg_class c join pg_namespace n on n.oid = c.relnamespace
 		         where c.relkind in ('r', 'p') and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
-		       ) t), '[]') as tables`)).rows[0];
+		       ) t), '[]') as tables`)).rows[0].tables;
 }
 
 export async function listRoles(pool: pg.Pool): Promise<Role[]> {
 	return (await pool.query<Role>(`
 		select r.rolname as name, r.rolcanlogin as login, r.rolsuper as superuser, r.rolbypassrls as bypass,
-		       r.rolcreatedb as createdb, r.rolcreaterole as createrole, r.rolname = current_user as current,
-		       array(select b.rolname::text from pg_auth_members m join pg_roles b on b.oid = m.roleid
+		       r.rolcreatedb as createdb, r.rolname = current_user as current,
+		       array(select distinct b.rolname::text from pg_auth_members m join pg_roles b on b.oid = m.roleid
 		             where m.member = r.oid order by 1) as "memberOf"
 		from pg_roles r where r.rolname !~ '^pg_' order by r.rolname`)).rows;
 }
@@ -69,7 +68,8 @@ export async function listTriggers(pool: pg.Pool): Promise<Trigger[]> {
 		       t.tgtype & 1 <> 0 as "forEachRow", t.tgfoid::regprocedure::text as function,
 		       pg_get_triggerdef(t.oid) as definition, pg_get_functiondef(t.tgfoid) as "functionDefinition"
 		from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
-		where not t.tgisinternal and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+		-- Partition clones follow their parent's trigger; realtime triggers belong to the table editor's ⚡.
+		where not t.tgisinternal and t.tgparentid = 0 and t.tgname <> 'superbase_realtime' and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
 		order by n.nspname, c.relname, t.tgname`)).rows;
 }
 

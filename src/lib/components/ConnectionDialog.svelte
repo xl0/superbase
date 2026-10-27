@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Check, ChevronsUpDown, Pencil, Plus } from '@lucide/svelte';
 	import { connect } from '#lib/db.remote.js';
-	import type { ConnectionStatus } from '#lib/types.js';
+	import type { ConnectionInfo } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { connectionTarget, loadProfiles, profileTarget, rememberProfile, storeProfiles, type ConnectionProfile } from '#lib/connection-profiles.js';
 	import { connectionOptions, SSL_MODES, type SslMode } from '#lib/connection-options.js';
@@ -13,8 +13,11 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 
-	let { status, active = $bindable(false), disabled = false, approve = () => true, onswitch = () => {} }: {
-		status: ConnectionStatus;
+	let { connection, locked, active = $bindable(false), disabled = false, approve = () => true, onswitch = () => {} }: {
+		/** The database this page shows; null on the connect screen. */
+		connection: ConnectionInfo | null;
+		/** Pinned to DATABASE_URL: no switching. */
+		locked: boolean;
 		/** Bound: true while the picker or dialog is open (pauses polling/shortcuts). */
 		active?: boolean;
 		disabled?: boolean;
@@ -36,8 +39,8 @@
 	// The demo keeps the connection UI to show how it works, but has only its in-browser database.
 	const demo = import.meta.env.MODE === 'demo';
 	let demoBlocked = $state(false);
-	const target = $derived(status.connection ? connectionTarget(status.connection) : '');
-	const current = $derived(profiles.find((profile) => profileTarget(profile.url) === target));
+	const target = $derived(connection ? connectionTarget(connection) : '');
+	const current = $derived(profiles.find((profile) => profile.target === target));
 	$effect(() => { active = pickerOpen || dialogOpen || pending; });
 
 	function edit(profile: ConnectionProfile | null) {
@@ -59,12 +62,12 @@
 		error = '';
 		try {
 			const next = await connect(choice);
-			rememberProfile(choice.id ?? null);
+			rememberProfile(choice.id ?? null, next);
 			onswitch();
 			// A full load onto the new database's route resets this page's state (other tabs keep theirs).
 			// Switching adds a history entry (Back returns to the old database); leaving the connect screen does not.
 			const href = tablesHref(databaseId(next));
-			if (status.connection) window.location.assign(href); else window.location.replace(href);
+			if (connection) window.location.assign(href); else window.location.replace(href);
 		} catch (cause) {
 			error = message(cause);
 			pending = false;
@@ -77,7 +80,9 @@
 		try {
 			const options = connectionOptions(url, sslMode);
 			if (!name.trim()) throw new Error('Name the connection.');
-			const profile = { id: editing?.id ?? crypto.randomUUID(), name: name.trim(), ...options };
+			// The resolved target stays valid while the URL does.
+			const profile = { id: editing?.id ?? crypto.randomUUID(), name: name.trim(), ...options,
+				...(editing?.url === options.url ? { target: editing.target } : {}) };
 			const others = loadProfiles().filter((item) => item.id !== profile.id);
 			storeProfiles([...others, profile].sort((a, b) => a.name.localeCompare(b.name)));
 			profiles = loadProfiles();
@@ -103,14 +108,14 @@
 	}
 </script>
 
-{#if status.locked}
-	<span class="truncate px-2 text-sm font-medium" title={target}>{status.connection?.database}</span>
+{#if locked}
+	<span class="truncate px-2 text-sm font-medium" title={target}>{connection?.database}</span>
 {:else}
 	<Popover.Root bind:open={() => pickerOpen, (value) => { if (!pending) { pickerOpen = value; error = ''; } }}>
 		<Popover.Trigger>
 			{#snippet child({ props })}
 				<Button {...props} variant="ghost" {disabled} class="max-w-full justify-start gap-2 px-2" title={target}>
-					<span class="truncate">{current?.name ?? status.connection?.database ?? 'Choose connection'}</span>
+					<span class="truncate">{current?.name ?? connection?.database ?? 'Choose connection'}</span>
 					<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground" />
 				</Button>
 			{/snippet}

@@ -14,8 +14,13 @@
 	let { definition, disabled, change = $bindable() }: { definition: SchemaDefinition; disabled: boolean; change: SchemaChange | null } = $props();
 	const id = $props.id();
 	const KIND = { u: 'UNIQUE', c: 'CHECK', f: 'FOREIGN KEY' };
-	/** Editing replaces the original constraint (drop + add in one transaction). */
-	let draft = $state<{ spec: ConstraintSpec; original: SchemaConstraint | null; initial?: string } | null>(null);
+	/** A new constraint, built from a form. */
+	let draft = $state<{ spec: ConstraintSpec } | null>(null);
+	/**
+	 * An existing constraint, edited as its full definition so clauses the form doesn't model (DEFERRABLE, NOT VALID,
+	 * NULLS NOT DISTINCT, INCLUDE, MATCH FULL…) survive. A new definition is drop + add; a new name alone is a rename.
+	 */
+	let editing = $state<{ original: SchemaConstraint; name: string; definition: string } | null>(null);
 	let dropping = $state<SchemaConstraint | null>(null);
 	const table = $derived(qualify(definition.schema, definition.table));
 	const columns = $derived(definition.columns.map((column) => column.name));
@@ -29,21 +34,17 @@
 		if (spec.kind === 'unique') return spec.columns.length > 0;
 		return spec.columns.length > 0 && spec.columns.every(Boolean) && spec.reference.columns.every(Boolean);
 	}
+	const drop = (constraint: SchemaConstraint) => `alter table ${table} drop constraint ${ident(constraint.name)};`;
 	$effect(() => {
-		const drop = (constraint: SchemaConstraint) => `alter table ${table} drop constraint ${ident(constraint.name)};`;
-		change = draft && draft.spec.name && complete(draft.spec) && JSON.stringify(draft.spec) !== draft.initial ? {
-			sql: [draft.original ? drop(draft.original) : '', `alter table ${table} add constraint ${ident(draft.spec.name)} ${constraintSql(draft.spec)};`].filter(Boolean).join('\n')
-		} : dropping ? { sql: drop(dropping), destructive: true } : null;
+		if (editing) {
+			const { original } = editing, name = editing.name.trim(), definition = editing.definition.trim();
+			change = !name || !definition || (name === original.name && definition === original.definition) ? null
+				: definition === original.definition ? { sql: `alter table ${table} rename constraint ${ident(original.name)} to ${ident(name)};` }
+				: { sql: `${drop(original)}\nalter table ${table} add constraint ${ident(name)} ${definition};` };
+		} else if (draft) {
+			change = draft.spec.name && complete(draft.spec) ? { sql: `alter table ${table} add constraint ${ident(draft.spec.name)} ${constraintSql(draft.spec)};` } : null;
+		} else change = dropping ? { sql: drop(dropping), destructive: true } : null;
 	});
-
-	function edit(constraint: SchemaConstraint) {
-		const spec: ConstraintSpec = constraint.kind === 'u' ? { kind: 'unique', name: constraint.name, columns: [...constraint.columns] }
-			: constraint.kind === 'c' ? { kind: 'check', name: constraint.name, expression: constraint.expression ?? '' }
-			: { kind: 'foreignKey', name: constraint.name, columns: [...constraint.columns], onUpdate: constraint.foreignKey!.onUpdate,
-				onDelete: constraint.foreignKey!.onDelete,
-				reference: { schema: constraint.foreignKey!.schema, table: constraint.foreignKey!.table, columns: [...constraint.foreignKey!.columns] } };
-		draft = { spec, original: constraint, initial: JSON.stringify(spec) };
-	}
 
 	function chooseTarget(key: string) {
 		const table = editor.tables.find((table) => tableKey(table.schema, table.name) === key);
@@ -54,7 +55,18 @@
 	}
 </script>
 
-{#if draft}
+{#if editing}
+	<div class="space-y-2">
+		<Label for={`${id}-name`}>Constraint name</Label>
+		<Input id={`${id}-name`} bind:value={editing.name} {disabled} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
+	</div>
+	<div class="space-y-2">
+		<Label>Definition</Label>
+		<TextEditor value={editing.definition} language="sql" readonly={disabled} label="Constraint definition" class="h-32"
+			onchange={(value) => { if (editing) editing.definition = value; }} />
+		<p class="text-xs text-muted-foreground">As PostgreSQL prints it. A changed definition replaces the constraint (drop + add in one transaction).</p>
+	</div>
+{:else if draft}
 	{@const spec = draft.spec}
 	<div class="space-y-2">
 		<Label for={`${id}-name`}>Constraint name</Label>
@@ -112,7 +124,6 @@
 			</div>
 		{/if}
 	{/if}
-	{#if draft.original}<p class="text-xs text-muted-foreground">Applying replaces the existing constraint.</p>{/if}
 {:else if dropping}
 	<pre class="whitespace-pre-wrap break-all font-mono text-xs">{dropping.definition}</pre>
 	<p class="text-sm text-destructive">Drop this constraint? Table data is not affected.</p>
@@ -120,10 +131,10 @@
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<p class="text-sm">{definition.constraints.length} {definition.constraints.length === 1 ? 'constraint' : 'constraints'}</p>
 		<div class="flex flex-wrap gap-2">
-			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'unique', name: `${definition.table}_key`, columns: [] }, original: null }}><Plus />UNIQUE</Button>
-			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'check', name: `${definition.table}_check`, expression: '' }, original: null }}><Plus />CHECK</Button>
+			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'unique', name: `${definition.table}_key`, columns: [] } }}><Plus />UNIQUE</Button>
+			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'check', name: `${definition.table}_check`, expression: '' } }}><Plus />CHECK</Button>
 			<Button variant="outline" size="sm" {disabled} onclick={() => draft = { spec: { kind: 'foreignKey', name: `${definition.table}_fkey`, columns: [],
-				reference: { schema: definition.schema, table: '', columns: [] }, onUpdate: 'no action', onDelete: 'no action' }, original: null }}><Plus />Foreign key</Button>
+				reference: { schema: definition.schema, table: '', columns: [] }, onUpdate: 'no action', onDelete: 'no action' } }}><Plus />Foreign key</Button>
 		</div>
 	</div>
 	{#each definition.constraints as constraint (constraint.name)}
@@ -133,7 +144,7 @@
 					<h3 class="break-all font-mono text-xs font-medium">{constraint.name}</h3>
 					<p class="text-[11px] text-muted-foreground">{KIND[constraint.kind]}</p>
 				</div>
-				<Button variant="ghost" size="sm" {disabled} onclick={() => edit(constraint)}>Edit</Button>
+				<Button variant="ghost" size="sm" {disabled} onclick={() => editing = { original: constraint, name: constraint.name, definition: constraint.definition }}>Edit</Button>
 				<Button variant="ghost" size="sm" {disabled} class="text-destructive" onclick={() => dropping = constraint}>Drop</Button>
 			</div>
 			<p class="break-all font-mono text-xs text-muted-foreground">{constraint.definition}</p>

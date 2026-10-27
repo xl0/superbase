@@ -258,7 +258,7 @@
 									disabled={disabled || column.foreignKey.columns.some((name) => editor.getValue(row, name) == null)}
 									onmousedown={(event) => event.stopPropagation()} onclick={() => void editor.followReference(row, column)}><ArrowUpRight /></Button>
 							{:else}
-								<span class="truncate" class:text-muted-foreground={value == null} class:italic={value == null} title={displayValue(value, column)}>{value === undefined && !writable(column) ? 'GENERATED' : displayValue(value, column)}</span>
+								<span class="truncate" class:text-muted-foreground={value == null} class:italic={value == null} title={displayValue(value, column)}>{displayValue(value, column)}</span>
 							{/if}
 						</div>
 					{/each}

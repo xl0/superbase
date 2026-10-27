@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { connect, connectionStatus } from '#lib/db.remote.js';
-	import { connectionId, loadProfiles, profileTarget, rememberProfile } from '#lib/connection-profiles.js';
+	import { loadProfiles, profileId, rememberProfile } from '#lib/connection-profiles.js';
 	import { databaseId, tablesHref } from '#lib/links.js';
 	import { message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -25,10 +25,10 @@
 		attempted = db;
 		const pinned = status.current.locked && status.current.connections[0];
 		if (pinned) { void goto(tablesHref(databaseId(pinned)), { replace: true }); return; }
-		const profile = loadProfiles().find((profile) => connectionId(profileTarget(profile.url)) === db);
+		const profile = loadProfiles().find((profile) => profileId(profile) === db);
 		if (!profile) { problem = 'This link points to a database that is not among your saved connections.'; return; }
 		connect({ url: profile.url, sslMode: profile.sslMode })
-			.then(() => { rememberProfile(profile.id); return status.refresh(); })
+			.then((info) => { rememberProfile(profile.id, info); return status.refresh(); })
 			.catch((cause) => { problem = `Could not connect to “${profile.name}”: ${message(cause)}`; });
 	});
 </script>
@@ -42,10 +42,10 @@
 		</div>
 	</main>
 {:else if connection}
-	{#key connection.key}<EditorApp status={{ connection, locked: status.current!.locked }} />{/key}
+	{#key connection.key}<EditorApp {connection} locked={status.current!.locked} />{/key}
 	{@render children()}
 {:else if problem}
-	<ConnectScreen status={{ connection: null, locked: status.current!.locked }} error={problem} />
+	<ConnectScreen locked={status.current!.locked} error={problem} />
 {:else}
 	<LoadingShell />
 {/if}

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { Download, LockKeyhole, LockKeyholeOpen, Plus, Radio, RotateCw, Settings2, Trash2, X, Zap } from '@lucide/svelte';
+	import { LockKeyhole, LockKeyholeOpen, Plus, Radio, RotateCw, Trash2, X, Zap } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import CsvExport from './CsvExport.svelte';
 	import InsertRow from './InsertRow.svelte';
 	import FilterBar from './FilterBar.svelte';
 	import SortMenu from './SortMenu.svelte';
@@ -16,14 +17,6 @@
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
 	/** Realtime is a trigger, so tables only; the static demo has no event stream. */
 	const realtimeControl = $derived(editor.table.kind === 'table' && import.meta.env.MODE !== 'demo');
-
-	function exportRows(options: boolean, anchor: HTMLElement) {
-		onedit({ kind: 'exportCsv', options, query: {
-			sort: editor.sort.map((rule) => ({ ...rule })),
-			filters: editor.filters.map((filter) => ({ ...filter })),
-			...(editor.reference ? { reference: { ...editor.reference } } : {})
-		} }, anchor);
-	}
 
 	async function deleteRows() {
 		if (blocked || !editor.tableEditable) return;
@@ -45,14 +38,7 @@
 				<!-- Shown for RLS tables, and while acting as a role so it can be switched back. -->
 				{#if editor.table.rls || editor.viewAs}<RoleMenu />{/if}
 				<SortMenu />
-				<div class="flex shrink-0">
-					<Button variant="outline" size="icon-sm" class="rounded-r-none" disabled={blocked || !editor.table.columns.length}
-						aria-label="Export query results" title="Download all matching rows and columns as CSV"
-						onclick={(event) => exportRows(false, event.currentTarget)}><Download /></Button>
-					<Button variant="outline" size="icon-sm" class="rounded-l-none border-l-0"
-						disabled={blocked || !editor.table.columns.length} aria-label="Query export options" title="Choose export columns"
-						onclick={(event) => exportRows(true, event.currentTarget)}><Settings2 /></Button>
-				</div>
+				<CsvExport />
 				<!-- Live: this tab's auto-refresh. ⚡: the table's realtime trigger (a database change, applied at once). -->
 				<div class="flex shrink-0">
 					<Button variant={editor.live ? 'secondary' : 'outline'} size="sm" class={['text-xs', realtimeControl && 'rounded-r-none']}

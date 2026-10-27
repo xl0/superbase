@@ -33,14 +33,6 @@ export interface PolicyTable {
 	/** Explicit privileges of roles other than the owner (`public` = everyone). */
 	grants: { role: string; privilege: string }[];
 }
-/** `bypass`: the connected role skips RLS everywhere (superuser or BYPASSRLS); owners also skip unforced tables. */
-export interface Policies {
-	role: string;
-	bypass: boolean;
-	roles: string[];
-	tables: PolicyTable[];
-}
-
 /** A role (server-wide). `memberOf` lists roles whose privileges it can use. */
 export interface Role {
 	name: string;
@@ -48,7 +40,6 @@ export interface Role {
 	superuser: boolean;
 	bypass: boolean;
 	createdb: boolean;
-	createrole: boolean;
 	memberOf: string[];
 	/** The connection's own role. */
 	current: boolean;

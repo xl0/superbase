@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
 	import { page } from '$app/state';
-	import { changeSchema, schemas } from '#lib/db.remote.js';
+	import { schemas } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { SchemaInfo } from '#lib/database.js';
 	import { ident } from '#lib/ddl.js';
@@ -12,8 +12,8 @@
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
+	import SqlDialog from './SqlDialog.svelte';
 
 	const id = $props.id();
 	let list = $state.raw<SchemaInfo[] | null>(null);
@@ -26,17 +26,13 @@
 	let dropping = $state.raw<SchemaInfo | null>(null);
 	let cascade = $state(false);
 	let confirmation = $state('');
-	let applying = $state(false);
-	let applyError = $state('');
 	const shown = $derived((list ?? []).filter((schema) => schema.name.toLowerCase().includes(query.trim().toLowerCase())));
 	// Owners may be pg_* roles (public belongs to pg_database_owner), which editor.roles omits.
 	const owners = $derived([...new Set([owner, ...editor.roles])].filter(Boolean).sort());
-	const sql = $derived.by(() => {
-		if (dropping) return `drop schema ${ident(dropping.name)}${cascade ? ' cascade' : ''};`;
+	const editSql = $derived.by(() => {
 		const next = name.trim();
-		if (!next) return '';
+		if (!next || !editing) return '';
 		if (editing === 'new') return `create schema ${ident(next)}${owner !== editor.role ? ` authorization ${ident(owner)}` : ''};`;
-		if (!editing) return '';
 		return [
 			owner !== editing.owner ? `alter schema ${ident(editing.name)} owner to ${ident(owner)};` : '',
 			next !== editing.name ? `alter schema ${ident(editing.name)} rename to ${ident(next)};` : ''
@@ -53,19 +49,11 @@
 		editing = schema;
 		name = schema === 'new' ? '' : schema.name;
 		owner = schema === 'new' ? editor.role : schema.owner;
-		applyError = '';
 	}
 
-	async function apply() {
-		applying = true;
-		applyError = '';
-		try {
-			await changeSchema({ connection: editor.connection, sql });
-			editing = dropping = null;
-			await load();
-			void editor.reload(); // The table editor lists schemas from its metadata.
-		} catch (cause) { applyError = message(cause); }
-		finally { applying = false; }
+	async function applied() {
+		await load();
+		void editor.reload(); // The table editor lists schemas from its metadata.
 	}
 </script>
 
@@ -99,7 +87,7 @@
 						<td class="p-2 text-right whitespace-nowrap">
 							<Button variant="ghost" size="icon-sm" aria-label={`Edit schema ${schema.name}`} onclick={() => open(schema)}><Pencil /></Button>
 							<Button variant="ghost" size="icon-sm" aria-label={`Drop schema ${schema.name}`}
-								onclick={() => { dropping = schema; cascade = false; confirmation = ''; applyError = ''; }}><Trash2 /></Button>
+								onclick={() => { dropping = schema; cascade = false; confirmation = ''; }}><Trash2 /></Button>
 						</td>
 					</tr>
 				{:else}
@@ -110,58 +98,36 @@
 	</div>
 </div>
 
-<Dialog.Root bind:open={() => !!editing, (open) => { if (!open && !applying) editing = null; }}>
-	<Dialog.Content class="gap-4">
-		<Dialog.Header>
-			<Dialog.Title>{editing === 'new' ? 'Create schema' : 'Edit schema'}</Dialog.Title>
-			<Dialog.Description class="text-xs">{editing === 'new' ? 'The owner may create and drop anything in it.'
-				: 'Renaming breaks code and search_path entries that name the schema.'}</Dialog.Description>
-		</Dialog.Header>
-		<form id={`${id}-form`} class="space-y-4" onsubmit={(event) => { event.preventDefault(); if (sql && name.trim()) void apply(); }}>
-			<div class="space-y-2">
-				<Label for={`${id}-name`} class="text-xs">Name</Label>
-				<Input id={`${id}-name`} bind:value={name} spellcheck={false} autocomplete="off" class="font-mono text-xs" />
-			</div>
-			<div class="space-y-2">
-				<Label for={`${id}-owner`} class="text-xs">Owner</Label>
-				<Select.Root type="single" bind:value={owner} allowDeselect={false}>
-					<Select.Trigger id={`${id}-owner`} size="sm" class="w-full font-mono text-xs">{owner}</Select.Trigger>
-					<Select.Content>{#each owners as role}<Select.Item value={role} label={role} />{/each}</Select.Content>
-				</Select.Root>
-			</div>
-			{#if sql}<pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{sql}</pre>{/if}
-			{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-		</form>
-		<Dialog.Footer>
-			<Button variant="outline" size="sm" disabled={applying} onclick={() => editing = null}>Cancel</Button>
-			<Button type="submit" form={`${id}-form`} size="sm" disabled={applying || !sql || !name.trim()}>{applying ? 'Applying…' : 'Apply'}</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+<SqlDialog open={!!editing} title={editing === 'new' ? 'Create schema' : 'Edit schema'} sql={editSql}
+	description={editing === 'new' ? 'The owner may create and drop anything in it.' : 'Renaming breaks code and search_path entries that name the schema.'}
+	onclose={() => editing = null} onapplied={applied}>
+	<div class="space-y-2">
+		<Label for={`${id}-name`} class="text-xs">Name</Label>
+		<Input id={`${id}-name`} bind:value={name} spellcheck={false} autocomplete="off" class="font-mono text-xs" />
+	</div>
+	<div class="space-y-2">
+		<Label for={`${id}-owner`} class="text-xs">Owner</Label>
+		<Select.Root type="single" bind:value={owner} allowDeselect={false}>
+			<Select.Trigger id={`${id}-owner`} size="sm" class="w-full font-mono text-xs">{owner}</Select.Trigger>
+			<Select.Content>{#each owners as role}<Select.Item value={role} label={role} />{/each}</Select.Content>
+		</Select.Root>
+	</div>
+</SqlDialog>
 
-<Dialog.Root bind:open={() => !!dropping, (open) => { if (!open && !applying) dropping = null; }}>
-	<Dialog.Content class="gap-4">
-		<Dialog.Header>
-			<Dialog.Title>Drop schema <code>{dropping?.name}</code></Dialog.Title>
-			<Dialog.Description class="text-xs">{dropping?.tables || dropping?.functions
-				? `It holds ${dropping.tables} table${dropping.tables === 1 ? '' : 's'} and ${dropping.functions} function${dropping.functions === 1 ? '' : 's'}, and may hold types or sequences. PostgreSQL refuses to drop a schema that isn't empty unless you cascade.`
-				: 'No tables or functions; PostgreSQL refuses if it holds other objects, unless you cascade.'}</Dialog.Description>
-		</Dialog.Header>
-		<div class="flex items-center gap-2">
-			<Checkbox id={`${id}-cascade`} bind:checked={cascade} disabled={applying} />
-			<Label for={`${id}-cascade`} class="text-xs">Cascade: also drop everything in it, and objects elsewhere that depend on it</Label>
+<SqlDialog open={!!dropping} title="Drop schema" subject={dropping?.name} destructive action="Drop"
+	description={dropping?.tables || dropping?.functions
+		? `It holds ${dropping.tables} table${dropping.tables === 1 ? '' : 's'} and ${dropping.functions} function${dropping.functions === 1 ? '' : 's'}, and may hold types or sequences. PostgreSQL refuses to drop a schema that isn't empty unless you cascade.`
+		: 'No tables or functions; PostgreSQL refuses if it holds other objects, unless you cascade.'}
+	sql={dropping ? `drop schema ${ident(dropping.name)}${cascade ? ' cascade' : ''};` : ''} disabled={cascade && confirmation !== dropping?.name}
+	onclose={() => dropping = null} onapplied={applied}>
+	<div class="flex items-center gap-2">
+		<Checkbox id={`${id}-cascade`} bind:checked={cascade} />
+		<Label for={`${id}-cascade`} class="text-xs">Cascade: also drop everything in it, and objects elsewhere that depend on it</Label>
+	</div>
+	{#if cascade}
+		<div class="space-y-2">
+			<Label for={`${id}-confirm`} class="break-all text-xs">Type {dropping?.name} to confirm</Label>
+			<Input id={`${id}-confirm`} bind:value={confirmation} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
 		</div>
-		{#if cascade}
-			<div class="space-y-2">
-				<Label for={`${id}-confirm`} class="break-all text-xs">Type {dropping?.name} to confirm</Label>
-				<Input id={`${id}-confirm`} bind:value={confirmation} disabled={applying} autocomplete="off" spellcheck={false} class="font-mono text-xs" />
-			</div>
-		{/if}
-		<pre class="rounded-md bg-muted p-2 font-mono text-xs">{sql}</pre>
-		{#if applyError}<p role="alert" class="text-xs break-words text-destructive">{applyError}</p>{/if}
-		<Dialog.Footer>
-			<Button variant="outline" size="sm" disabled={applying} onclick={() => dropping = null}>Cancel</Button>
-			<Button variant="destructive" size="sm" disabled={applying || (cascade && confirmation !== dropping?.name)} onclick={apply}>{applying ? 'Dropping…' : 'Drop'}</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+	{/if}
+</SqlDialog>

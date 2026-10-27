@@ -7,14 +7,13 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { databaseHref, databaseId, sqlHref, tablesHref } from '#lib/links.js';
 	import { parseViewHash, type TableView } from '#lib/view.js';
-	import type { ConnectionStatus, Table } from '#lib/types.js';
+	import type { ConnectionInfo, Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import ConnectionDialog from './ConnectionDialog.svelte';
 	import DataGrid from './DataGrid.svelte';
 	import SchemaEditor from './SchemaEditor.svelte';
-	import CsvExport from './CsvExport.svelte';
 	import GridFooter from './GridFooter.svelte';
 	import Sidebar from './Sidebar.svelte';
 	import TableToolbar from './TableToolbar.svelte';
@@ -27,13 +26,11 @@
 	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
-	let { status }: { status: ConnectionStatus } = $props();
+	let { connection, locked }: { connection: ConnectionInfo; locked: boolean } = $props();
 	let connectionsActive = $state(false);
 	let leaving = false;
-	let exportOpen = $state(false);
-	let csvExport: CsvExport;
-	const sql = new SqlState(untrack(() => status.connection!));
-	const db = untrack(() => databaseId(status.connection!));
+	const sql = new SqlState(untrack(() => connection));
+	const db = untrack(() => databaseId(connection));
 	// The route picks the workspace; all three stay mounted below.
 	const workspace = $derived(page.route.id?.startsWith('/db/[db]/sql') ? 'sql' : page.route.id?.startsWith('/db/[db]/database') ? 'database' : 'tables');
 	let sqlOpened = $state(false);
@@ -67,28 +64,23 @@
 			void goto(target, { replace: !named, reset: false });
 		});
 	});
-	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' | 'definition' }>; table: Table; anchor: HTMLElement | null } | null>(null);
+	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'access' | 'definition' }>; table: Table; anchor: HTMLElement | null } | null>(null);
 	let sidePanel = $state.raw<{ kind: 'access' | 'definition'; table: Table } | null>(null);
 
 	/** Menus pass their own table, so actions on an inactive sidebar table never retarget the grid. */
 	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table: Table = editor.table) {
-		if (editor.navigationBlocked || editor.loading || exportOpen) return;
+		if (editor.navigationBlocked || editor.loading) return;
 		const trigger = anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-		if (mode.kind === 'exportCsv') {
-			csvExport.start({ connection: editor.connection, schema: table.schema, table: table.name, ...(mode.query ? { query: mode.query } : {}),
-				...(editor.viewAs ? { as: editor.viewAs } : {}) }, table, !!mode.options, trigger);
-			return;
-		}
 		if (mode.kind === 'definition') { sidePanel = { kind: 'definition', table }; return; } // Read-only: blocks nothing.
 		editor.schemaEditing = true;
 		if (mode.kind === 'access') sidePanel = { kind: 'access', table };
 		else schemaEdit = { mode, anchor: trigger, table };
 	}
 
-	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && !exportOpen && workspace === 'tables' && !sql.busy;
+	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && workspace === 'tables' && !sql.busy;
 
 	onMount(() => {
-		void editor.initialize(status.connection!.key, urlView ?? undefined);
+		void editor.initialize(connection.key, urlView ?? undefined);
 		// Realtime tables refresh on their notifications while the stream is up, polled only every 30 s as a safety net
 		// (a notification arriving mid-save or mid-load is skipped). A tab becoming visible always catches up.
 		let tick = 0;
@@ -114,7 +106,7 @@
 	}
 	$effect(() => {
 		if (!anyRealtime) return;
-		const source = new EventSource(`${resolve('/events')}?connection=${encodeURIComponent(status.connection!.key)}`);
+		const source = new EventSource(`${resolve('/events')}?connection=${encodeURIComponent(connection.key)}`);
 		source.onopen = () => { editor.realtime = true; };
 		source.onerror = () => { editor.realtime = false; };
 		// Notifications proved undeliverable (e.g. a transaction pooler): stop retrying and keep polling.
@@ -140,7 +132,7 @@
 	<header class="flex h-12 shrink-0 items-center gap-2 border-b bg-card pr-3">
 		<div class="grid w-12 shrink-0 place-items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
 		<div class="min-w-0">
-			<ConnectionDialog bind:active={connectionsActive} {status} disabled={editor.busy || sql.busy}
+			<ConnectionDialog bind:active={connectionsActive} {connection} {locked} disabled={editor.busy || sql.busy}
 				approve={() => !unsavedWork() || window.confirm('Discard unsaved edits and close SQL sessions (rolling back uncommitted work)?')}
 				onswitch={() => leaving = true} />
 		</div>
@@ -184,7 +176,7 @@
 						aria-current={workspace === 'sql' ? 'page' : undefined} disabled={editor.navigationBlocked} href={sqlHref(db)}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
-					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, enums, policies, roles, realtime, performance, activity, extensions, configuration"
+					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schemas, indexes, enums, triggers, policies, roles, performance, activity, extensions, configuration"
 						aria-current={workspace === 'database' ? 'page' : undefined} disabled={editor.navigationBlocked} href={databaseHref(db, databaseSection)}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->
@@ -256,7 +248,6 @@
 		{/if}
 	</div>
 </div>
-<CsvExport bind:this={csvExport} bind:open={exportOpen} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} table={schemaEdit.table} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}
 {#if sidePanel?.kind === 'access'}<TableAccessPanel table={sidePanel.table} onclose={() => { sidePanel = null; editor.schemaEditing = false; }} />
 {:else if sidePanel?.kind === 'definition'}<TableDefinitionPanel table={sidePanel.table} onclose={() => sidePanel = null} />{/if}

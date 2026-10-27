@@ -6,6 +6,9 @@
 
 - Browser history and shareable links: the database, workspace and table are in the path, and filters, sort, page and followed foreign keys in the hash. Links to a saved connection reconnect to it.
 - Views and materialized views in the table editor, read-only; materialized views can be refreshed from their menu.
+- View as role: on RLS tables, the table editor can read and edit rows as another role with session settings, to test policies.
+- Database → Policies: row-level security per table (enable, disable, force), policies (create, edit, drop) and table privileges; also as a side panel from the table editor.
+- Database → Roles: create, edit and drop roles, including login, password, BYPASSRLS and membership.
 - Database → Enums: create, rename, add values to, or drop enum types.
 - Database → Activity: client sessions with state, running time, waits and blocking sessions; cancel a query or terminate a session.
 

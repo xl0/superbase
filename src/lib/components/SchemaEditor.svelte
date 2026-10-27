@@ -22,7 +22,7 @@
 
 	/** Every form produces one SchemaChange: SQL that is previewed, then applied in one transaction. */
 	let { mode, table: initialTable, onclose, returnFocus }: {
-		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
+		mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' }>; table: Table; onclose: () => void; returnFocus?: HTMLElement | null;
 	} = $props();
 	const intent = untrack(() => mode);
 	const table = untrack(() => initialTable);

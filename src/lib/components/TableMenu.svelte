@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Copy, Download, EllipsisVertical, KeyRound, ListTree, Pencil, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
+	import { Copy, Download, EllipsisVertical, KeyRound, ListTree, LockKeyhole, Pencil, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { editable, type Table } from '#lib/types.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
@@ -40,6 +40,7 @@
 			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'duplicateTable' }, trigger, table)}><Copy />Duplicate table</DropdownMenu.Item>
 			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'indexes' }, trigger, table)}><ListTree />Indexes</DropdownMenu.Item>
 			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'constraints' }, trigger, table)}><ShieldCheck />Constraints</DropdownMenu.Item>
+			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'access' }, trigger, table)}><LockKeyhole />Policies & access</DropdownMenu.Item>
 		{:else if table.kind === 'materialized view'}
 			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'refreshView' }, trigger, table)}><RefreshCw />Refresh data</DropdownMenu.Item>
 		{/if}

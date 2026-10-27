@@ -2,9 +2,9 @@ import { database, deleteRows, saveTable, tableRows, changeSchema } from '#lib/d
 import { fresh, message } from '#lib/utils.js';
 import type { SchemaChange } from '#lib/schema.js';
 import type { TableView } from '#lib/view.js';
-import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values } from '#lib/types.js';
+import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values, type ViewAs } from '#lib/types.js';
 
-const EMPTY_TABLE: Table = { schema: '', name: '', kind: 'table', columns: [], rowCount: 0 };
+const EMPTY_TABLE: Table = { schema: '', name: '', kind: 'table', rls: false, columns: [], rowCount: 0 };
 
 // Plain copies: identities are kept in $state and sent to the server later.
 const copyIdentity = (identity: RowIdentity): RowIdentity => ({ ...identity, pk: { ...identity.pk } });
@@ -14,6 +14,12 @@ export class EditorState {
 	connection = $state('');
 	tables = $state<Table[]>([]);
 	version = $state('');
+	/** The connection role, whether it bypasses RLS, and the roles "view as" can pick. */
+	role = $state('');
+	bypass = $state(false);
+	roles = $state<string[]>([]);
+	/** Grid reads and writes act as this role (RLS testing); null = the connection role as is. */
+	viewAs = $state.raw<ViewAs | null>(null);
 	ready = $state(false);
 	activeSchema = $state('');
 	activeTableName = $state('');
@@ -53,6 +59,8 @@ export class EditorState {
 	get navigationBlocked() { return this.busy || this.editing || this.inserting || this.schemaEditing; }
 	get hasFilters() { return this.filters.length > 0 || this.reference !== null; }
 	get selectedCount() { return Object.keys(this.rowSelection[this.tableKey] ?? {}).length; }
+	/** Spread into row requests. */
+	get #as() { return this.viewAs ? { as: this.viewAs } : {}; }
 	/** What the URL records; see EditorApp for the sync. */
 	get view(): TableView {
 		return { schema: this.activeSchema, table: this.activeTableName, filters: this.filters, sort: this.sort, page: this.page, reference: this.reference };
@@ -102,6 +110,9 @@ export class EditorState {
 			if (request !== this.#request) return;
 			this.tables = result.tables;
 			this.version = result.version;
+			this.role = result.role;
+			this.bypass = result.bypass;
+			this.roles = result.roles;
 			this.ready = true;
 			if (this.table === EMPTY_TABLE) {
 				const first = this.tables.find((table) => table.schema === this.activeSchema)
@@ -158,7 +169,7 @@ export class EditorState {
 		return fresh(tableRows({
 			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
 			page: this.page, pageSize: this.pageSize, sort: this.sort, filters: this.filters,
-			...(this.reference ? { reference: this.reference } : {})
+			...(this.reference ? { reference: this.reference } : {}), ...this.#as
 		}));
 	}
 
@@ -230,6 +241,14 @@ export class EditorState {
 	async setSchema(schema: string) {
 		const first = this.tables.find((table) => table.schema === schema);
 		if (first) await this.selectTable(schema, first.name);
+	}
+	/** Selections are dropped: their rows were read as the previous role. */
+	async setViewAs(next: ViewAs | null) {
+		if (this.navigationBlocked) return;
+		this.viewAs = next;
+		this.rowSelection = {};
+		this.page = 0;
+		await this.fetch();
 	}
 	async setPage(page: number) {
 		if (this.navigationBlocked || this.loading || page < 0 || (page > this.page && !this.hasMore)) return;
@@ -329,7 +348,7 @@ export class EditorState {
 	async #save(updates: SaveArgs['updates'], inserts: Values[]) {
 		if (this.busy || this.loading || this.schemaEditing || !this.ready || !this.tableEditable) throw new Error('The table is not ready for editing');
 		const key = this.tableKey;
-		const args = { connection: this.connection, schema: this.activeSchema, table: this.activeTableName, updates, inserts };
+		const args = { connection: this.connection, schema: this.activeSchema, table: this.activeTableName, updates, inserts, ...this.#as };
 		this.#liveGeneration++;
 		this.busy = true;
 		this.savedAt = null;
@@ -360,7 +379,7 @@ export class EditorState {
 		const key = this.tableKey;
 		const args = {
 			connection: this.connection, schema: this.activeSchema, table: this.activeTableName,
-			identities: Object.values(this.rowSelection[key]).map(copyIdentity)
+			identities: Object.values(this.rowSelection[key]).map(copyIdentity), ...this.#as
 		};
 		this.#liveGeneration++;
 		this.busy = true;

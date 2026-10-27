@@ -10,6 +10,50 @@ export interface DatabaseIndex {
 	constraint: string | null;
 }
 
+export type PolicyCommand = 'all' | 'select' | 'insert' | 'update' | 'delete';
+/** A row-level security policy. Roles are names; `public` means every role. */
+export interface Policy {
+	name: string;
+	command: PolicyCommand;
+	permissive: boolean;
+	roles: string[];
+	/** Rows visible/affected (null when absent); not allowed for insert. */
+	using: string | null;
+	/** Rows that may be written; not allowed for select/delete. */
+	check: string | null;
+}
+export interface PolicyTable {
+	schema: string;
+	table: string;
+	owner: string;
+	/** RLS on; `forced` also applies it to the owner. */
+	enabled: boolean;
+	forced: boolean;
+	policies: Policy[];
+	/** Explicit privileges of roles other than the owner (`public` = everyone). */
+	grants: { role: string; privilege: string }[];
+}
+/** `bypass`: the connected role skips RLS everywhere (superuser or BYPASSRLS); owners also skip unforced tables. */
+export interface Policies {
+	role: string;
+	bypass: boolean;
+	roles: string[];
+	tables: PolicyTable[];
+}
+
+/** A role (server-wide). `memberOf` lists roles whose privileges it can use. */
+export interface Role {
+	name: string;
+	login: boolean;
+	superuser: boolean;
+	bypass: boolean;
+	createdb: boolean;
+	createrole: boolean;
+	memberOf: string[];
+	/** The connection's own role. */
+	current: boolean;
+}
+
 /** A user-defined enum type; `columns` counts table columns using it. */
 export interface EnumType {
 	schema: string;

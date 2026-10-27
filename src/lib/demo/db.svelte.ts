@@ -121,6 +121,8 @@ export const saveTable = withPool(db.saveTable);
 export const deleteRows = withPool(db.deleteRows);
 export const schemaCatalog = query(withPool((pool) => schemaDb.listSchemaCatalog(pool)));
 export const schemaDefinition = query(withPool(schemaDb.getSchemaDefinition));
+export const policies = query(withPool((pool) => databaseDb.listPolicies(pool)));
+export const roles = query(withPool((pool) => databaseDb.listRoles(pool)));
 export const enums = query(withPool((pool) => databaseDb.listEnums(pool)));
 export const indexes = query(withPool((pool) => databaseDb.listIndexes(pool)));
 export const queryStats = query(withPool((pool) => databaseDb.queryStats(pool)));

@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import type { CsvExportArgs } from '../types.js';
 import { ident, qualify } from '../ddl.js';
-import { loadMetadata, rowSelection, textTypes } from './db.js';
+import { actAs, loadMetadata, rowSelection, textTypes } from './db.js';
 
 const BATCH_ROWS = 256;
 const textRows = { rowMode: 'array' as const, types: textTypes };
@@ -31,6 +31,7 @@ export async function exportCsv(pool: pg.Pool, target: CsvExportArgs, signal?: A
 			}
 		}
 		if (!projection) throw new Error('Select at least one column');
+		await actAs(client, target.as);
 		await client.query(`declare superbase_csv no scroll cursor for select ${projection} from ${qualify(target.schema, target.table)} t ${selection}`, values);
 		header = await client.query({ text: 'fetch 0 from superbase_csv', ...textRows });
 	} catch (error) {

@@ -3,6 +3,7 @@ import pg from 'pg';
 import * as ddl from '../src/lib/ddl.js';
 import { executeDdl, getSchemaDefinition, listSchemaCatalog } from '../src/lib/queries/schema.js';
 import { listTables } from '../src/lib/queries/db.js';
+import { listPolicies, listRoles } from '../src/lib/queries/database.js';
 import type { SchemaType } from '../src/lib/schema.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -65,5 +66,43 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 		const copy = ddl.qualify(schema, 'copy');
 		await pool.query(`insert into ${copy} (title) values ('c')`);
 		expect((await pool.query(`select id::text, title from ${copy} order by id`)).rows.map((row) => row.id)).toEqual(['1', '2', '3']);
+	});
+
+	test('policies round-trip: commands drop clauses they cannot have, roles and RLS state read back', async () => {
+		const table = ddl.qualify(schema, 'secured');
+		await executeDdl(pool, `create table ${table} (id int primary key, owner text); alter table ${table} enable row level security;`);
+		const role = (await pool.query('select current_user as role')).rows[0].role as string;
+		await executeDdl(pool, [
+			ddl.createPolicy(table, { name: 'read "own"', command: 'select', permissive: true, roles: [role], using: `owner = current_user`, check: 'ignored' }),
+			ddl.createPolicy(table, { name: 'add', command: 'insert', permissive: false, roles: [], using: 'ignored', check: 'owner is not null' })
+		].join('\n'));
+		const secured = (await listPolicies(pool)).tables.find((entry) => entry.schema === schema && entry.table === 'secured')!;
+		expect(secured).toMatchObject({ enabled: true, forced: false, owner: role });
+		expect(secured.policies).toEqual([
+			{ name: 'add', command: 'insert', permissive: false, roles: ['public'], using: null, check: '(owner IS NOT NULL)' },
+			{ name: 'read "own"', command: 'select', permissive: true, roles: [role], using: '(owner = CURRENT_USER)', check: null }
+		]);
+	});
+
+	test('roles and table privileges round-trip through their builders', async () => {
+		const name = `sb_role_${process.pid}`;
+		const table = ddl.qualify(schema, 'granted');
+		await executeDdl(pool, `create table ${table} (id int primary key);`);
+		await executeDdl(pool, ddl.createRole({ name, login: false, password: '', bypass: true, createdb: false, memberOf: [] }));
+		try {
+			expect((await listRoles(pool)).find((role) => role.name === name)).toMatchObject({ login: false, bypass: true, memberOf: [] });
+			await executeDdl(pool, ddl.grantChanges(table, {}, { [name]: ['SELECT', 'UPDATE'], public: ['SELECT'] }));
+			const grants = async () => (await listPolicies(pool)).tables.find((entry) => entry.schema === schema && entry.table === 'granted')!.grants
+				.map((grant) => `${grant.role}:${grant.privilege}`).sort();
+			expect(await grants()).toEqual(['public:SELECT', `${name}:SELECT`, `${name}:UPDATE`]);
+			await executeDdl(pool, ddl.grantChanges(table, { [name]: ['SELECT', 'UPDATE'], public: ['SELECT'] }, { [name]: ['SELECT', 'DELETE'] }));
+			expect(await grants()).toEqual([`${name}:DELETE`, `${name}:SELECT`]);
+			const old = { name, login: false, bypass: true, createdb: false, memberOf: [] };
+			expect(ddl.alterRole(old, { ...old, password: '' })).toBe('');
+			await executeDdl(pool, ddl.alterRole(old, { ...old, name: `${name}_x`, bypass: false, password: '' }));
+			expect((await listRoles(pool)).find((role) => role.name === `${name}_x`)).toMatchObject({ bypass: false });
+		} finally {
+			await pool.query(`drop table ${table}; drop role if exists ${name}; drop role if exists ${name}_x`);
+		}
 	});
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
+	import { Download, LockKeyhole, LockKeyholeOpen, Plus, Radio, RotateCw, Settings2, Trash2, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { SchemaEditMode } from '#lib/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -7,6 +7,7 @@
 	import InsertRow from './InsertRow.svelte';
 	import FilterBar from './FilterBar.svelte';
 	import SortMenu from './SortMenu.svelte';
+	import RoleMenu from './RoleMenu.svelte';
 
 	let { onedit }: { onedit: (mode: SchemaEditMode, anchor: HTMLElement) => void } = $props();
 	let deleteOpen = $state(false);
@@ -33,6 +34,14 @@
 		<div class="flex flex-wrap items-start gap-2 px-3 py-2">
 			<FilterBar />
 			<div class="ml-auto flex flex-wrap items-center gap-2">
+				{#if editor.table.kind === 'table'}
+					<Button variant="outline" size="sm" class={['text-xs', editor.table.rls && 'text-primary']} disabled={blocked}
+						title="Row-level security, policies and table privileges" onclick={(event) => onedit({ kind: 'access' }, event.currentTarget)}>
+						{#if editor.table.rls}<LockKeyhole />RLS on{:else}<LockKeyholeOpen />RLS off{/if}
+					</Button>
+				{/if}
+				<!-- Shown for RLS tables, and while acting as a role so it can be switched back. -->
+				{#if editor.table.rls || editor.viewAs}<RoleMenu />{/if}
 				<SortMenu />
 				<div class="flex shrink-0">
 					<Button variant="outline" size="icon-sm" class="rounded-r-none" disabled={blocked || !editor.table.columns.length}

@@ -2,7 +2,7 @@ import type pg from 'pg';
 
 import type {
 	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowQuery, RowsArgs, RowsPage,
-	SaveArgs, Table, Values
+	SaveArgs, Table, Values, ViewAs
 } from '../types.js';
 import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
 import { ident, qualify } from '../ddl.js';
@@ -24,7 +24,7 @@ function kindOf(typeName: string, typeKind: string, category: string): ColumnKin
 	return 'text';
 }
 
-type TableRow = { id: string; schema: string; name: string; kind: string; row_count: number };
+type TableRow = { id: string; schema: string; name: string; kind: string; rls: boolean; row_count: number };
 type ColumnRow = {
 	table_id: string;
 	name: string;
@@ -65,7 +65,7 @@ export async function loadMetadata(
 		and n.nspname not in ${SYSTEM_SCHEMAS}
 		and n.nspname !~ '^pg_(toast_)?temp_' ${scope}`;
 	const tables = await db.query<TableRow>(
-			`select c.oid::text as id, n.nspname as schema, c.relname as name, c.relkind as kind,
+			`select c.oid::text as id, n.nspname as schema, c.relname as name, c.relkind as kind, c.relrowsecurity as rls,
 			        c.reltuples as row_count
 			 from pg_class c
 			 join pg_namespace n on n.oid = c.relnamespace
@@ -148,6 +148,7 @@ export async function loadMetadata(
 		schema: table.schema,
 		name: table.name,
 		kind: table.kind === 'v' ? 'view' : table.kind === 'm' ? 'materialized view' : 'table',
+		rls: table.rls,
 		columns: columnsByTable.get(table.id) ?? [],
 		// Views have no statistics; -1 hides the estimate.
 		rowCount: table.kind === 'v' ? -1 : Math.round(Number(table.row_count))
@@ -183,12 +184,23 @@ function primaryKey(table: Table): string[] {
 	return table.columns.filter((column) => column.primaryKey).map((column) => column.name);
 }
 
-export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string }> {
-	const [tables, version] = await Promise.all([
+/** Tables plus what "view as role" needs: the connection role, whether it bypasses RLS, other roles. */
+export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; version: string; role: string; bypass: boolean; roles: string[] }> {
+	const [tables, info] = await Promise.all([
 		cachedTables(pool, true),
-		pool.query<{ version: string }>("select current_setting('server_version') as version")
+		pool.query<{ version: string; role: string; bypass: boolean; roles: string[] }>(`
+			select current_setting('server_version') as version, current_user as role,
+			       (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as bypass,
+			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles`)
 	]);
-	return { tables: [...tables.values()], version: version.rows[0].version };
+	return { tables: [...tables.values()], ...info.rows[0] };
+}
+
+/** Act as `as.role` for the rest of the transaction, with its session settings (RLS testing). */
+export async function actAs(client: pg.PoolClient, as: ViewAs | undefined): Promise<void> {
+	if (!as) return;
+	await client.query(`set local role ${ident(as.role)}`);
+	for (const [name, value] of Object.entries(as.settings)) await client.query('select set_config($1, $2, true)', [name, value]);
 }
 
 /** Parameterized WHERE and deterministic ORDER BY shared by grid pages and CSV exports. */
@@ -227,13 +239,26 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
 	const physical = table.kind !== 'view';
 	if (physical) selected.push('t.xmin', 't.tableoid', 't.ctid');
-	const result = await pool.query<(string | null)[]>({
+	const read = (db: pg.Pool | pg.PoolClient) => db.query<(string | null)[]>({
 		text: `select ${selected.join(', ')} from ${qualify(args.schema, args.table)} t
 			${where} ${order ? `order by ${order}` : ''} limit $${values.length + 1} offset $${values.length + 2}`,
 		values: [...values, args.pageSize + 1, args.page * args.pageSize],
 		rowMode: 'array',
 		types: textTypes
 	});
+	let result;
+	if (!args.as) result = await read(pool);
+	else {
+		const client = await pool.connect();
+		try {
+			await client.query('begin read only');
+			await actAs(client, args.as);
+			result = await read(client);
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+	}
 	const rows: Row[] = result.rows.slice(0, args.pageSize).map((cells, i) => {
 		const values: Values = Object.fromEntries(table.columns.map((column, i) => [column.name, cells[i]]));
 		const [version, relation, ctid] = cells.slice(table.columns.length) as string[];
@@ -269,7 +294,7 @@ function identityWhere(identity: RowIdentity, pkColumns: string[], values: (stri
 
 async function mutate<T>(
 	pool: pg.Pool,
-	args: { schema: string; table: string },
+	args: { schema: string; table: string; as?: ViewAs },
 	operation: (client: pg.PoolClient, table: Table, target: string, pk: string[]) => Promise<T>
 ): Promise<T> {
 	const target = qualify(args.schema, args.table);
@@ -283,6 +308,7 @@ async function mutate<T>(
 		if (!table) throw new Error(`Table ${args.schema}.${args.table} not found`);
 		const pk = primaryKey(table);
 		if (!pk.length) throw new Error('Tables without a primary key are read-only');
+		await actAs(client, args.as);
 		const result = await operation(client, table, target, pk);
 		await client.query('commit');
 		return result;

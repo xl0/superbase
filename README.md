@@ -72,6 +72,8 @@ accordingly.
   transaction. **Insert row** opens a form where empty fields use the column default.
 - Concurrent edits conflict instead of overwriting: rows are matched by primary key and
   version. Tables without a primary key are read-only until you add one.
+- On tables with row-level security, **Role** views and edits rows as another role, with optional
+  session settings (e.g. `app.tenant_id`), so you see what its policies allow.
 - Views and materialized views open read-only (a materialized view's ⋮ menu refreshes its data).
 - **Live** re-reads the visible page every five seconds without disturbing your edits.
 - The download button exports all rows matching the filters as CSV, in grid order.
@@ -110,6 +112,11 @@ The side panel lists the sections:
 
 - **Schema:** a diagram of one schema's tables and foreign keys (including references to other
   schemas); ↗ opens a table.
+- **Policies:** row-level security per table: turn RLS on, off or forced; create, edit or drop
+  policies (command, roles, permissive/restrictive, USING / WITH CHECK); and set which roles may
+  select, insert, update or delete at all. The same panel opens from the table editor (the RLS
+  button or ⋮ → Policies & access).
+- **Roles:** create, edit or drop roles (login and password, BYPASSRLS, create DB, membership).
 - **Enums:** create enum types, rename them or their values, add values, or drop them.
 - **Indexes:** every index per schema, with definitions; drop with a preview.
 - **Performance:** the most expensive statements from `pg_stat_statements`: share of total time,

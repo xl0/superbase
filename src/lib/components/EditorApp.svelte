@@ -21,6 +21,7 @@
 	import SqlEditor from './SqlEditor.svelte';
 	import DatabaseWorkspace from './DatabaseWorkspace.svelte';
 	import Workspace from './Workspace.svelte';
+	import TableAccessPanel from './TableAccessPanel.svelte';
 	import { SqlState } from '#lib/state/sql.svelte.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 
@@ -63,18 +64,21 @@
 			void goto(target, { replace: !named, reset: false });
 		});
 	});
-	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' }>; table: Table; anchor: HTMLElement | null } | null>(null);
+	let schemaEdit = $state.raw<{ mode: Exclude<SchemaEditMode, { kind: 'exportCsv' | 'access' }>; table: Table; anchor: HTMLElement | null } | null>(null);
+	let accessTable = $state.raw<Table | null>(null);
 
 	/** Menus pass their own table, so actions on an inactive sidebar table never retarget the grid. */
 	function openSchema(mode: SchemaEditMode, anchor?: HTMLElement | null, table: Table = editor.table) {
 		if (editor.navigationBlocked || editor.loading || exportOpen) return;
 		const trigger = anchor ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 		if (mode.kind === 'exportCsv') {
-			csvExport.start({ connection: editor.connection, schema: table.schema, table: table.name, ...(mode.query ? { query: mode.query } : {}) }, table, !!mode.options, trigger);
+			csvExport.start({ connection: editor.connection, schema: table.schema, table: table.name, ...(mode.query ? { query: mode.query } : {}),
+				...(editor.viewAs ? { as: editor.viewAs } : {}) }, table, !!mode.options, trigger);
 			return;
 		}
 		editor.schemaEditing = true;
-		schemaEdit = { mode, anchor: trigger, table };
+		if (mode.kind === 'access') accessTable = table;
+		else schemaEdit = { mode, anchor: trigger, table };
 	}
 
 	const liveActive = () => document.visibilityState === 'visible' && !connectionsActive && !exportOpen && workspace === 'tables' && !sql.busy;
@@ -145,7 +149,7 @@
 						aria-current={workspace === 'sql' ? 'page' : undefined} disabled={editor.navigationBlocked} href={sqlHref(db)}>
 						<SquareTerminal class={sql.busy || sql.transaction === 'transaction' || sql.transaction === 'failed' ? 'text-amber-300' : ''} />
 					</Button>
-					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, enums, performance, activity, extensions, configuration"
+					<Button variant={workspace === 'database' ? 'secondary' : 'ghost'} size="icon-sm" aria-label="Database" title="Database: schema, indexes, enums, policies, roles, performance, activity, extensions, configuration"
 						aria-current={workspace === 'database' ? 'page' : undefined} disabled={editor.navigationBlocked} href={databaseHref(db, databaseSection)}><Server /></Button>
 				</nav>
 				<!-- Hidden workspaces stay mounted to keep drafts, selections and scroll positions. -->
@@ -219,3 +223,4 @@
 </div>
 <CsvExport bind:this={csvExport} bind:open={exportOpen} />
 {#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} table={schemaEdit.table} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}
+{#if accessTable}<TableAccessPanel table={accessTable} onclose={() => { accessTable = null; editor.schemaEditing = false; }} />{/if}

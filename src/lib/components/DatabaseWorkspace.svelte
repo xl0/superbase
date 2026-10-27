@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Activity, Gauge, List, ListTree, Network, Puzzle, SlidersHorizontal } from '@lucide/svelte';
+	import { Activity, Gauge, List, ListTree, Network, Puzzle, ShieldCheck, SlidersHorizontal, Users } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { databaseHref } from '#lib/links.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -8,6 +8,8 @@
 	import DatabaseEnums from './DatabaseEnums.svelte';
 	import DatabaseExtensions from './DatabaseExtensions.svelte';
 	import DatabaseIndexes from './DatabaseIndexes.svelte';
+	import DatabasePolicies from './DatabasePolicies.svelte';
+	import DatabaseRoles from './DatabaseRoles.svelte';
 	import DatabasePerformance from './DatabasePerformance.svelte';
 	import SchemaDiagram from './SchemaDiagram.svelte';
 	import Workspace from './Workspace.svelte';
@@ -16,6 +18,8 @@
 		schema: { label: 'Schema', icon: Network },
 		indexes: { label: 'Indexes', icon: ListTree },
 		enums: { label: 'Enums', icon: List },
+		policies: { label: 'Policies', icon: ShieldCheck },
+		roles: { label: 'Roles', icon: Users },
 		performance: { label: 'Performance', icon: Gauge },
 		activity: { label: 'Activity', icon: Activity },
 		extensions: { label: 'Extensions', icon: Puzzle },
@@ -42,6 +46,8 @@
 		{#if section === 'schema'}<SchemaDiagram />
 		{:else if section === 'indexes'}<DatabaseIndexes />
 		{:else if section === 'enums'}<DatabaseEnums />
+		{:else if section === 'policies'}<DatabasePolicies />
+		{:else if section === 'roles'}<DatabaseRoles />
 		{:else if section === 'performance'}<DatabasePerformance />
 		{:else if section === 'activity'}<DatabaseActivity />
 		{:else if section === 'extensions'}<DatabaseExtensions />

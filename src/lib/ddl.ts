@@ -1,6 +1,7 @@
 /** Pure DDL generation for the schema forms. Output is previewed, then run as one transaction. */
 import type { Table } from './types.js';
 import type { ReferentialAction, SchemaColumn, SchemaType } from './schema.js';
+import type { PolicyCommand } from './database.js';
 
 export type ColumnDefault =
 	| { kind: 'keep' | 'none' | 'identity' }
@@ -126,6 +127,57 @@ export function duplicateTable(source: Table, name: string, includeRows: boolean
 			statements.push(`select setval(pg_get_serial_sequence(${literal(to)}, ${literal(column.name)}), coalesce(max(${ident(column.name)}), 0) + 1, false) from ${to};`);
 		}
 	}
+	return statements.join('\n');
+}
+
+export type PolicySpec = { name: string; command: PolicyCommand; permissive: boolean; roles: string[]; using: string; check: string };
+
+/** `public` is a keyword, not a role name to quote. */
+const roleSql = (role: string) => role === 'public' ? 'public' : ident(role);
+
+/** CREATE POLICY; insert has no USING and select/delete no WITH CHECK, so those are left out. */
+export function createPolicy(table: string, spec: PolicySpec): string {
+	const using = spec.command !== 'insert' && spec.using.trim() ? ` using (${spec.using.trim()})` : '';
+	const check = spec.command !== 'select' && spec.command !== 'delete' && spec.check.trim() ? ` with check (${spec.check.trim()})` : '';
+	const roles = spec.roles.length ? spec.roles.map(roleSql).join(', ') : 'public';
+	return `create policy ${ident(spec.name)} on ${table} as ${spec.permissive ? 'permissive' : 'restrictive'} for ${spec.command} to ${roles}${using}${check};`;
+}
+
+export const TABLE_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as const;
+
+/** GRANT/REVOKE statements turning `before` into `after` (role → privileges); other privileges are left alone. */
+export function grantChanges(table: string, before: Record<string, string[]>, after: Record<string, string[]>): string {
+	const statements: string[] = [];
+	for (const role of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
+		const had = before[role] ?? [], has = after[role] ?? [];
+		const added = TABLE_PRIVILEGES.filter((privilege) => has.includes(privilege) && !had.includes(privilege));
+		const removed = TABLE_PRIVILEGES.filter((privilege) => had.includes(privilege) && !has.includes(privilege));
+		if (added.length) statements.push(`grant ${added.join(', ').toLowerCase()} on ${table} to ${roleSql(role)};`);
+		if (removed.length) statements.push(`revoke ${removed.join(', ').toLowerCase()} on ${table} from ${roleSql(role)};`);
+	}
+	return statements.join('\n');
+}
+
+export type RoleSpec = { name: string; login: boolean; password: string; bypass: boolean; createdb: boolean; memberOf: string[] };
+
+const roleOptions = (spec: RoleSpec) =>
+	`${spec.login ? 'login' : 'nologin'} ${spec.bypass ? 'bypassrls' : 'nobypassrls'} ${spec.createdb ? 'createdb' : 'nocreatedb'}`
+	+ (spec.login && spec.password ? ` password ${literal(spec.password)}` : '');
+
+export function createRole(spec: RoleSpec): string {
+	return `create role ${ident(spec.name)} with ${roleOptions(spec)}${spec.memberOf.length ? ` in role ${spec.memberOf.map(ident).join(', ')}` : ''};`;
+}
+
+/** Changed attributes (or a new password), membership as grant/revoke, and a rename last so earlier statements use the old name. */
+export function alterRole(old: Omit<RoleSpec, 'password'>, spec: RoleSpec): string {
+	const role = ident(old.name);
+	const statements: string[] = [];
+	if (spec.password || spec.login !== old.login || spec.bypass !== old.bypass || spec.createdb !== old.createdb) {
+		statements.push(`alter role ${role} with ${roleOptions(spec)};`);
+	}
+	for (const parent of spec.memberOf.filter((name) => !old.memberOf.includes(name))) statements.push(`grant ${ident(parent)} to ${role};`);
+	for (const parent of old.memberOf.filter((name) => !spec.memberOf.includes(name))) statements.push(`revoke ${ident(parent)} from ${role};`);
+	if (spec.name !== old.name) statements.push(`alter role ${role} rename to ${ident(spec.name)};`);
 	return statements.join('\n');
 }
 

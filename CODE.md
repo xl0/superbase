@@ -66,6 +66,9 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 - Writes run in one transaction with a ROW EXCLUSIVE lock and fresh metadata. Updates/deletes
   match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.
   Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
+- "View as role" (`TableTarget.as`, `editor.viewAs`): row reads, writes and CSV export run in a
+  transaction after `actAs` (`set local role` + `set_config(…, true)`); metadata and locks stay with
+  the connection role. `RoleMenu` shows on RLS tables (`Table.rls`) or while a role is active.
 - Views and materialized views (`Table.kind`) are listed and read-only. Plain views have no
   system columns: rows are read without xmin/tableoid/ctid, keyed by position, and ordered only
   by user sorts (no tiebreaker, so ORDER BY may be omitted).
@@ -112,6 +115,15 @@ asking backend, read in one statement with the server-wide connection count; blo
 pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
 session's value plus database and current-role defaults from `pg_db_role_setting`.
+Policies: `listPolicies` returns tables with RLS state, policies (`pg_policy`, roles resolved, `public`
+for none) and non-owner grants (`aclexplode(relacl)`), the roles a policy can name, and whether
+`current_user` bypasses RLS (superuser/BYPASSRLS; owners of unforced tables too). `TableAccess`
+renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE grid) for both
+`DatabasePolicies` and the table editor's `TableAccessPanel` (`SchemaEditMode` `access`).
+`ddl.createPolicy` omits USING for insert and WITH CHECK for select/delete; editing a policy is drop
++ create in one transaction; `ddl.grantChanges` diffs the grid into grant/revoke, leaving other
+privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (attributes only
+when changed, membership as grant/revoke, rename last); the preview masks passwords.
 Enums (`listEnums`, with columns using each) are edited in place by `ddl.enumChanges` (rename values,
 append values, rename the type last; Postgres cannot remove values). `DatabaseIndexes`/`DatabaseEnums`/`DatabaseExtensions`/`DatabaseConfig` preview `drop index`, `create/alter/drop extension` and
 `alter database|role … set|reset` SQL and run it through `executeDdl`. `search_path` values are

@@ -33,6 +33,8 @@ export interface Table {
 	name: string;
 	/** Views and materialized views are read-only; plain views have no system columns (xmin, ctid). */
 	kind: 'table' | 'view' | 'materialized view';
+	/** Row-level security is enabled. */
+	rls: boolean;
 	columns: Column[];
 	/** Catalog estimate, not an exact count. */
 	rowCount: number;
@@ -85,6 +87,14 @@ export interface TableTarget {
 	connection: string;
 	schema: string;
 	table: string;
+	/** Read and write rows as another role (RLS testing); metadata is still read as the connection role. */
+	as?: ViewAs;
+}
+
+/** Applied per transaction: `set local role` plus `set_config(name, value, true)` for each setting. */
+export interface ViewAs {
+	role: string;
+	settings: Record<string, string>;
 }
 
 export const FILTER_OPERATORS = {

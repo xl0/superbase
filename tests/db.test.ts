@@ -241,4 +241,28 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 			}
 		}
 	});
+
+	test('acting as a role applies its RLS policies and session settings to reads and writes', async () => {
+		const role = `sb_test_role_${process.pid}`;
+		const table = `"${schema}".owned`;
+		await pool.query(`
+			create role ${role};
+			grant usage on schema "${schema}" to ${role};
+			create table ${table} (id int primary key, owner text not null);
+			insert into ${table} values (1, 'ann'), (2, 'bob');
+			alter table ${table} enable row level security;
+			create policy mine on ${table} to ${role}
+			  using (owner = current_setting('app.who', true)) with check (owner = current_setting('app.who', true));
+			grant select, insert, update, delete on ${table} to ${role}`);
+		await listTables(pool);
+		try {
+			const as = { role, settings: { 'app.who': 'ann' } };
+			expect((await rows('owned', { as })).rows.map((row) => row.values.id)).toEqual(['1']);
+			expect((await rows('owned')).rows).toHaveLength(2);
+			await saveTable(pool, { ...target('owned'), as, updates: [], inserts: [{ id: '3', owner: 'ann' }] });
+			await expect(saveTable(pool, { ...target('owned'), as, updates: [], inserts: [{ id: '4', owner: 'bob' }] })).rejects.toThrow('row-level security');
+		} finally {
+			await pool.query(`drop table ${table}; drop owned by ${role}; drop role ${role}`);
+		}
+	});
 });

@@ -16,7 +16,8 @@
 
 	/** One schema's tables plus tables they reference elsewhere; referenced tables lay out to the left. */
 	function diagram(tables: Table[], schema: string): { nodes: TableNode[]; edges: Edge[] } {
-		const shown = tables.filter((table) => table.schema === schema);
+		// Tables only: views carry no foreign keys.
+		const shown = tables.filter((table) => table.schema === schema && table.kind === 'table');
 		const edges: Edge[] = [];
 		for (const table of [...shown]) {
 			for (const column of table.columns) {

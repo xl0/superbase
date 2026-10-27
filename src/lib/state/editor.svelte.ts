@@ -4,7 +4,7 @@ import type { SchemaChange } from '#lib/schema.js';
 import type { TableView } from '#lib/view.js';
 import { editable, tableKey, writable, type CellValue, type Column, type Row, type RowIdentity, type RowFilter, type SaveArgs, type Sort, type Table, type Values } from '#lib/types.js';
 
-const EMPTY_TABLE: Table = { schema: '', name: '', columns: [], rowCount: 0 };
+const EMPTY_TABLE: Table = { schema: '', name: '', kind: 'table', columns: [], rowCount: 0 };
 
 // Plain copies: identities are kept in $state and sent to the server later.
 const copyIdentity = (identity: RowIdentity): RowIdentity => ({ ...identity, pk: { ...identity.pk } });

@@ -31,6 +31,8 @@ export interface Column {
 export interface Table {
 	schema: string;
 	name: string;
+	/** Views and materialized views are read-only; plain views have no system columns (xmin, ctid). */
+	kind: 'table' | 'view' | 'materialized view';
 	columns: Column[];
 	/** Catalog estimate, not an exact count. */
 	rowCount: number;

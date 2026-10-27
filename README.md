@@ -72,6 +72,7 @@ accordingly.
   transaction. **Insert row** opens a form where empty fields use the column default.
 - Concurrent edits conflict instead of overwriting: rows are matched by primary key and
   version. Tables without a primary key are read-only until you add one.
+- Views and materialized views open read-only (a materialized view's ⋮ menu refreshes its data).
 - **Live** re-reads the visible page every five seconds without disturbing your edits.
 - The download button exports all rows matching the filters as CSV, in grid order.
 

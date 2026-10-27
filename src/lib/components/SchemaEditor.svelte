@@ -30,9 +30,9 @@
 	const id = $props.id();
 	const creating = intent.kind === 'createTable';
 	const qualified = ddl.qualify(table.schema, table.name);
-	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: 'Delete table', duplicateTable: 'Duplicate table',
+	const title = { createTable: 'Create table', renameTable: 'Rename table', dropTable: `Delete ${table.kind}`, duplicateTable: 'Duplicate table',
 		addColumn: 'Add column', alterColumn: 'Edit column', dropColumn: 'Delete column', addPrimaryKey: 'Add primary key',
-		indexes: 'Indexes', constraints: 'Constraints' }[intent.kind];
+		indexes: 'Indexes', constraints: 'Constraints', refreshView: 'Refresh materialized view' }[intent.kind];
 	let catalog = $state<SchemaCatalog | null>(null);
 	let definition = $state<SchemaDefinition | null>(null);
 	let schema = $state(table.schema);
@@ -66,7 +66,9 @@
 			case 'duplicateTable':
 				return name ? { sql: ddl.duplicateTable(table, name, includeRows), select: { schema: table.schema, table: name } } : null;
 			case 'dropTable':
-				return confirmation === table.name ? { sql: `drop table ${qualified};`, destructive: true } : null;
+				return confirmation === table.name ? { sql: `drop ${table.kind} ${qualified};`, destructive: true } : null;
+			case 'refreshView':
+				return { sql: `refresh materialized view ${qualified};` };
 			case 'addColumn':
 				return columns[0]?.name ? { sql: ddl.addColumn(qualified, columns[0], types) } : null;
 			case 'alterColumn': {
@@ -201,7 +203,9 @@
 			{/if}
 			{#if intent.kind === 'dropTable' || intent.kind === 'dropColumn'}
 				{@const target = intent.kind === 'dropColumn' ? intent.column : table.name}
-				<p class="text-sm text-destructive">{intent.kind === 'dropTable' ? 'The table and all its data will be permanently deleted.' : 'The column and its data will be permanently deleted, along with its indexes and constraints.'}</p>
+				<p class="text-sm text-destructive">{intent.kind === 'dropColumn' ? 'The column and its data will be permanently deleted, along with its indexes and constraints.'
+					: table.kind === 'view' ? 'The view will be permanently deleted; the tables it reads from are not affected.'
+					: `The ${table.kind} and all its data will be permanently deleted.`}</p>
 				<div class="space-y-2">
 					<Label for={`${id}-confirm`} class="break-all text-xs">Type {target} to confirm</Label>
 					<Input id={`${id}-confirm`} bind:value={confirmation} disabled={saving} autocomplete="off" spellcheck={false} class="font-mono text-xs" />

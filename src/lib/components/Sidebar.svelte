@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Plus, Search, Table2 } from '@lucide/svelte';
+	import { Eye, Layers, Plus, Search, Table2 } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import { tablesHref } from '#lib/links.js';
@@ -52,7 +52,8 @@
 			<Button variant="ghost" size="sm" disabled={editor.busy} aria-current={active ? 'page' : undefined}
 				href={tablesHref(page.params.db!, active ? editor.view : { schema: table.schema, table: table.name, filters: [], sort: [], page: 0, reference: null })}
 				class="min-w-0 flex-1 justify-start gap-2 px-2 text-xs font-normal">
-				<Table2 class={['size-3.5', active && 'text-foreground']} />
+				{@const Icon = table.kind === 'view' ? Eye : table.kind === 'materialized view' ? Layers : Table2}
+				<Icon class={['size-3.5', active && 'text-foreground']} aria-label={table.kind === 'table' ? undefined : table.kind} />
 				<span class="truncate">{table.name}</span>
 			</Button>
 			<TableMenu {table} {onedit} />

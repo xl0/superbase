@@ -26,7 +26,7 @@ export async function exportCsv(pool: pg.Pool, target: CsvExportArgs, signal?: A
 			}
 			if (target.query) {
 				const query = rowSelection(table, target.query);
-				selection = `${query.where} order by ${query.order}`;
+				selection = `${query.where} ${query.order ? `order by ${query.order}` : ''}`;
 				values = query.values;
 			}
 		}

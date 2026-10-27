@@ -41,8 +41,10 @@
 		{#if sort}<DropdownMenu.Item disabled={blocked} onSelect={() => order(null)}><X />Remove sort</DropdownMenu.Item>{/if}
 		<DropdownMenu.Separator />
 		<DropdownMenu.Item onSelect={() => void copyName()}><Copy />Copy name</DropdownMenu.Item>
-		<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'alterColumn', column: column.name }, trigger)}><Pencil />Edit column</DropdownMenu.Item>
-		<DropdownMenu.Separator />
-		<DropdownMenu.Item variant="destructive" disabled={blocked} onSelect={() => onedit({ kind: 'dropColumn', column: column.name }, trigger)}><Trash2 />Delete column</DropdownMenu.Item>
+		{#if editor.table.kind === 'table'}
+			<DropdownMenu.Item disabled={blocked} onSelect={() => onedit({ kind: 'alterColumn', column: column.name }, trigger)}><Pencil />Edit column</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item variant="destructive" disabled={blocked} onSelect={() => onedit({ kind: 'dropColumn', column: column.name }, trigger)}><Trash2 />Delete column</DropdownMenu.Item>
+		{/if}
 	</DropdownMenu.Content>
 </DropdownMenu.Root>

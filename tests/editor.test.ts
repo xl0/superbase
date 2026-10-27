@@ -13,7 +13,7 @@ async function fixture() {
 	let ddl: ((args: any) => Promise<void>) | undefined;
 	let read: ((args: any) => Promise<{ rows: Row[]; hasMore: boolean }>) | undefined;
 	const column = (name: string, primaryKey = false) => ({ name, primaryKey, type: 'text', kind: 'text' as const, nullable: !primaryKey, generated: false, identity: null, defaultValue: null });
-	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
+	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, kind: 'table' as const, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
 	const row = (id: string, value = 'original'): Row => ({ key: id, values: { id, value }, identity: { pk: { id }, version: '1', relation: '123' } });
 	const api = {
 		database: () => ({ refresh: async () => {}, current: { tables, version: '18' } }),

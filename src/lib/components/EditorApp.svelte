@@ -187,7 +187,9 @@
 								</div>
 							{/if}
 							{#if !editor.tableEditable}
-								<p class="border-b bg-muted/50 px-3 py-2 text-xs text-muted-foreground">Read-only: this table has no primary key. Add one from the table’s ⋮ menu to enable editing.</p>
+								<p class="border-b bg-muted/50 px-3 py-2 text-xs text-muted-foreground">{editor.table.kind === 'view' ? 'Read-only: this is a view.'
+									: editor.table.kind === 'materialized view' ? 'Read-only: this is a materialized view. Refresh its data from the ⋮ menu.'
+									: 'Read-only: this table has no primary key. Add one from the table’s ⋮ menu to enable editing.'}</p>
 							{/if}
 							<div class="relative min-h-0 flex-1" aria-busy={editor.loading || editor.busy}>
 								{#key editor.tableKey}

@@ -24,7 +24,7 @@ function kindOf(typeName: string, typeKind: string, category: string): ColumnKin
 	return 'text';
 }
 
-type TableRow = { id: string; schema: string; name: string; row_count: number };
+type TableRow = { id: string; schema: string; name: string; kind: string; row_count: number };
 type ColumnRow = {
 	table_id: string;
 	name: string;
@@ -61,11 +61,11 @@ export async function loadMetadata(
 ): Promise<Table[]> {
 	const params = filter ? [filter.schema, filter.table] : [];
 	const scope = filter ? 'and n.nspname = $1 and c.relname = $2' : '';
-	const visible = `c.relkind in ('r', 'p')
+	const visible = `c.relkind in ('r', 'p', 'v', 'm')
 		and n.nspname not in ${SYSTEM_SCHEMAS}
 		and n.nspname !~ '^pg_(toast_)?temp_' ${scope}`;
 	const tables = await db.query<TableRow>(
-			`select c.oid::text as id, n.nspname as schema, c.relname as name,
+			`select c.oid::text as id, n.nspname as schema, c.relname as name, c.relkind as kind,
 			        c.reltuples as row_count
 			 from pg_class c
 			 join pg_namespace n on n.oid = c.relnamespace
@@ -147,8 +147,10 @@ export async function loadMetadata(
 	return tables.rows.map((table) => ({
 		schema: table.schema,
 		name: table.name,
+		kind: table.kind === 'v' ? 'view' : table.kind === 'm' ? 'materialized view' : 'table',
 		columns: columnsByTable.get(table.id) ?? [],
-		rowCount: Math.round(Number(table.row_count))
+		// Views have no statistics; -1 hides the estimate.
+		rowCount: table.kind === 'v' ? -1 : Math.round(Number(table.row_count))
 	}));
 }
 
@@ -211,8 +213,9 @@ export function rowSelection(table: Table, args: RowQuery) {
 	for (const name of primaryKey(table)) {
 		if (!args.sort.some((rule) => rule.column === name)) order.push(`${column(name)} asc`);
 	}
-	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only.
-	order.push('t.tableoid asc', 't.ctid asc');
+	// Inheritance can repeat primary keys across relations. Keyless tables use physical order only;
+	// plain views have neither, so without a user sort their order is the view's own (may be empty).
+	if (table.kind !== 'view') order.push('t.tableoid asc', 't.ctid asc');
 	return { where: clauses.length ? `where ${clauses.join(' and ')}` : '', order: order.join(', '), values };
 }
 
@@ -222,23 +225,24 @@ export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage>
 	const pkColumns = primaryKey(table);
 	const { where, order, values } = rowSelection(table, args);
 	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
-	selected.push('t.xmin', 't.tableoid', 't.ctid');
+	const physical = table.kind !== 'view';
+	if (physical) selected.push('t.xmin', 't.tableoid', 't.ctid');
 	const result = await pool.query<(string | null)[]>({
 		text: `select ${selected.join(', ')} from ${qualify(args.schema, args.table)} t
-			${where} order by ${order} limit $${values.length + 1} offset $${values.length + 2}`,
+			${where} ${order ? `order by ${order}` : ''} limit $${values.length + 1} offset $${values.length + 2}`,
 		values: [...values, args.pageSize + 1, args.page * args.pageSize],
 		rowMode: 'array',
 		types: textTypes
 	});
-	const rows: Row[] = result.rows.slice(0, args.pageSize).map((cells) => {
+	const rows: Row[] = result.rows.slice(0, args.pageSize).map((cells, i) => {
 		const values: Values = Object.fromEntries(table.columns.map((column, i) => [column.name, cells[i]]));
 		const [version, relation, ctid] = cells.slice(table.columns.length) as string[];
 		const pk = Object.fromEntries(pkColumns.map((name) => [name, values[name] as string]));
 		return {
 			// Display key for this physical row version, not a durable logical identifier:
 			// updates/rewrites can change ctid; xmin distinguishes reused tuple slots.
-			// Mutations use identity only, never this key or ctid.
-			key: JSON.stringify([relation, ctid, version]),
+			// Mutations use identity only, never this key or ctid. View rows (read-only) use their position.
+			key: physical ? JSON.stringify([relation, ctid, version]) : JSON.stringify(['row', args.page * args.pageSize + i]),
 			values,
 			identity: pkColumns.length ? { pk, version, relation } : null
 		};

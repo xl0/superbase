@@ -55,7 +55,7 @@ export interface SchemaDefinition {
 }
 
 export type SchemaEditMode =
-	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'duplicateTable' | 'addColumn' | 'addPrimaryKey' | 'indexes' | 'constraints' }
+	| { kind: 'createTable' | 'renameTable' | 'dropTable' | 'duplicateTable' | 'addColumn' | 'addPrimaryKey' | 'indexes' | 'constraints' | 'refreshView' }
 	| { kind: 'alterColumn' | 'dropColumn'; column: string }
 	| { kind: 'exportCsv'; query?: RowQuery; options?: boolean };
 

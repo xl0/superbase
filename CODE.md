@@ -66,6 +66,9 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 - Writes run in one transaction with a ROW EXCLUSIVE lock and fresh metadata. Updates/deletes
   match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.
   Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
+- Views and materialized views (`Table.kind`) are listed and read-only. Plain views have no
+  system columns: rows are read without xmin/tableoid/ctid, keyed by position, and ordered only
+  by user sorts (no tiebreaker, so ORDER BY may be omitted).
 
 ## Schema editing
 
@@ -205,5 +208,5 @@ SQL sessions, CSV and the production HTTP boundary.
 - `src/routes/db/[db]` — app routes; `src/routes/export`, `src/routes/sql/close` — non-remote endpoints.
 - `src/lib/view.ts` (URL hash encoding), `src/lib/links.ts` (route builders).
 
-Not supported: views, OR filters, saved SQL history, enum/schema management, replacing an
+Not supported: editing views, OR filters, saved SQL history, schema management, replacing an
 existing primary key.

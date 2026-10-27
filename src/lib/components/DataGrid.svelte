@@ -228,7 +228,7 @@
 					</div>
 				{/each}
 				<div class="header-cell add-column flex items-center justify-center" role="columnheader" aria-label="Add column">
-					<Button variant="ghost" size="icon-xs" aria-label="Add column" title="Add column" disabled={editor.navigationBlocked || editor.loading}
+					<Button variant="ghost" size="icon-xs" aria-label="Add column" title="Add column" disabled={editor.navigationBlocked || editor.loading || table.kind !== 'table'}
 						onclick={(event) => onedit({ kind: 'addColumn' }, event.currentTarget)}><Plus /></Button>
 				</div>
 			</div>

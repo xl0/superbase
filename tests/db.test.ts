@@ -225,4 +225,20 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		await expect(deleteRows(pool, { ...target('keyless'), identities: [{ pk: {}, version: '1', relation: '1' }] })).rejects.toThrow('read-only');
 	});
 
+	test('plain and materialized views read as read-only tables, with and without a sort', async () => {
+		await pool.query(`
+			create view "${schema}".exact_view as select id, amount from "${schema}".exact;
+			create materialized view "${schema}".exact_matview as select id, amount from "${schema}".exact`);
+		const { tables } = await listTables(pool);
+		const kinds = Object.fromEntries(tables.filter((table) => table.schema === schema).map((table) => [table.name, table.kind]));
+		expect(kinds).toMatchObject({ exact: 'table', exact_view: 'view', exact_matview: 'materialized view' });
+		for (const name of ['exact_view', 'exact_matview']) {
+			for (const sort of [[], [{ column: 'id', direction: 'desc' as const }]]) {
+				const page = await rows(name, { sort });
+				expect(page.rows.length).toBeGreaterThan(0);
+				expect(page.rows.every((row) => row.identity === null)).toBe(true);
+				expect(new Set(page.rows.map((row) => row.key)).size).toBe(page.rows.length);
+			}
+		}
+	});
 });

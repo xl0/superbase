@@ -93,3 +93,12 @@ select (array['page_view','signup','login','checkout'])[1 + (g % 4)],
        jsonb_build_object('path', '/', 'ms', g % 2000),
        now() - (g || ' minutes')::interval
 from generate_series(1, 5000) g;
+
+create view public.post_authors as
+select p.id, p.title, p.published, u.full_name as author, u.email
+from public.posts p join public.users u on u.id = p.author_id;
+
+create materialized view public.posts_per_user as
+select u.id as user_id, u.full_name, count(p.id) as posts, coalesce(sum(p.views), 0) as views
+from public.users u left join public.posts p on p.author_id = u.id
+group by u.id, u.full_name;

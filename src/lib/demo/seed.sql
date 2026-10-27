@@ -69,4 +69,13 @@ from orders o join products p on (o.id * 7 + p.id * 3) % 5 = 0;
 update orders o set total = s.sum from (
   select oi.order_id, sum(oi.quantity * p.price) as sum from order_items oi join products p on p.id = oi.product_id group by 1
 ) s where s.order_id = o.id;
+create view customer_orders as
+select c.name, c.country, count(o.id) as orders, sum(o.total) as spent
+from customers c left join orders o on o.customer_id = c.id
+group by c.id, c.name, c.country;
+
+create materialized view product_sales as
+select p.name, p.category, sum(oi.quantity) as units, sum(oi.quantity * p.price) as revenue
+from products p join order_items oi on oi.product_id = p.id
+group by p.id, p.name, p.category;
 analyze;

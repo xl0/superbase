@@ -36,6 +36,7 @@
 - Resetting query statistics works when pg_stat_statements is installed in a schema outside the search path.
 - Enums count array columns (`mood[]`) among the columns using them.
 - Docker images install `pg` and its dependencies at the lockfile's versions.
+- Connecting with a wrong password to a database the server already has open fails instead of reusing the open connection; new working credentials replace it.
 
 ## [0.2.0] - 2026-10-25
 

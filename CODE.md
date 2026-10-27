@@ -27,7 +27,9 @@ operators) — for correctness, not as a security boundary.
 
 `connections.ts` maps a key, `host:port/database · user · sslmode` (no password, from pg's own
 URL parsing), to `{ info, pool, sql }`. `connect` (a POST: the only request with a password)
-opens or reuses that key's pool after a test query and returns `info`; every other request
+reuses that key's pool only for the same password; otherwise it opens one, runs a test query and
+replaces the old pool (closing its SQL sessions; realtime streams reconnect), so a wrong password
+never "connects". It returns `info`; every other request
 carries the key of the database its page shows, so it can only act on that one, and tabs on
 different databases are independent. An unknown key (server restarted) asks to reload; the
 route then reconnects the saved profile. Idle pools hold no clients, so pools are never closed.
@@ -73,12 +75,13 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
   match PK + tableoid + xmin and require rowCount 1, so concurrent changes conflict and roll back.
   Inserts send sparse values: omitted = DEFAULT. Keyless tables are read-only.
 - Realtime (opt-in per table, `Table.realtime`): `ddl.realtimeSql` adds a statement-level
-  `superbase_realtime` trigger calling `__superbase.notify_change()` (the tool-owned schema; dropping
+  `superbase_realtime` trigger calling `__superbase.notify_change()` (created once, by whichever role
+  comes first, with USAGE for all, so other roles can attach it; the tool-owned schema; dropping
   it with cascade, e.g. from Database → Schemas, removes every realtime trigger), which `pg_notify`s channel
   `superbase` with schema/table/op only. `connections.subscribeChanges` keeps one LISTEN client per
   database while subscribed; `/events?connection=<key>` streams it as SSE. `EditorApp` opens one
   EventSource while any table has realtime and refetches the open table through `editor.poll`
-  (coalesced); the 5 s poll then runs only every 30 s as a safety net. Not in the static demo.
+  (a poll asked for mid-poll runs again after it, so bursts coalesce and none is lost); the 5 s poll then runs only every 30 s as a safety net. Not in the static demo.
   Self-check: after LISTEN the server notifies itself through the pool; no echo within 5 s (e.g. a
   transaction-mode pooler) marks the connection `realtimeUnavailable`, the stream sends an
   `unavailable` event and editors keep polling (`editor.realtimeIssue` explains why).

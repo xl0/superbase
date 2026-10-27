@@ -212,7 +212,7 @@
 		</Popover.Content>
 </Popover.Root>
 
-<ResizableSheet open={expanded} onOpenChange={(open) => { if (!open && !saving) onclose(); }} bind:ref={panel} label="Resize cell side panel"
+<ResizableSheet open={expanded} onOpenChange={(open) => { if (!open && !saving && (readOnly || (value === baseline && !referenceChanges) || window.confirm('Discard this edit?'))) onclose(); }} bind:ref={panel} label="Resize cell side panel"
 	aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} class="gap-3 p-5"
 	onEscapeKeydown={(event) => { if (saving) event.preventDefault(); }} onOpenAutoFocus={focusField}
 	onCloseAutoFocus={(event) => event.preventDefault()} onkeydown={keydown}>

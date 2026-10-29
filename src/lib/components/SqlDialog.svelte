@@ -31,7 +31,8 @@
 	const id = $props.id();
 	let applying = $state(false);
 	let error = $state('');
-	$effect(() => { if (open) untrack(() => error = ''); });
+	// A new opening or a changed statement makes the last error stale.
+	$effect(() => { if (open) { sql; untrack(() => error = ''); } });
 
 	async function apply() {
 		if (applying || !sql || disabled) return;
@@ -54,8 +55,8 @@
 		</Dialog.Header>
 		<form id={`${id}-form`} class="min-h-0 space-y-4 overflow-y-auto p-1" onsubmit={(event) => { event.preventDefault(); void apply(); }}>
 			<!-- Fields can't change the statement while it runs. -->
-			<fieldset disabled={applying} class="contents">{@render children?.()}</fieldset>
-			{#if sql}<pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{preview ?? sql}</pre>{/if}
+			{#if children}<fieldset disabled={applying} class="min-w-0 space-y-4">{@render children()}</fieldset>{/if}
+			{#if sql}<pre class="whitespace-pre-wrap wrap-anywhere rounded-md bg-muted p-2 font-mono text-xs">{preview ?? sql}</pre>{/if}
 			{#if error}<p role="alert" class="text-xs break-words text-destructive">{error}</p>{/if}
 		</form>
 		<Dialog.Footer>

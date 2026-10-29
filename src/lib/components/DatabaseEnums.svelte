@@ -9,7 +9,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
-	import SchemaFilter from './SchemaFilter.svelte';
+	import SchemaFilter, { picked } from './SchemaFilter.svelte';
 	import SqlDialog from './SqlDialog.svelte';
 
 	/** A value row in the form: `original` null means new (appended). */
@@ -17,7 +17,7 @@
 	const id = $props.id();
 	let list = $state.raw<EnumType[] | null>(null);
 	let error = $state('');
-	let schema = $state(editor.activeSchema || 'public');
+	let schema = $state(picked.schema || editor.activeSchema || 'public');
 	let query = $state('');
 	/** The type being edited, or 'new'; null when no form is open. */
 	let editing = $state.raw<EnumType | 'new' | null>(null);

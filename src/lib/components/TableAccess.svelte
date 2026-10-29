@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { Policy, PolicyCommand, PolicyTable } from '#lib/database.js';
@@ -13,20 +14,23 @@
 	import SqlDialog from './SqlDialog.svelte';
 
 	/** One table's access: RLS switches, policies and table privileges. Used by Database → Policies and the table editor's panel. */
-	let { table, privilegesOpen = false, onapplied }: {
+	let { table, privilegesOpen: initiallyOpen = false, onapplied }: {
 		table: PolicyTable;
 		privilegesOpen?: boolean;
 		/** Called after a change was applied; reload the data. */
 		onapplied: () => Promise<void> | void;
 	} = $props();
+	// Bound, so re-renders (e.g. a changed role count in the summary) don't collapse it.
+	let privilegesOpen = $state(untrack(() => initiallyOpen));
 	const COMMANDS: PolicyCommand[] = ['all', 'select', 'insert', 'update', 'delete'];
 	const id = $props.id();
 	const target = $derived(qualify(table.schema, table.table));
 	/** Policy form; editing replaces the policy (drop + create) in one transaction. */
-	let form = $state<{ original: Policy | null; spec: PolicySpec } | null>(null);
+	let form = $state<{ original: Policy | null; spec: PolicySpec; baseline: string } | null>(null);
 	/** A statement awaiting confirmation: RLS switches, policy drops, privilege changes. */
 	let pending = $state.raw<{ title: string; description: string; sql: string; destructive?: boolean } | null>(null);
-	const formSql = $derived(form && form.spec.name.trim()
+	// Nothing to apply until the name is set and, when editing, something changed.
+	const formSql = $derived(form && form.spec.name.trim() && JSON.stringify(form.spec) !== form.baseline
 		? `${form.original ? `drop policy ${ident(form.original.name)} on ${target};\n` : ''}${createPolicy(target, { ...form.spec, name: form.spec.name.trim() })}` : '');
 	/** Role → table privileges (select/insert/update/delete only), as granted and as edited. */
 	const granted = $derived(table.grants.reduce<Record<string, string[]>>((map, grant) => {
@@ -41,11 +45,12 @@
 	const ungranted = $derived(['public', ...editor.roles].filter((name) => name !== table.owner && !(name in privileges)));
 
 	function open(policy: Policy | null) {
-		form = { original: policy, spec: policy
+		const spec: PolicySpec = policy
 			? { name: policy.name, command: policy.command, permissive: policy.permissive,
 				// PUBLIC is "no roles": Postgres ignores named roles listed beside it (with only a warning).
 				roles: policy.roles.filter((role) => role !== 'public'), using: policy.using ?? '', check: policy.check ?? '' }
-			: { name: '', command: 'all', permissive: true, roles: [], using: '', check: '' } };
+			: { name: '', command: 'all', permissive: true, roles: [], using: '', check: '' };
+		form = { original: policy, spec, baseline: policy ? JSON.stringify(spec) : '' };
 	}
 
 	function confirm(title: string, description: string, sql: string, destructive = false) {
@@ -112,10 +117,11 @@
 		<Button variant="ghost" size="icon-sm" aria-label={`Drop policy ${policy.name}`}
 			onclick={() => confirm(`Drop policy ${policy.name}`, table.enabled && table.policies.length === 1
 				? 'This is the last policy: with RLS on, every role except the owner, superusers and BYPASSRLS roles will see no rows.'
-				: 'Rows this policy allowed are no longer allowed by it.', `drop policy ${ident(policy.name)} on ${target};`, true)}><Trash2 /></Button>
+				: policy.permissive ? 'Rows that only this policy allowed are no longer allowed.'
+				: 'Rows this restrictive policy filtered out are no longer filtered by it.', `drop policy ${ident(policy.name)} on ${target};`, true)}><Trash2 /></Button>
 	</div>
 {/each}
-<details open={privilegesOpen} class="px-3 py-2 text-xs">
+<details bind:open={privilegesOpen} class="px-3 py-2 text-xs">
 	<summary class="cursor-pointer text-muted-foreground">Table privileges · {Object.keys(granted).length} role{Object.keys(granted).length === 1 ? '' : 's'}</summary>
 	<div class="mt-2 space-y-2">
 		<p class="text-[11px] text-muted-foreground">Which roles may touch the table at all; RLS then filters their rows. The owner

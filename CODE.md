@@ -50,7 +50,9 @@ theirs). One-off URLs are never stored, so they cannot reconnect after a server 
 `/db/[db]/tables/[[schema]]/[[table]]`, `/db/[db]/sql`, `/db/[db]/database/[[section]]`; the
 table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 `#f.status=eq.pending&sort=placed_at.desc`), so they stay out of page requests (row reads still
-send them, as remote query arguments). Filters with an unknown operator are dropped when parsed.
+send them, as remote query arguments). Filters with an unknown operator are dropped when parsed;
+sorts, filters and references on columns the table lacks are dropped once metadata is known
+(`editor.validView`), and that canonical URL replaces the bad one.
 LIKE/ILIKE compare a column's text, and `json` columns (no operators) compare as text.
 Schema and table names are URL-encoded path segments (`links.ts`): names may hold `/`, `#`, `%`.
 - `[db]` is `connectionId` (FNV-1a) of the password-free target. `db/[db]/+layout.svelte` opens
@@ -135,7 +137,8 @@ Sessions (and any open transaction) expire after 15 idle minutes; a pagehide `se
 `SqlState` (client) persists the draft and its linked snippet id per database, and the snippet
 library (`superbase.sql-snippets`, shared by databases/tabs; writes re-read first) in localStorage.
 `SqlLibrary.svelte` lists favourites, snippets and `sql-examples.ts` (Apache-2.0 attributed).
-Opening anything only loads text; replacing modified text asks first. Autocomplete (a
+Opening anything only loads text; replacing modified text asks first. A run that ends idle after
+DDL or COMMIT reloads the metadata (table list, autocomplete). Autocomplete (a
 toolbar checkbox) also offers schema/table/column names from the loaded metadata.
 
 ## Database workspace
@@ -153,7 +156,7 @@ asking backend, read in one statement with the server-wide connection count; blo
 `pg_blocking_pids`; cancel/terminate are previewed `select
 pg_cancel_backend|pg_terminate_backend(pid)`), extensions (`pg_available_extensions` + installed version/schema,
 required schema and dependencies) and a curated set of settings (`CONFIG_SETTINGS`) with this
-session's value plus database and current-role defaults from `pg_db_role_setting`.
+session's value plus database, current-role and role-in-database defaults from `pg_db_role_setting`.
 Policies: `listPolicies` returns tables with RLS state, policies (`pg_policy`, roles resolved, `public`
 for none) and non-owner grants (`aclexplode(relacl)`, grouped with their grantors: a revoke removes only one
 grantor's grant, so the grid marks privileges also granted by roles other than the owner). The roles a
@@ -166,14 +169,14 @@ renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE
 + create in one transaction; `ddl.grantChanges` diffs the grid into grant/revoke, leaving other
 privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (alter names only changed
 attributes: PG16+ rejects naming BYPASSRLS/CREATEDB without holding them; membership as
-grant/revoke, rename last); the preview masks passwords.
+grant/revoke, a PG16+ revoke once per grantor (`granted by`), rename last); the preview masks passwords.
 Schemas (`listSchemas`, all non-system ones with table/function counts): create, rename/owner,
 drop (cascade needs the typed name). Triggers (`listTriggers`, non-internal, no partition clones, events decoded from
 `tgtype`) show their and their function's definition, and can be dropped. Indexes skip partitions'
 copies of a partitioned index (`relispartition`).
 Enums (`listEnums`, with columns using each, also via domains, inherited copies once) are edited in place by `ddl.enumChanges` (rename values,
 append values, rename the type last; Postgres cannot remove values). Config writes
-`alter database|role … set|reset`: `search_path` values as SQL lists, others as quoted literals.
+`alter database|role [in database] … set|reset`: `search_path` values as SQL lists, others as quoted literals.
 
 Every change on these pages goes through `SqlDialog`: form fields as children, the SQL preview,
 Apply runs it via `changeSchema` (`executeDdl`, one transaction; fields are disabled meanwhile),

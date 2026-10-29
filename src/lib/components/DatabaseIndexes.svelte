@@ -7,12 +7,12 @@
 	import { qualify } from '#lib/ddl.js';
 	import { fresh, message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import SchemaFilter from './SchemaFilter.svelte';
+	import SchemaFilter, { picked } from './SchemaFilter.svelte';
 	import SqlDialog from './SqlDialog.svelte';
 
 	let list = $state.raw<DatabaseIndex[] | null>(null);
 	let error = $state('');
-	let schema = $state(editor.activeSchema || 'public');
+	let schema = $state(picked.schema || editor.activeSchema || 'public');
 	let query = $state('');
 	let dropping = $state.raw<DatabaseIndex | null>(null);
 	const shown = $derived((list ?? []).filter((index) => index.schema === schema

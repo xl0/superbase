@@ -1,3 +1,8 @@
+<script module lang="ts">
+	/** The schema last picked on any Database page: switching pages keeps it. */
+	export const picked = $state({ schema: '' });
+</script>
+
 <script lang="ts">
 	import { Search } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
@@ -8,7 +13,7 @@
 	let { schema = $bindable(), query = $bindable(), label }: { schema: string; query: string; label: string } = $props();
 </script>
 
-<Select.Root type="single" bind:value={schema} allowDeselect={false}>
+<Select.Root type="single" bind:value={schema} allowDeselect={false} onValueChange={(value) => picked.schema = value}>
 	<Select.Trigger aria-label="Schema" size="sm" class="min-w-40 font-mono text-xs">{schema}</Select.Trigger>
 	<Select.Content>{#each editor.schemas as option}<Select.Item value={option} label={option} />{/each}</Select.Content>
 </Select.Root>

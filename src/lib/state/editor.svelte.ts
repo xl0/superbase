@@ -83,6 +83,17 @@ export class EditorState {
 		await this.reload();
 	}
 
+	/** Without sorts, filters and references on columns its table lacks (hand-edited or stale links). */
+	validView(view: TableView): TableView {
+		const table = this.tables.find((table) => table.schema === view.schema && table.name === view.table);
+		if (!table) return view;
+		const known = (name: string) => table.columns.some((column) => column.name === name);
+		return { ...view,
+			filters: view.filters.filter((filter) => known(filter.column)),
+			sort: view.sort.filter((rule, i) => known(rule.column) && view.sort.findIndex((other) => other.column === rule.column) === i),
+			reference: view.reference && Object.keys(view.reference).every(known) ? view.reference : null };
+	}
+
 	#assign(view: TableView) {
 		this.activeSchema = view.schema;
 		this.activeTableName = view.table;
@@ -99,7 +110,7 @@ export class EditorState {
 		const schema = this.schemas.includes(view.schema) ? view.schema : this.tables[0]?.schema;
 		if (!schema) return;
 		const first = this.tables.find((table) => table.schema === schema)?.name ?? '';
-		this.#assign(known ? view : { schema, table: first, filters: [], sort: [], page: 0, reference: null });
+		this.#assign(known ? this.validView(view) : { schema, table: first, filters: [], sort: [], page: 0, reference: null });
 		this.savedAt = null;
 		await this.fetch();
 	}
@@ -129,6 +140,7 @@ export class EditorState {
 			this.schemas = result.schemas;
 			this.ready = true;
 			const replaced = this.table === EMPTY_TABLE;
+			if (!replaced) this.#assign(this.validView(this.view));
 			if (replaced) {
 				// Keep an existing (possibly empty) schema; otherwise prefer public's tables.
 				const schema = this.schemas.includes(this.activeSchema) ? this.activeSchema

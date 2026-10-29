@@ -58,8 +58,9 @@
 		untrack(() => {
 			const target = new URL(href, page.url.href);
 			if (target.pathname === page.url.pathname && target.hash === page.url.hash) return;
-			// Canonicalizing a bare or stale URL (no or unknown table) replaces it.
+			// Canonicalizing a bare or stale URL (no or unknown table, unknown columns) replaces it.
 			const named = urlView && (urlView.table ? editor.tables.some((table) => table.schema === urlView.schema && table.name === urlView.table)
+				&& JSON.stringify(editor.validView(urlView)) === JSON.stringify(urlView)
 				: editor.schemas.includes(urlView.schema) && !editor.tables.some((table) => table.schema === urlView.schema));
 			void goto(target, { replace: !named, reset: false });
 		});

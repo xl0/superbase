@@ -17,6 +17,9 @@
 	let open = $state(false);
 	const type = $derived(types.find((type) => type.oid === value.typeOid));
 	const base = $derived(elementType(type, types));
+	/** The kept type of an existing column, when it is one of the approved types: its Array box still converts it. */
+	const kept = $derived(value.typeOid === null && existing ? types.find((type) => type.oid === existing.typeOid) : undefined);
+	const arrayBase = $derived(elementType(type ?? kept, types));
 	const modifiable = $derived(base?.schema === 'pg_catalog' && MODIFIABLE_TYPES.includes(base.name));
 	const options = $derived(types
 		.filter((type) => type.kind !== 'array' && `${type.label} ${type.name} ${type.schema}`.toLowerCase().includes(query.trim().toLowerCase()))
@@ -33,6 +36,16 @@
 		value.typeOid = !chosen ? null : array && chosen.arrayOid ? chosen.arrayOid : chosen.oid;
 		query = '';
 		open = false;
+	}
+
+	/** Toggling Array keeps the base type and its modifiers (varchar(10) ↔ varchar(10)[]); back to the column's own type is "keep". */
+	function toggleArray(array: boolean) {
+		if (!arrayBase) return;
+		const own = existing?.type.match(/\((.*?)\)/)?.[1] ?? '';
+		const modifiers = value.typeOid === null ? own : value.typeModifiers;
+		choose(arrayBase.oid, array);
+		value.typeModifiers = modifiers;
+		if (existing && value.typeOid === existing.typeOid && modifiers === own) choose('keep');
 	}
 </script>
 
@@ -71,11 +84,10 @@
 			</Combobox.Portal>
 		</Combobox.Root>
 	</div>
-	{#if value.typeOid !== null}
+	{#if type ?? kept}
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 			<div class="flex items-center gap-2">
-				<Checkbox id={`${id}-array`} checked={type?.kind === 'array'} disabled={disabled || !base?.arrayOid}
-					onCheckedChange={(checked) => { if (base) choose(base.oid, checked); }} />
+				<Checkbox id={`${id}-array`} checked={(type ?? kept)?.kind === 'array'} disabled={disabled || !arrayBase?.arrayOid} onCheckedChange={toggleArray} />
 				<Label for={`${id}-array`} class="text-xs">Array</Label>
 			</div>
 			{#if modifiable}
@@ -83,6 +95,8 @@
 					placeholder={base?.name === 'numeric' ? 'precision, scale' : base?.name.startsWith('time') ? 'precision' : 'length'} />
 			{/if}
 		</div>
+	{/if}
+	{#if value.typeOid !== null}
 		<p class="break-all font-mono text-xs text-muted-foreground">{base ? typeSql(value.typeOid, value.typeModifiers, types) : ''}</p>
 	{/if}
 </div>

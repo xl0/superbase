@@ -8,12 +8,12 @@
 	import { highlightSql } from '#lib/sql-highlight.js';
 	import { fresh, message } from '#lib/utils.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import SchemaFilter from './SchemaFilter.svelte';
+	import SchemaFilter, { picked } from './SchemaFilter.svelte';
 	import SqlDialog from './SqlDialog.svelte';
 
 	let list = $state.raw<Trigger[] | null>(null);
 	let error = $state('');
-	let schema = $state(editor.activeSchema || 'public');
+	let schema = $state(picked.schema || editor.activeSchema || 'public');
 	let query = $state('');
 	/** `table.name` of the expanded row. */
 	let expanded = $state<string | null>(null);

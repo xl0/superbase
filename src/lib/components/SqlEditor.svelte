@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import type { EditorView } from '@codemirror/view';
 	import { Play, Save, Square, RotateCcw } from '@lucide/svelte';
 	import type { SQLNamespace } from '@codemirror/lang-sql';
@@ -36,6 +36,13 @@
 		: sql.needsReset ? 'Session closed' : 'Idle');
 
 	$effect(() => { sql.result; selectedResult = 0; page = 0; });
+	// Committed DDL changes what the table list and autocomplete show: reload the metadata.
+	$effect(() => {
+		const result = sql.result;
+		if (result?.transaction === 'idle' && result.results.some(({ command }) => /^(CREATE|ALTER|DROP|COMMENT|GRANT|REVOKE|COMMIT)\b/.test(command))) {
+			untrack(() => void editor.reload());
+		}
+	});
 	$effect(() => { if (active) void tick().then(() => view?.requestMeasure()); });
 
 	function run() {
@@ -122,7 +129,10 @@
 		{#if sql.error || sql.result?.error}
 			<div role="alert" class="space-y-1 border-b border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
 				<p class="whitespace-pre-wrap break-words">{sql.error || sql.result?.error}</p>
-				<p class="text-muted-foreground">Earlier explicit commits may have succeeded. Results below are not proof of a commit.</p>
+				<!-- Only when statements before the failing one completed: their explicit commits may have happened. -->
+				{#if sql.result?.error && sql.result.results.length}
+					<p class="text-muted-foreground">Earlier explicit commits may have succeeded. Results below are not proof of a commit.</p>
+				{/if}
 			</div>
 		{/if}
 		{#if sql.result?.notices.length}

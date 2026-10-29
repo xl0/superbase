@@ -168,6 +168,9 @@
 		{:else}
 			<Textarea bind:ref={field} aria-label={`Edit ${column.name}`} readonly={readOnly || editor.busy} aria-invalid={!!error} value={value ?? ''}
 				oninput={(event) => value = event.currentTarget.value} spellcheck={false}
+				onkeydown={(event) => { // Numbers, dates, uuids… are single-line; array literals may hold line breaks.
+					if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && column.kind !== 'array') event.preventDefault();
+				}}
 				placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
 				class={expanded ? 'min-h-24 flex-1 resize-none font-mono text-xs' : 'min-h-48 max-h-[50dvh] resize-y font-mono text-xs'} />
 		{/if}

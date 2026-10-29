@@ -222,7 +222,7 @@
 		{#if built.change}
 			<details open class="text-xs">
 				<summary class="cursor-pointer text-muted-foreground">SQL</summary>
-				<pre class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono">{built.change.sql}</pre>
+				<pre class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted p-2 font-mono">{built.change.sql}</pre>
 			</details>
 		{/if}
 		{#if error || built.problem}<p role="alert" class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-destructive">{error ?? built.problem}</p>{/if}

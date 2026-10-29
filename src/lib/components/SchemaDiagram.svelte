@@ -44,7 +44,8 @@
 			const { x, y, width, height } = graph.node(tableKey(table.schema, table.name));
 			return {
 				id: tableKey(table.schema, table.name), type: 'table', position: { x: x - width / 2, y: y - height / 2 },
-				data: { table, external: table.schema !== schema, href: tablesHref(page.params.db!, { schema: table.schema, table: table.name, filters: [], sort: [], page: 0, reference: null }) }
+				// Plain data: Svelte Flow expects non-proxied nodes (editor.tables is deep state).
+				data: { table: $state.snapshot(table), external: table.schema !== schema, href: tablesHref(page.params.db!, { schema: table.schema, table: table.name, filters: [], sort: [], page: 0, reference: null }) }
 			};
 		});
 		return { nodes, edges };

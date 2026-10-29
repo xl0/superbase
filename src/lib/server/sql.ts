@@ -90,8 +90,9 @@ export class SqlSessions {
 				session.client.query(query);
 			});
 			if (session.closed) output.error = 'SQL connection lost; the outcome of unfinished work is unknown.';
+			// Completed statements only: one that failed or was cancelled midway has fields but no command tag.
 			const results = [(query as unknown as { _results: pg.QueryResult | pg.QueryResult[] })._results].flat()
-				.filter((result) => result.command || result.fields.length);
+				.filter((result) => result.command);
 			if (results.length > SQL_MAX_RESULTS) output.truncated = true;
 			output.results = results.slice(0, SQL_MAX_RESULTS).map((result): SqlResult => ({
 				command: result.command, rowCount: result.rowCount,

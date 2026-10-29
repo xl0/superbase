@@ -4,12 +4,12 @@
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { PolicyTable } from '#lib/database.js';
 	import { fresh, message } from '#lib/utils.js';
-	import SchemaFilter from './SchemaFilter.svelte';
+	import SchemaFilter, { picked } from './SchemaFilter.svelte';
 	import TableAccess from './TableAccess.svelte';
 
 	let data = $state.raw<PolicyTable[] | null>(null);
 	let error = $state('');
-	let schema = $state(editor.activeSchema || 'public');
+	let schema = $state(picked.schema || editor.activeSchema || 'public');
 	let query = $state('');
 	const tables = $derived((data ?? []).filter((table) => table.schema === schema
 		&& `${table.table} ${table.policies.map((policy) => policy.name).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())));

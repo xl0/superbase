@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { DATABASE_URL } from '$app/env/private';
 import type { ConnectionInfo, ServerStatus } from '#lib/types.js';
-import { connectionOptions, type SslMode } from '#lib/connection-options.js';
+import type { ConnectionOptions } from '#lib/connection-options.js';
+import { checkUrl, urlParam, withParam } from '#lib/connection-options.js';
 import { connectionTarget } from '#lib/connection-profiles.js';
 import { SqlSessions } from './sql.js';
 
@@ -12,6 +13,8 @@ import { SqlSessions } from './sql.js';
  * databases don't interfere. Idle pools hold no clients (pg closes them), so pools are never closed.
  */
 type Connection = {
+	/** As requested: an identical URL reuses the pool (`config` may be prefer's plain fallback). */
+	url: string;
 	info: ConnectionInfo; config: pg.ClientConfig; pool: pg.Pool; sql: SqlSessions;
 	changes?: Changes;
 	/** Set when notifications proved undeliverable; realtime stays off until the server restarts. */
@@ -33,15 +36,27 @@ function describe(config: pg.ClientConfig, sslMode: string): ConnectionInfo {
 	return { ...target, key: `${connectionTarget(target)} · ${sslMode}` };
 }
 
-const password = (config: pg.ClientConfig) => new pg.Client(config).password;
+/**
+ * The URL goes to pg as typed: its options are the user's (they override the pool's own settings).
+ * `uselibpqcompat` gives `sslmode` libpq's meaning; pg alone treats prefer/require as verify-full and never
+ * falls back to plain connections (`connect` does that for prefer). An absent sslmode means prefer, as in psql.
+ */
+function config(url: string): pg.ClientConfig {
+	const mode = urlParam(url, 'sslmode') ?? 'prefer';
+	return {
+		connectionString: withParam(withParam(url, 'sslmode', mode), 'uselibpqcompat', 'true'),
+		// pg reads channel binding from its config only.
+		enableChannelBinding: ['prefer', 'require'].includes(urlParam(url, 'channel_binding') ?? '')
+	};
+}
 
-function open(config: pg.ClientConfig, info: ConnectionInfo): Connection {
+function open(url: string, config: pg.ClientConfig, info: ConnectionInfo): Connection {
 	const pool = new pg.Pool({
 		...config, max: 5, application_name: 'superbase',
 		statement_timeout: 30_000, query_timeout: 30_000, connectionTimeoutMillis: 10_000
 	});
 	pool.on('error', () => {}); // pg requires an idle-client error listener.
-	return { info, config, pool, sql: new SqlSessions(config, safeErrorMessage) };
+	return { url, info, config, pool, sql: new SqlSessions(config, safeErrorMessage) };
 }
 
 function close(connection: Connection) {
@@ -50,8 +65,19 @@ function close(connection: Connection) {
 	void connection.pool.end().catch(() => {});
 }
 
+const NO_SSL = 'The server does not support SSL connections';
+const plain = (url: string, info: ConnectionInfo) => open(url, config(withParam(url, 'sslmode', 'disable')), info);
+
 /** DATABASE_URL pins the app to one database (container deployments); otherwise browsers choose. */
-const locked = DATABASE_URL ? open({ connectionString: DATABASE_URL }, describe({ connectionString: DATABASE_URL }, 'pinned')) : null;
+const locked = DATABASE_URL ? open(DATABASE_URL, config(DATABASE_URL), describe(config(DATABASE_URL), 'pinned')) : null;
+// Pinned mode has no connect step: probe once at startup, so `prefer` falls back to plain like `connect`.
+if (locked && (urlParam(locked.url, 'sslmode') ?? 'prefer') === 'prefer') {
+	locked.pool.query('select 1').catch((error: Error) => {
+		if (error.message !== NO_SSL) return;
+		close(locked);
+		Object.assign(locked, plain(locked.url, locked.info));
+	});
+}
 
 export function connectionStatus(): ServerStatus {
 	return { connections: locked ? [locked.info] : [...connections.values()].map((connection) => connection.info), locked: !!locked };
@@ -59,7 +85,7 @@ export function connectionStatus(): ServerStatus {
 
 function opened(key: string): Connection {
 	const connection = locked ?? connections.get(key);
-	if (connection?.info.key !== key) {
+	if (!connection || connection.info.key !== key) {
 		throw new Error(locked ? 'This server is pinned to another database.'
 			: 'The server is not connected to this database (it may have restarted). Reload the page to reconnect.');
 	}
@@ -98,16 +124,20 @@ export function subscribeChanges(key: string, listener: (payload: string) => voi
 		connection.changes = changes;
 		const ping = JSON.stringify({ ping: randomUUID() });
 		const fail = (reason?: string) => { if (connection.changes === changes) stopChanges(connection, reason); };
-		const timeout = setTimeout(() => fail(UNDELIVERED), 5_000);
+		let delivered = false;
+		let timeout: NodeJS.Timeout | undefined;
 		client.on('notification', (message) => {
-			if (message.payload === ping) { clearTimeout(timeout); return; }
+			if (message.payload === ping) { delivered = true; clearTimeout(timeout); return; }
 			for (const notify of changes.subscribers.keys()) notify(message.payload ?? '');
 		});
 		client.on('error', () => fail());
 		client.on('end', () => { clearTimeout(timeout); fail(); });
+		// The clock starts once the ping is committed: a busy pool delays sending it, not its delivery.
+		// Only a ping that was sent and never arrived marks realtime unavailable; other failures just end the streams.
 		client.connect().then(() => client.query('listen superbase'))
 			.then(() => connection.pool.query("select pg_notify('superbase', $1)", [ping]))
-			.catch(() => { clearTimeout(timeout); fail(); });
+			.then(() => { if (!delivered) timeout = setTimeout(() => fail(UNDELIVERED), 5_000); })
+			.catch(() => fail());
 	}
 	const changes = connection.changes;
 	changes.subscribers.set(listener, end);
@@ -119,25 +149,25 @@ export function subscribeChanges(key: string, listener: (payload: string) => voi
 
 /**
  * Opens, or reuses, the pool for a URL. The returned key is what later requests name. The key leaves out
- * the password, so a pool is reused only with the same one: a wrong password never "connects", and new
- * working credentials replace the pool (ending its SQL sessions; realtime streams reconnect).
+ * the password and other options, so a pool is reused only for the identical URL: a wrong password never
+ * "connects", and a working new URL replaces the pool (ending its SQL sessions; realtime streams reconnect).
  */
-export async function connect(args: { url: string; sslMode: SslMode }): Promise<ConnectionInfo> {
+export async function connect({ url: input }: ConnectionOptions): Promise<ConnectionInfo> {
 	if (locked) throw new Error('This server is pinned to DATABASE_URL.');
-	// URL options would override `ssl`, so connectionOptions only allows an importable sslmode.
-	const { url, sslMode } = connectionOptions(args.url, args.sslMode);
-	const config = { connectionString: url, ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode === 'verify-full' } };
-	const info = describe(config, sslMode);
+	checkUrl(input);
+	const url = input.trim();
+	const sslMode = urlParam(url, 'sslmode') ?? 'prefer';
+	const info = describe(config(url), sslMode);
 	const existing = connections.get(info.key);
-	if (existing && password(existing.config) === password(config)) return existing.info;
-	let next = open(config, info);
+	if (existing?.url === url) return existing.info;
+	let next = open(url, config(url), info);
 	try {
 		try {
 			await next.pool.query('select 1');
 		} catch (error) {
-			if (sslMode !== 'prefer' || (error as Error).message !== 'The server does not support SSL connections') throw error;
+			if (sslMode !== 'prefer' || (error as Error).message !== NO_SSL) throw error;
 			close(next);
-			next = open({ connectionString: url, ssl: false }, info);
+			next = plain(url, info);
 			await next.pool.query('select 1');
 		}
 	} catch (error) {

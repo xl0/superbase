@@ -161,7 +161,7 @@
 			<span class="text-xs text-muted-foreground" aria-live="polite">{valueState(value)}</span>
 		</div>
 		{#if column.kind === 'json' || column.kind === 'text' || arrayJson}
-			<TextEditor language={column.kind === 'text' ? 'text' : 'json'} bind:ref={textView} bind:state={textState} label={`Edit ${column.name}`} readonly={readOnly || editor.busy}
+			<TextEditor language={column.kind === 'text' ? 'text' : 'json'} pretty={column.type !== 'json'} bind:ref={textView} bind:state={textState} label={`Edit ${column.name}`} readonly={readOnly || editor.busy}
 				{value} onchange={(next) => value = next}
 				placeholder={value === null ? 'NULL — type to replace' : value === undefined ? 'DEFAULT — type to replace' : ''}
 				class={expanded ? 'min-h-24 flex-1' : 'h-64 max-h-[50dvh]'} />

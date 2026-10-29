@@ -79,8 +79,10 @@ export async function listEnums(pool: pg.Pool): Promise<EnumType[]> {
 	return (await pool.query<EnumType>(`
 		select n.nspname as schema, t.typname as name,
 		       array(select e.enumlabel::text from pg_enum e where e.enumtypid = t.oid order by e.enumsortorder) as values,
+		       -- Directly or through a domain; inherited copies (partitions, children) count once, at the parent.
 		       (select count(*)::int from pg_attribute a join pg_class c on c.oid = a.attrelid
-		        where a.atttypid in (t.oid, t.typarray) and not a.attisdropped and c.relkind in ('r', 'p', 'v', 'm', 'f')) as columns
+		        where a.atttypid in (select d.oid from pg_type d where d.oid in (t.oid, t.typarray) or d.typbasetype in (t.oid, t.typarray))
+		          and not a.attisdropped and a.attinhcount = 0 and c.relkind in ('r', 'p', 'v', 'm', 'f', 'c')) as columns
 		from pg_type t
 		join pg_namespace n on n.oid = t.typnamespace
 		where t.typtype = 'e' and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'

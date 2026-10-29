@@ -27,8 +27,13 @@
 		if (pinned) { void goto(tablesHref(databaseId(pinned)), { replace: true }); return; }
 		const profile = loadProfiles().find((profile) => profileId(profile) === db);
 		if (!profile) { problem = 'This link points to a database that is not among your saved connections.'; return; }
-		connect({ url: profile.url, sslMode: profile.sslMode })
-			.then((info) => { rememberProfile(profile.id, info); return status.refresh(); })
+		connect({ url: profile.url })
+			.then(async (info) => {
+				rememberProfile(profile.id, info);
+				await status.refresh();
+				// The server resolved the URL to another target (e.g. its pg defaults for user or port changed).
+				if (databaseId(info) !== db) await goto(tablesHref(databaseId(info)), { replace: true });
+			})
 			.catch((cause) => { problem = `Could not connect to “${profile.name}”: ${message(cause)}`; });
 	});
 </script>

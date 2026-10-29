@@ -20,8 +20,9 @@ npx @xl0/superbase --port 4000 --no-open
 ```
 
 It serves on http://127.0.0.1:3000 (or the next free port) and opens your browser. Click
-**Choose connection → Add connection**, paste a `postgres://` URL and pick an SSL mode (a pasted
-`sslmode=` moves into the SSL selector). **Save** keeps the connection in this browser's
+**Choose connection → Add connection**, paste a `postgres://` URL; the SSL mode and channel binding controls
+just edit its `sslmode=` and `channel_binding=` (libpq meanings, default `prefer`), and every other
+option goes to the driver as written. **Save** keeps the connection in this browser's
 localStorage, password included and unencrypted; **Connect** connects without saving. After a
 restart the app reconnects to the saved connection you used last.
 

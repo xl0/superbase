@@ -35,10 +35,9 @@ export class SqlSessions {
 		if (this.sessions.size >= MAX_SESSIONS) throw new Error(`At most ${MAX_SESSIONS} SQL sessions can be open.`);
 		const id = randomUUID();
 		const session: Session = {
-			client: new pg.Client({
-				...this.config, application_name: 'superbase SQL', connectionTimeoutMillis: 10_000,
-				statement_timeout: 30_000, idle_in_transaction_session_timeout: 300_000
-			}),
+			// No statement or idle-in-transaction timeouts beyond the database's own: runs can be cancelled, and
+			// an abandoned session (and its transaction) ends after IDLE_MS.
+			client: new pg.Client({ ...this.config, application_name: 'superbase SQL', connectionTimeoutMillis: 10_000 }),
 			closed: false, run: 0, running: false
 		};
 		session.client.on('error', () => this.close(id));

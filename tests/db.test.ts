@@ -113,12 +113,13 @@ const insert = (table: string, inserts: Values[]) => saveTable(pool, { ...target
 		}])).toEqual(['9007199254740993']);
 		expect(await ids([{ column: 'amount', operator: 'eq', value: '2.000' }])).toEqual(['2']);
 		expect(await ids([])).toHaveLength(5);
+		// Patterns match a non-text column's text.
+		expect(await ids([{ column: 'id', operator: 'like', value: '1_' }])).toEqual(['10', '11']);
 		for (const filter of [
 			{ column: 'id', operator: 'eq', value: "2 OR true --" },
-			{ column: 'amount', operator: 'gt', value: '' },
-			{ column: 'id', operator: 'like', value: '%' }
+			{ column: 'amount', operator: 'gt', value: '' }
 		] satisfies RowFilter[]) {
-			await expect(ids([filter])).rejects.toThrow(/invalid input syntax|operator does not exist/);
+			await expect(ids([filter])).rejects.toThrow(/invalid input syntax/);
 		}
 	});
 

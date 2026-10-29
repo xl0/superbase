@@ -140,8 +140,8 @@ export class EditorState {
 				this.reference = null;
 				this.page = 0;
 			}
-			// A navigation started meanwhile reads its own rows.
-			if (request === this.#request) await this.fetch(retainRows && !replaced);
+			// A navigation started meanwhile reads its own rows, unless its table is gone and the view was just replaced.
+			if (request === this.#request || replaced) await this.fetch(retainRows && !replaced);
 		} catch (error) {
 			if (request === this.#request) this.error = message(error);
 		} finally {

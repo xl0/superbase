@@ -34,8 +34,9 @@ export function parseViewHash(hash: string): Omit<TableView, 'schema' | 'table'>
 			const [operator, ...rest] = value.split('.');
 			if (Object.hasOwn(FILTER_OPERATORS, operator)) filters.push({ column: key.slice(2), operator: operator as FilterOperator, value: rest.join('.') });
 		} else if (key === 'sort') {
-			const dot = value.lastIndexOf('.');
-			sort.push({ column: value.slice(0, dot), direction: value.slice(dot + 1) === 'desc' ? 'desc' : 'asc' });
+			// A hand-edited rule may omit the direction (ascending).
+			const [, column, direction] = value.match(/^(.*)\.(asc|desc)$/) ?? [, value, 'asc'];
+			sort.push({ column, direction: direction as Sort['direction'] });
 		} else if (key.startsWith('ref.')) reference[key.slice(4)] = value;
 	}
 	const page = Math.max(0, (Number.parseInt(params.get('page') ?? '', 10) || 1) - 1);

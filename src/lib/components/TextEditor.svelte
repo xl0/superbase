@@ -13,13 +13,15 @@
 
 	/** CodeMirror for a NULL/DEFAULT/text value. The parent owns the value; edits report document text. */
 	let {
-		value, onchange, language = 'text', tabIndent = false, readonly = false, completion = true, sqlSchema, label, id, placeholder = '', class: className = '',
+		value, onchange, language = 'text', pretty = true, tabIndent = false, readonly = false, completion = true, sqlSchema, label, id, placeholder = '', class: className = '',
 		state: editorState = $bindable<EditorState | null>(null), ref = $bindable<EditorView | null>(null)
 	}: {
 		value: CellValue | undefined;
 		onchange: (value: string) => void;
 		/** Chosen from column metadata, never inferred from the document. */
 		language?: 'text' | 'json' | 'sql';
+		/** JSON documents open pretty-printed; `json` columns store text verbatim, so they opt out. */
+		pretty?: boolean;
 		/** The SQL workspace opts in; form editors keep native Tab focus navigation. */
 		tabIndent?: boolean;
 		/** SQL autocompletion: keywords, plus schemas/tables/columns from `sqlSchema`. */
@@ -40,7 +42,7 @@
 	let mounted = $state.raw<EditorView | null>(null);
 	let lastValue: CellValue | undefined;
 	const external = Annotation.define<boolean>();
-	const toDoc = (value: CellValue | undefined) => language === 'json' ? prettyJSON(value ?? '') : value ?? '';
+	const toDoc = (value: CellValue | undefined) => language === 'json' && pretty ? prettyJSON(value ?? '') : value ?? '';
 	const theme = EditorView.theme({
 		'&': { height: '100%', minHeight: '0', color: 'var(--foreground)', backgroundColor: 'var(--card)', fontSize: '12px' },
 		'&.cm-focused': { outline: 'none' },

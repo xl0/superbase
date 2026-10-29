@@ -27,16 +27,19 @@ operators) — for correctness, not as a security boundary.
 
 `connections.ts` maps a key, `host:port/database · user · sslmode` (no password, from pg's own
 URL parsing), to `{ info, pool, sql }`. `connect` (a POST: the only request with a password)
-reuses that key's pool only for the same password; otherwise it opens one, runs a test query and
+reuses that key's pool only for the identical URL; otherwise it opens one, runs a test query and
 replaces the old pool (closing its SQL sessions; realtime streams reconnect), so a wrong password
 never "connects". It returns `info`; every other request
 carries the key of the database its page shows, so it can only act on that one, and tabs on
 different databases are independent. An unknown key (server restarted) asks to reload; the
 route then reconnects the saved profile. Idle pools hold no clients, so pools are never closed.
-Locked mode has one pinned connection and refuses other keys. SSL is a separate setting
-(`connection-options.ts`); URLs may carry only `sslmode` (imported into the setting, then
-stripped) because pg lets URL options override `ssl`. `prefer` retries once without TLS only
-on pg's "server does not support SSL" error. `safeErrorMessage` redacts connection URLs.
+Locked mode has one pinned connection and refuses other keys.
+The URL is the whole setting and reaches pg as typed (its options override the pool's). The
+server adds `uselibpqcompat=true` so `sslmode` keeps libpq's meaning (absent = `prefer`; pg alone
+reads prefer/require as verify-full), and maps `channel_binding` to `enableChannelBinding`.
+`prefer` retries once without TLS only on pg's "server does not support SSL" error (locked mode
+probes once at startup and swaps in the plain pool). The connection form's SSL select and
+channel binding checkbox only edit the URL's query. `safeErrorMessage` redacts connection URLs.
 Profiles (`connection-profiles.ts`) are a plain localStorage list. A successful connect stores the
 target the server resolved the profile's URL to (`target`, pg defaults for user/port/database
 applied): it gives the profile's URL id and marks the active one. A successful connect fully loads the new database's route (other tabs keep
@@ -48,6 +51,8 @@ theirs). One-off URLs are never stored, so they cannot reconnect after a server 
 table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 `#f.status=eq.pending&sort=placed_at.desc`), so they stay out of page requests (row reads still
 send them, as remote query arguments). Filters with an unknown operator are dropped when parsed.
+LIKE/ILIKE compare a column's text, and `json` columns (no operators) compare as text.
+Schema and table names are URL-encoded path segments (`links.ts`): names may hold `/`, `#`, `%`.
 - `[db]` is `connectionId` (FNV-1a) of the password-free target. `db/[db]/+layout.svelte` opens
   the app with the open database whose id matches (passing its key down), otherwise connects the
   saved profile with that id (one attempt), otherwise shows the connection manager; locked mode
@@ -84,7 +89,8 @@ send them, as remote query arguments). Filters with an unknown operator are drop
   database while subscribed; `/events?connection=<key>` streams it as SSE. `EditorApp` opens one
   EventSource while any table has realtime and refetches the open table through `editor.poll`
   (a poll asked for mid-poll runs again after it, so bursts coalesce and none is lost); the 5 s poll then runs only every 30 s as a safety net. Not in the static demo.
-  Self-check: after LISTEN the server notifies itself through the pool; no echo within 5 s (e.g. a
+  Self-check: after LISTEN the server notifies itself through the pool; no echo within 5 s of the
+  committed ping (a busy pool only delays sending it; e.g. a
   transaction-mode pooler) marks the connection `realtimeUnavailable`, the stream sends an
   `unavailable` event and editors keep polling (`editor.realtimeIssue` explains why).
   Toggling (toolbar ⚡, `editor.setRealtime`) applies at once, unpreviewed; the table list marks
@@ -101,17 +107,21 @@ send them, as remote query arguments). Filters with an unknown operator are drop
 `lib/ddl.ts` is the pure SQL generator (create table, add/alter column, duplicate, constraint
 clauses, literal escaping). Forms build a `SchemaChange { sql, select?, destructive? }`, show it
 as a preview, and `executeDdl` runs it in one transaction (`lock_timeout` 3 s). PostgreSQL is
-the validator. `queries/schema.ts` also lists approved column types (builtins, enums, domains,
+the validator. Type changes are destructive; toggling Array converts `x` ↔ `{x}` (array → value
+first checks every array has one element). Names over 63 bytes are refused (Postgres would truncate
+them). `queries/schema.ts` also lists approved column types (builtins, enums, domains,
 arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 `SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
-`SchemaConstraints` are list + form children that bind their `change`. Editing a constraint edits
+`SchemaConstraints` are list + form children that bind their `change`; constraints are the table's
+own (`conislocal`) UNIQUE/CHECK/FK/EXCLUDE, not inherited copies. Editing a constraint edits
 its `pg_get_constraintdef` text, so clauses the add form lacks survive: a changed definition is drop
 + add, a new name alone a rename. `tableDefinition` (⋮ → Definition, a read-only side panel that blocks nothing) rebuilds
 a table's or view's DDL from `pg_get_*def` and the catalogs in a read-only transaction with
 `search_path = pg_catalog`, so every user object comes out qualified; a test round-trips it. Duplicate reads the
 table's definition fresh, uses `LIKE … INCLUDING ALL`, copies non-generated columns with
 `overriding system value`, and moves identity sequences past the copied values (only when rows
-were copied, so an empty copy keeps the original start).
+were copied, so an empty copy keeps the original start). The copy is a plain table: an inheritance
+parent copies only its own rows, a partitioned one all partitions' rows.
 
 ## SQL console (`server/sql.ts`)
 
@@ -120,7 +130,8 @@ A buffer is sent unchanged via the simple protocol. A `row` listener (no callbac
 accumulating rows; previews keep ≤1,000 rows per result and ~10M chars total. Per-statement
 results come from pg's internal `query._results`; transaction status is read after
 ReadyForQuery. Cancel opens a second client and `pg_cancel_backend`, guarded by a run counter.
-Sessions expire after 15 idle minutes; a pagehide `sendBeacon` to `/sql/close` releases them.
+No statement or idle-in-transaction timeouts beyond the database's own.
+Sessions (and any open transaction) expire after 15 idle minutes; a pagehide `sendBeacon` to `/sql/close` releases them.
 `SqlState` (client) persists the draft and its linked snippet id per database, and the snippet
 library (`superbase.sql-snippets`, shared by databases/tabs; writes re-read first) in localStorage.
 `SqlLibrary.svelte` lists favourites, snippets and `sql-examples.ts` (Apache-2.0 attributed).
@@ -160,7 +171,7 @@ Schemas (`listSchemas`, all non-system ones with table/function counts): create,
 drop (cascade needs the typed name). Triggers (`listTriggers`, non-internal, no partition clones, events decoded from
 `tgtype`) show their and their function's definition, and can be dropped. Indexes skip partitions'
 copies of a partitioned index (`relispartition`).
-Enums (`listEnums`, with columns using each) are edited in place by `ddl.enumChanges` (rename values,
+Enums (`listEnums`, with columns using each, also via domains, inherited copies once) are edited in place by `ddl.enumChanges` (rename values,
 append values, rename the type last; Postgres cannot remove values). Config writes
 `alter database|role … set|reset`: `search_path` values as SQL lists, others as quoted literals.
 
@@ -199,11 +210,14 @@ declares a read-only cursor with the grid's `rowSelection` and the chosen column
   (`[0:1]={…}`), box[] and json[]/jsonb[] keep the literal editor (a nested JSON array there could be a
   dimension or a document). Grid copy writes JSON; paste converts a JSON
   array and passes literals through. CSV export stays literal.
+- Clipboard TSV (`format.ts`): a field counts as quoted only when its closing quote ends it and
+  its content needed quoting, so raw text starting with `"` pastes unchanged.
 - `sql-highlight.ts` renders read-only SQL (Activity hover, Performance) with the editor's parser;
   `.sql-code` in `app.css` holds the colors.
 - `TextEditor` wraps CodeMirror (text/JSON/SQL). The parent owns the NULL/DEFAULT/text value;
   the editor reports document edits only, so opening and applying unchanged never rewrites a
-  value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept).
+  value. `json.ts` pretty-prints JSON from parser tokens (no number decoding, keys kept);
+  `json` (not `jsonb`) cells open verbatim, since that type keeps the text's whitespace.
 - `EditorApp` switches three workspaces from the left rail (Tables, SQL, Database). Each is a
   `Workspace`: a resizable side panel (one width shared by all) and a main area. Database sections
   are side panel items.
@@ -251,6 +265,8 @@ docker run -d --name sb-dev-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55433:
   -c shared_preload_libraries=pg_stat_statements   # enables the Performance tab
 ```
 
+`dev/seed.sql` seeds a dev database; its `edge` schema holds awkward names, partitions,
+inheritance, an exclusion constraint, json vs jsonb and forced-but-disabled RLS.
 DB tests create and drop their own schema and need an explicit `TEST_DATABASE_URL`.
 Tests are deliberately few: exact values, conflicts, editor race guards, DDL round-trip,
 SQL sessions, CSV and the production HTTP boundary.

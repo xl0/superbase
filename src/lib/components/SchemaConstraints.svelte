@@ -13,7 +13,7 @@
 
 	let { definition, disabled, change = $bindable() }: { definition: SchemaDefinition; disabled: boolean; change: SchemaChange | null } = $props();
 	const id = $props.id();
-	const KIND = { u: 'UNIQUE', c: 'CHECK', f: 'FOREIGN KEY' };
+	const KIND = { u: 'UNIQUE', c: 'CHECK', f: 'FOREIGN KEY', x: 'EXCLUDE' };
 	/** A new constraint, built from a form. */
 	let draft = $state<{ spec: ConstraintSpec } | null>(null);
 	/**

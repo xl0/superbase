@@ -18,7 +18,9 @@ export async function listSchemaCatalog(pool: pg.Pool): Promise<SchemaCatalog> {
 				'macaddr8', 'bit', 'varbit', 'xml', 'oid', 'tsvector', 'tsquery'))
 				or (n.nspname !~ '^pg_' and n.nspname <> 'information_schema' and t.typtype in ('e', 'd')))
 		)
-		select t.oid::text as oid, n.nspname as schema, t.typname as name, format_type(t.oid, null) as label,
+		-- format_type calls bpchar "character", which means char(1); the SQL names unlimited bpchar.
+		select t.oid::text as oid, n.nspname as schema, t.typname as name,
+		       case t.oid when 'bpchar'::regtype then 'bpchar' when '_bpchar'::regtype then 'bpchar[]' else format_type(t.oid, null) end as label,
 		       case t.typtype when 'e' then 'enum' when 'd' then 'domain'
 		         else case when e.oid is not null then 'array' else 'base' end end as kind,
 		       case when t.typtype <> 'd' then e.oid::text end as "elementOid",
@@ -37,6 +39,7 @@ const names = (relation: string, numbers: string) => `array(select a.attname::te
 export async function getSchemaDefinition(pool: pg.Pool, target: TableTarget): Promise<SchemaDefinition> {
 	const result = await pool.query<{ definition: Omit<SchemaDefinition, 'schema' | 'table'> }>(`
 		select jsonb_build_object(
+			'partitioned', c.relkind = 'p',
 			'columns', coalesce((select jsonb_agg(jsonb_build_object(
 				'name', a.attname, 'type', format_type(a.atttypid, a.atttypmod), 'typeOid', a.atttypid::text,
 				'nullable', not a.attnotnull, 'defaultValue', pg_get_expr(d.adbin, d.adrelid), 'generated', a.attgenerated <> '',
@@ -53,7 +56,8 @@ export async function getSchemaDefinition(pool: pg.Pool, target: TableTarget): P
 			'constraints', coalesce((select jsonb_agg(jsonb_build_object(
 				'name', con.conname, 'kind', con.contype, 'definition', pg_get_constraintdef(con.oid)
 				) order by con.conname) from pg_constraint con
-				where con.conrelid = c.oid and con.contype in ('u', 'c', 'f')), '[]')
+				-- Inherited ones (partitions, inheritance children, a foreign key's copies for referenced partitions) can't be edited or dropped here.
+				where con.conrelid = c.oid and con.contype in ('u', 'c', 'f', 'x') and con.conislocal), '[]')
 		) as definition
 		from pg_class c join pg_namespace n on n.oid = c.relnamespace
 		where n.nspname = $1 and c.relname = $2`, [target.schema, target.table]);
@@ -99,8 +103,11 @@ async function buildDefinition(client: pg.PoolClient, target: TableTarget): Prom
 		left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
 		where a.attrelid = $1 and a.attnum > 0 and not a.attisdropped order by a.attnum`, [relation.oid]);
 	const constraints = await client.query<{ name: string; definition: string }>(`
-		select quote_ident(conname) as name, pg_get_constraintdef(oid, true) as definition from pg_constraint
-		where conrelid = $1 and contype in ('p', 'u', 'c', 'x', 'f') order by position(contype::text in 'pucxf'), conname`, [relation.oid]);
+		select quote_ident(conname) as name, pg_get_constraintdef(oid, true) as definition from pg_constraint con
+		where conrelid = $1 and contype in ('p', 'u', 'c', 'x', 'f')
+		  -- A foreign key to a partitioned table has internal per-partition copies on the same table; its own CREATE makes them.
+		  and not exists (select from pg_constraint p where p.oid = con.conparentid and p.conrelid = con.conrelid)
+		order by position(contype::text in 'pucxf'), conname`, [relation.oid]);
 	const indexes = await client.query<{ definition: string }>(`
 		select pg_get_indexdef(i.indexrelid) as definition from pg_index i join pg_class ic on ic.oid = i.indexrelid
 		where i.indrelid = $1 and not exists(select from pg_constraint con where con.conindid = i.indexrelid and con.conrelid = i.indrelid

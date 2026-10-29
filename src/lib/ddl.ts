@@ -26,6 +26,10 @@ export type ConstraintSpec =
 
 export const ident = (name: string) => `"${name.replaceAll('"', '""')}"`;
 export const qualify = (schema: string, name: string) => `${ident(schema)}.${ident(name)}`;
+/** Postgres truncates longer names (with only a notice), so later statements would name a missing object. */
+export function checkName(name: string): void {
+	if (new TextEncoder().encode(name).length > 63) throw new Error(`Name is longer than 63 bytes: ${name}`);
+}
 /** Same escaping as pg.escapeLiteral: correct regardless of standard_conforming_strings. */
 export function literal(value: string): string {
 	const quoted = `'${value.replaceAll("'", "''").replaceAll('\\', '\\\\')}'`;
@@ -100,7 +104,21 @@ export function alterColumn(table: string, old: SchemaColumn & { primaryKey: boo
 	if (next.default.kind !== 'keep' && old.defaultValue !== null && !old.identity) statements.push(`${alter} drop default;`);
 	if (next.typeOid !== null) {
 		const type = typeSql(next.typeOid, next.typeModifiers, types);
-		statements.push(`${alter} type ${type} using ${ident(old.name)}::${type};`);
+		const column = ident(old.name);
+		const toArray = types.find((item) => item.oid === next.typeOid)?.kind === 'array';
+		const fromArray = old.type.endsWith('[]');
+		if (fromArray && !toArray) {
+			// Only NULL or one-element arrays become a single value; anything else stops the change.
+			statements.push(`do $superbase$ begin
+  if exists (select from ${table} where not (${column} is null or (array_ndims(${column}) = 1 and cardinality(${column}) = 1))) then
+    raise exception 'Column % holds empty or multi-element arrays; only single-element arrays convert to one value', ${literal(old.name)};
+  end if;
+end $superbase$;`);
+		}
+		const using = fromArray === toArray ? `${column}::${type}`
+			: toArray ? `case when ${column} is null then null else array[${column}]::${type} end`
+			: `${column}[array_lower(${column}, 1)]::${type}`;
+		statements.push(`${alter} type ${type} using ${using};`);
 	}
 	if (defaultSql(next.default)) statements.push(`${alter} set default ${defaultSql(next.default)};`);
 	const addingKey = next.primaryKey && !old.primaryKey;
@@ -113,14 +131,18 @@ export function alterColumn(table: string, old: SchemaColumn & { primaryKey: boo
 	return statements.join('\n');
 }
 
-/** LIKE copies columns, defaults, constraints, indexes and comments. Serial columns keep sharing the source sequence. */
+/**
+ * LIKE copies columns, defaults, constraints, indexes and comments. Serial columns keep sharing the source sequence.
+ * The copy is always a plain table: a partitioned source's rows are gathered from its partitions, while
+ * an inheritance parent contributes only its own rows (ONLY).
+ */
 export function duplicateTable(source: SchemaDefinition, name: string, includeRows: boolean): string {
 	const from = qualify(source.schema, source.table);
 	const to = qualify(source.schema, name);
 	const statements = [`create table ${to} (like ${from} including all);`];
 	if (includeRows) {
 		const columns = source.columns.filter((column) => !column.generated).map((column) => ident(column.name)).join(', ');
-		statements.push(`insert into ${to} (${columns}) overriding system value select ${columns} from ${from};`);
+		statements.push(`insert into ${to} (${columns}) overriding system value select ${columns} from ${source.partitioned ? '' : 'only '}${from};`);
 		// New identity sequences continue after the copied values; with none, they keep LIKE's start.
 		for (const column of source.columns.filter((column) => column.identity)) {
 			statements.push(`select setval(pg_get_serial_sequence(${literal(to)}, ${literal(column.name)}), max(${ident(column.name)})) from ${to} having max(${ident(column.name)}) is not null;`);

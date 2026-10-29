@@ -23,7 +23,7 @@ test('production server: same-origin commands work; foreign origins and Host hea
 			body: JSON.stringify({ payload: Buffer.from(stringify(args)).toString('base64url'), refreshes: [] })
 		});
 		// The command really runs: the connection attempt reaches the (closed) port.
-		const connect = { url: 'postgres://x@127.0.0.1:1/db', sslMode: 'disable' };
+		const connect = { url: 'postgres://x@127.0.0.1:1/db?sslmode=disable' };
 		assert.match(await (await call('connect', connect)).text(), /ECONNREFUSED/);
 		assert.match(await (await call('runSql', { connection: 'stale', session: 'x', sql: 'select 1' })).text(), /not connected to this database/);
 		assert.equal((await call('connect', connect, { Origin: 'http://evil.example' })).status, 403);

@@ -18,11 +18,10 @@ describe('lossless display and clipboard', () => {
 		const rows = [[null, undefined, '', '\\N', '\\D', 'a\tb', 'line1\r\nline2'], ['"quoted"', '__NULL__', '{"big":9007199254740993}', '{"a,b",NULL,""}', '9007199254740993']];
 		expect(fromTSV(toTSV(rows))).toEqual(rows);
 	});
-	test('accepts external TSV and quoted multiline fields, rejects malformed quotes atomically', () => {
+	test('accepts external TSV and quoted multiline fields, and raw text that merely starts with a quote', () => {
 		expect(fromTSV('a\tb\r\nc\t\r\n')).toEqual([['a', 'b'], ['c', '']]);
 		expect(fromTSV('"line1\nline2"\tTRUE')).toEqual([['line1\nline2', 'TRUE']]);
-		expect(() => fromTSV('"unclosed')).toThrow('Unclosed');
-		expect(() => fromTSV('"ok"bad')).toThrow('Unexpected');
+		expect(fromTSV('"unclosed\t"key": 1\t"abc"\n"')).toEqual([['"unclosed', '"key": 1', '"abc"'], ['"']]);
 	});
 });
 
@@ -65,6 +64,7 @@ test('view hash round-trips filters, sort, page and FK references', () => {
 	expect(parseViewHash(viewHash({ schema: 's', table: 't', ...view }))).toEqual(view);
 	expect(viewHash({ schema: 's', table: 't', filters: [], sort: [], page: 0, reference: null })).toBe('');
 	expect(parseViewHash('')).toEqual({ filters: [], sort: [], page: 0, reference: null });
+	expect(parseViewHash('sort=x').sort).toEqual([{ column: 'x', direction: 'asc' }]);
 });
 
 test('array clipboard: JSON converts on paste, literals pass through', () => {

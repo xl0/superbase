@@ -32,15 +32,17 @@ export interface SchemaIndex {
 }
 export const REFERENTIAL_ACTIONS = ['no action', 'restrict', 'cascade', 'set null', 'set default'] as const;
 export type ReferentialAction = typeof REFERENTIAL_ACTIONS[number];
-/** UNIQUE, CHECK and FOREIGN KEY constraints owned by the table; `definition` as pg_get_constraintdef prints it. */
+/** UNIQUE, CHECK, FOREIGN KEY and EXCLUDE constraints the table defines itself; `definition` as pg_get_constraintdef prints it. */
 export interface SchemaConstraint {
 	name: string;
-	kind: 'u' | 'c' | 'f';
+	kind: 'u' | 'c' | 'f' | 'x';
 	definition: string;
 }
 export interface SchemaDefinition {
 	schema: string;
 	table: string;
+	/** Partitioned: its rows live in the partitions. */
+	partitioned: boolean;
 	columns: SchemaColumn[];
 	primaryKey: string[];
 	indexes: SchemaIndex[];

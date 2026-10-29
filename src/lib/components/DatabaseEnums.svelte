@@ -106,5 +106,5 @@
 
 <SqlDialog open={!!dropping} title="Drop enum" subject={dropping?.name} destructive action="Drop"
 	description={dropping?.columns ? `${dropping.columns === 1 ? '1 column still uses' : `${dropping.columns} columns still use`} it, so PostgreSQL will refuse; change those columns first.`
-		: 'No column uses this type.'}
+		: 'No column uses this type; PostgreSQL still refuses if a function depends on it.'}
 	sql={dropping ? `drop type ${qualify(dropping.schema, dropping.name)};` : ''} onclose={() => dropping = null} onapplied={applied} />

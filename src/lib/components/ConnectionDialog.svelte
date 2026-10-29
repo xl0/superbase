@@ -4,12 +4,13 @@
 	import type { ConnectionInfo } from '#lib/types.js';
 	import { message } from '#lib/utils.js';
 	import { connectionTarget, loadProfiles, profileTarget, rememberProfile, storeProfiles, type ConnectionProfile } from '#lib/connection-profiles.js';
-	import { connectionOptions, SSL_MODES, type SslMode } from '#lib/connection-options.js';
+	import { checkUrl, SSL_MODES, urlParam, withParam } from '#lib/connection-options.js';
 	import { databaseId, tablesHref } from '#lib/links.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 
@@ -35,7 +36,9 @@
 	let editing = $state.raw<ConnectionProfile | null>(null);
 	let name = $state('');
 	let url = $state('');
-	let sslMode = $state<SslMode>('require');
+	/** Controls for common URL options; they edit the URL, which stays the only setting. */
+	const sslMode = $derived(urlParam(url, 'sslmode') ?? 'prefer');
+	const channelBinding = $derived(urlParam(url, 'channel_binding') === 'require');
 	// The demo keeps the connection UI to show how it works, but has only its in-browser database.
 	const demo = import.meta.env.MODE === 'demo';
 	let demoBlocked = $state(false);
@@ -47,7 +50,6 @@
 		editing = profile;
 		name = profile?.name ?? '';
 		url = profile?.url ?? '';
-		sslMode = profile?.sslMode ?? 'require';
 		error = '';
 		demoBlocked = false;
 		pickerOpen = false;
@@ -55,13 +57,13 @@
 	}
 
 	/** Saved profiles are remembered for automatic reconnection; one-off URLs never are. */
-	async function change(choice: { url: string; sslMode: SslMode; id?: string }) {
+	async function change(choice: { url: string; id?: string }) {
 		if (demo) { demoBlocked = true; return; }
 		if (pending || !approve()) return;
 		pending = true;
 		error = '';
 		try {
-			const next = await connect(choice);
+			const next = await connect({ url: choice.url });
 			rememberProfile(choice.id ?? null, next);
 			onswitch();
 			// A full load onto the new database's route resets this page's state (other tabs keep theirs).
@@ -78,11 +80,11 @@
 		if (demo) { demoBlocked = true; return; }
 		error = '';
 		try {
-			const options = connectionOptions(url, sslMode);
+			checkUrl(url);
 			if (!name.trim()) throw new Error('Name the connection.');
 			// The resolved target stays valid while the URL does.
-			const profile = { id: editing?.id ?? crypto.randomUUID(), name: name.trim(), ...options,
-				...(editing?.url === options.url ? { target: editing.target } : {}) };
+			const profile = { id: editing?.id ?? crypto.randomUUID(), name: name.trim(), url: url.trim(),
+				...(editing?.url === url.trim() ? { target: editing.target } : {}) };
 			const others = loadProfiles().filter((item) => item.id !== profile.id);
 			storeProfiles([...others, profile].sort((a, b) => a.name.localeCompare(b.name)));
 			profiles = loadProfiles();
@@ -99,13 +101,6 @@
 		dialogOpen = false;
 	}
 
-	function editUrl(value: string) {
-		url = value;
-		try {
-			const imported = connectionOptions(value);
-			if (imported.url !== value.trim()) { url = imported.url; sslMode = imported.sslMode; }
-		} catch { /* Keep incomplete URLs for correction. */ }
-	}
 </script>
 
 {#if locked}
@@ -160,18 +155,24 @@
 			</div>
 			<div class="space-y-2">
 				<Label for={`${id}-url`} class="text-xs">Postgres URL</Label>
-				<Input id={`${id}-url`} bind:value={() => url, editUrl} disabled={pending} autocomplete="off" spellcheck={false}
+				<Input id={`${id}-url`} bind:value={url} disabled={pending} autocomplete="off" spellcheck={false}
 					placeholder="postgresql://user:password@host:5432/database" class="font-mono text-xs" />
 			</div>
 			<div class="space-y-2">
 				<Label for={`${id}-ssl`} class="text-xs">SSL</Label>
-				<Select.Root type="single" bind:value={sslMode} allowDeselect={false} disabled={pending}>
-					<Select.Trigger id={`${id}-ssl`} class="w-full text-xs">{SSL_MODES[sslMode]}</Select.Trigger>
+				<Select.Root type="single" value={sslMode} onValueChange={(mode) => url = withParam(url, 'sslmode', mode)} allowDeselect={false} disabled={pending}>
+					<Select.Trigger id={`${id}-ssl`} class="w-full text-xs">{SSL_MODES[sslMode as keyof typeof SSL_MODES] ?? sslMode}</Select.Trigger>
 					<Select.Content>
 						{#each Object.entries(SSL_MODES) as [value, label]}<Select.Item {value} {label} />{/each}
 					</Select.Content>
 				</Select.Root>
 			</div>
+			<div class="flex items-center gap-2">
+				<Checkbox id={`${id}-binding`} checked={channelBinding} disabled={pending}
+					onCheckedChange={(on) => url = withParam(url, 'channel_binding', on ? 'require' : null)} />
+				<Label for={`${id}-binding`} class="text-xs">Channel binding (SCRAM-SHA-256-PLUS, e.g. Neon)</Label>
+			</div>
+			<p class="text-xs text-muted-foreground">Other URL options go to the driver as written.</p>
 			{#if error}<p role="alert" class="text-xs break-words text-destructive">{error}</p>{/if}
 			{#if demoBlocked}
 				<p role="alert" class="text-xs text-destructive">This demo runs PostgreSQL inside your browser and cannot connect to other databases.
@@ -181,7 +182,7 @@
 		</form>
 		<Dialog.Footer>
 			{#if editing}<Button variant="destructive" size="sm" class="mr-auto" disabled={pending} onclick={remove}>Remove</Button>{/if}
-			<Button variant="outline" size="sm" disabled={pending || !url.trim()} onclick={() => void change({ url, sslMode })}>{pending ? 'Connecting…' : 'Connect'}</Button>
+			<Button variant="outline" size="sm" disabled={pending || !url.trim()} onclick={() => void change({ url })}>{pending ? 'Connecting…' : 'Connect'}</Button>
 			<Button type="submit" form={`${id}-form`} size="sm" disabled={pending || !name.trim() || !url.trim()}>Save</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

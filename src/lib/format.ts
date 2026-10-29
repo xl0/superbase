@@ -29,37 +29,46 @@ export function toTSV(rows: (CellValue | undefined)[][]): string {
 	}).join('\t')).join('\n');
 }
 
+/**
+ * Inverse of toTSV, lenient for raw text: a field counts as quoted only if its closing quote ends the field and its
+ * content needed quoting (as toTSV and spreadsheets quote). Anything else, e.g. `"key": 1` or `"abc"`, pastes as is.
+ */
 export function fromTSV(text: string): (CellValue | undefined)[][] {
 	const rows: (CellValue | undefined)[][] = [];
 	let row: (CellValue | undefined)[] = [];
-	let field = '';
-	let quoted = false;
-	let inQuotes = false;
-	let closed = false;
-	const finish = () => {
-		row.push(!quoted && field === '\\N' ? null : !quoted && field === '\\D' ? undefined : field);
-		field = ''; quoted = false; closed = false;
-	};
-	for (let i = 0; i < text.length; i++) {
-		const char = text[i];
-		if (inQuotes) {
-			if (char !== '"') field += char;
-			else if (text[i + 1] === '"') { field += '"'; i++; }
-			else { inQuotes = false; closed = true; }
-		} else if (char === '\t' || char === '\r' || char === '\n') {
-			finish();
-			if (char !== '\t') {
-				rows.push(row); row = [];
-				if (char === '\r' && text[i + 1] === '\n') i++;
+	const separator = (i: number) => i >= text.length || text[i] === '\t' || text[i] === '\r' || text[i] === '\n';
+	let i = 0;
+	for (;;) {
+		let value: CellValue | undefined;
+		let quoted: string | null = null;
+		if (text[i] === '"') {
+			let j = i + 1;
+			let content = '';
+			for (; j < text.length; j++) {
+				if (text[j] !== '"') content += text[j];
+				else if (text[j + 1] === '"') { content += '"'; j++; }
+				else break;
 			}
-		} else if (char === '"' && !field && !closed) {
-			quoted = true; inQuotes = true;
-		} else {
-			if (closed) throw new Error('Unexpected text after a quoted clipboard value');
-			field += char;
+			if (j < text.length && separator(j + 1) && (!content || content === '\\N' || content === '\\D' || /[\t\r\n"]/.test(content))) {
+				quoted = content;
+				i = j + 1;
+			}
 		}
+		if (quoted !== null) value = quoted;
+		else {
+			let end = i;
+			while (!separator(end)) end++;
+			const raw = text.slice(i, end);
+			value = raw === '\\N' ? null : raw === '\\D' ? undefined : raw;
+			i = end;
+		}
+		row.push(value);
+		if (i >= text.length) { rows.push(row); break; }
+		if (text[i++] === '\t') continue;
+		if (text[i - 1] === '\r' && text[i] === '\n') i++;
+		rows.push(row);
+		row = [];
+		if (i >= text.length) break;
 	}
-	if (inQuotes) throw new Error('Unclosed quote in clipboard data');
-	if (field || quoted || row.length || !rows.length) { finish(); rows.push(row); }
 	return rows;
 }

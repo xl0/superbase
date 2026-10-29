@@ -20,14 +20,18 @@
 	let draft = $state<{ column: string; operator: FilterOperator | ''; value: string } | null>(null);
 	let editingIndex = $state<number | null>(null);
 	let tableKey = untrack(() => editor.tableKey);
+	let filtersKey = untrack(() => JSON.stringify(editor.filters));
 	const blocked = $derived(editor.navigationBlocked || editor.loading);
 	const columns = $derived(editor.table.columns.filter((column) => column.name.toLowerCase().includes(query.toLowerCase())));
 	const operators = Object.entries(FILTER_OPERATORS) as [FilterOperator, (typeof FILTER_OPERATORS)[FilterOperator]][];
 	const placeholder = $derived(editor.filters.length ? 'Add more filters…' : `Filter by ${editor.table.columns.slice(0, 3).map((column) => column.name).join(', ')}…`);
 
+	// A draft edits one filter by index: a new table, new filters (Back/Forward) or a blocking edit drops it.
 	$effect(() => {
-		if (editor.tableKey !== tableKey || editor.navigationBlocked) {
+		const filters = JSON.stringify(editor.filters);
+		if (editor.tableKey !== tableKey || filters !== filtersKey || editor.navigationBlocked) {
 			tableKey = editor.tableKey;
+			filtersKey = filters;
 			draft = null;
 			editingIndex = null;
 			query = '';

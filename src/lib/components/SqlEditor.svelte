@@ -49,7 +49,7 @@
 		if (!sql.draft.trim()) return;
 		try {
 			if (sql.current) { sql.save(); return; }
-			const firstLine = sql.draft.trim().split('\n')[0].replace(/^--\s*/, '');
+			const firstLine = sql.draft.trim().split('\n')[0].replace(/^--\s*/, '') || 'Untitled';
 			sql.save(firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine);
 			void library.rename(sql.current!);
 		} catch (cause) { window.alert(`Could not save the snippet: ${message(cause)}`); }

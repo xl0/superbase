@@ -204,7 +204,9 @@ export function rowSelection(table: Table, args: RowQuery) {
 	for (const { column: name, operator, value } of args.filters ?? []) {
 		if (!Object.hasOwn(FILTER_OPERATORS, operator)) throw new Error(`Unknown filter operator: ${operator}`);
 		const { sql, needsValue } = FILTER_OPERATORS[operator];
-		clauses.push(`${column(name)} ${sql}${needsValue ? ` $${values.push(value)}` : ''}`);
+		// Patterns match any type's text; json has no comparison operators, so it compares as text too.
+		const text = operator === 'like' || operator === 'ilike' || table.columns.find((c) => c.name === name)?.type === 'json';
+		clauses.push(`${column(name)}${text ? '::text' : ''} ${sql}${needsValue ? ` $${values.push(value)}` : ''}`);
 	}
 	const order = args.sort.map(({ column: name, direction }) => `${column(name)} ${direction === 'desc' ? 'desc' : 'asc'} nulls last`);
 	for (const name of primaryKey(table)) {

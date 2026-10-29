@@ -74,13 +74,16 @@
 <div class="flex flex-wrap items-center gap-2 border-b px-3 py-2">
 	<span class="font-mono text-xs font-medium">{table.table}</span>
 	<span class={['rounded border px-1.5 py-0.5 text-[10px] uppercase', table.enabled ? 'border-primary/40 text-primary' : 'text-muted-foreground']}>
-		{table.forced ? 'RLS forced' : table.enabled ? 'RLS on' : 'RLS off'}</span>
+		{!table.enabled ? 'RLS off' : table.forced ? 'RLS forced' : 'RLS on'}</span>
 	{#if !editor.bypass && table.owner === editor.role && !table.forced && table.enabled}
 		<span class="text-[11px] text-muted-foreground">you own it, so you bypass its policies</span>
 	{/if}
 	<div class="ml-auto flex flex-wrap gap-1.5">
-		{#if table.enabled}
+		<!-- Forcing is a separate flag that survives disabling; enabling again would force at once. -->
+		{#if table.enabled || table.forced}
 			<Button variant="ghost" size="xs" onclick={() => rls(table.forced ? 'no force' : 'force')}>{table.forced ? 'Stop forcing' : 'Force for owner'}</Button>
+		{/if}
+		{#if table.enabled}
 			<Button variant="outline" size="xs" onclick={() => rls('disable')}>Disable RLS</Button>
 		{:else}
 			<Button variant="outline" size="xs" onclick={() => rls('enable')}>Enable RLS</Button>

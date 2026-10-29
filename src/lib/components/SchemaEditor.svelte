@@ -58,6 +58,7 @@
 
 	function build(): SchemaChange | null {
 		const types = catalog?.types ?? [];
+		for (const value of [name, ...columns.map((column) => column.name)]) ddl.checkName(value);
 		switch (intent.kind) {
 			case 'createTable':
 				return name && columns.every((column) => column.name) ? { sql: ddl.createTable(schema, name, columns, types), select: { schema, table: name } } : null;
@@ -73,7 +74,8 @@
 				return columns[0]?.name ? { sql: ddl.addColumn(qualified, columns[0], types) } : null;
 			case 'alterColumn': {
 				const sql = existing && columns[0]?.name ? ddl.alterColumn(qualified, existing, columns[0], types) : '';
-				return sql ? { sql } : null;
+				// A type change rewrites every value: conversions can round, truncate or drop parts of them.
+				return sql ? { sql, destructive: columns[0].typeOid !== null } : null;
 			}
 			case 'dropColumn':
 				return confirmation === intent.column ? { sql: `alter table ${qualified} drop column ${ddl.ident(intent.column)};`, destructive: true } : null;
@@ -179,7 +181,8 @@
 					<Checkbox id={`${id}-rows`} bind:checked={includeRows} disabled={saving} />
 					<Label for={`${id}-rows`} class="text-xs">Include rows</Label>
 				</div>
-				<p class="text-xs text-muted-foreground">Copies columns, defaults, constraints, indexes and comments (not foreign keys, triggers, policies or grants). Serial columns keep using the original table's sequence.</p>
+				<p class="text-xs text-muted-foreground">Copies columns, defaults, constraints, indexes and comments (not foreign keys, triggers, policies or grants). Serial columns keep using the original table's sequence.
+					{#if definition?.partitioned}The copy is a plain table, not partitioned.{/if}</p>
 			{/if}
 			{#if catalog}
 				{#each columns as column, i (column)}
@@ -199,6 +202,9 @@
 			{/if}
 			{#if intent.kind === 'addPrimaryKey'}
 				<ColumnChoice label="Primary key columns" columns={table.columns.map((column) => column.name)} bind:selected={keys} disabled={saving} />
+			{/if}
+			{#if intent.kind === 'alterColumn' && columns[0]?.typeOid}
+				<p class="text-xs text-destructive">Every value is converted to the new type; the conversion can round, truncate or drop parts of values.</p>
 			{/if}
 			{#if intent.kind === 'dropTable' || intent.kind === 'dropColumn'}
 				{@const target = intent.kind === 'dropColumn' ? intent.column : table.name}

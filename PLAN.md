@@ -40,6 +40,8 @@ Nothing queued; pick from the list below.
 
 ## Later / maybe
 
+- Role membership revokes on PG16+ silently do nothing when another role granted it (needs `granted by`).
+- Database → Configuration ignores `alter role … in database … set` overrides.
 - Read-only mode for the viewer deployment (would need SQL console restrictions).
 - Schema diagram editing: drag column→column to open the FK form prefilled; table menu on cards.
 - Nested/OR filters.

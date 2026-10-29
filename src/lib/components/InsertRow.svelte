@@ -122,7 +122,7 @@
 								<Select.Content>{#each options as option, index}<Select.Item value={String(index)} label={optionLabel(column, option)} />{/each}</Select.Content>
 							</Select.Root>
 						{:else if richText}
-							<TextEditor id={`${id}-field-${i}`} language={column.kind === 'text' ? 'text' : 'json'} {value} {placeholder} label={column.name} readonly={editor.busy}
+							<TextEditor id={`${id}-field-${i}`} language={column.kind === 'text' ? 'text' : 'json'} pretty={column.type !== 'json'} {value} {placeholder} label={column.name} readonly={editor.busy}
 								onchange={(next) => change(column.name, next)} class="h-40" />
 						{:else if column.kind === 'array'}
 							<Textarea id={`${id}-field-${i}`} value={value ?? ''} {placeholder} disabled={editor.busy}

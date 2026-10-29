@@ -2,7 +2,6 @@ import type pg from 'pg';
 import type { SchemaCatalog, SchemaDefinition, SchemaType } from '../schema.js';
 import type { TableTarget } from '../types.js';
 import { literal } from '../ddl.js';
-import { invalidateMetadata } from './db.js';
 
 export async function listSchemaCatalog(pool: pg.Pool): Promise<SchemaCatalog> {
 	const schemas = await pool.query<{ schema: string }>(`
@@ -72,7 +71,7 @@ export async function tableDefinition(pool: pg.Pool, target: TableTarget): Promi
 		await client.query('begin read only; set local search_path = pg_catalog, pg_temp');
 		return await buildDefinition(client, target);
 	} finally {
-		await client.query('rollback');
+		await client.query('rollback').catch(() => {}); // A broken connection must not hide the read's own error.
 		client.release();
 	}
 }
@@ -104,7 +103,8 @@ async function buildDefinition(client: pg.PoolClient, target: TableTarget): Prom
 		where conrelid = $1 and contype in ('p', 'u', 'c', 'x', 'f') order by position(contype::text in 'pucxf'), conname`, [relation.oid]);
 	const indexes = await client.query<{ definition: string }>(`
 		select pg_get_indexdef(i.indexrelid) as definition from pg_index i join pg_class ic on ic.oid = i.indexrelid
-		where i.indrelid = $1 and not exists(select from pg_constraint con where con.conindid = i.indexrelid and con.conrelid = i.indrelid)
+		where i.indrelid = $1 and not exists(select from pg_constraint con where con.conindid = i.indexrelid and con.conrelid = i.indrelid
+		  and con.contype in ('p', 'u', 'x')) -- emitted as constraints; a foreign key only points at an index
 		order by ic.relname`, [relation.oid]);
 	const triggers = await client.query<{ definition: string }>(`
 		select pg_get_triggerdef(oid) as definition from pg_trigger where tgrelid = $1 and not tgisinternal order by tgname`, [relation.oid]);
@@ -145,10 +145,9 @@ export async function executeDdl(pool: pg.Pool, sql: string): Promise<void> {
 		await client.query(sql);
 		await client.query('commit');
 	} catch (error) {
-		await client.query('rollback');
+		await client.query('rollback').catch(() => {}); // Report the statement's error, not a failed rollback's.
 		throw error;
 	} finally {
 		client.release();
 	}
-	invalidateMetadata(pool);
 }

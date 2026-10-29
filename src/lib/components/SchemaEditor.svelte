@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { Plus, Trash2, X } from '@lucide/svelte';
 	import { schemaCatalog, schemaDefinition } from '#lib/db.remote.js';
 	import { editor } from '#lib/state/editor.svelte.js';
@@ -64,7 +64,7 @@
 			case 'renameTable':
 				return name && name !== table.name ? { sql: `alter table ${qualified} rename to ${ddl.ident(name)};`, select: { schema: table.schema, table: name } } : null;
 			case 'duplicateTable':
-				return name ? { sql: ddl.duplicateTable(table, name, includeRows), select: { schema: table.schema, table: name } } : null;
+				return name && definition ? { sql: ddl.duplicateTable(definition, name, includeRows), select: { schema: table.schema, table: name } } : null;
 			case 'dropTable':
 				return confirmation === table.name ? { sql: `drop ${table.kind} ${qualified};`, destructive: true } : null;
 			case 'refreshView':
@@ -93,7 +93,7 @@
 		void (async () => {
 			try {
 				const needsCatalog = creating || intent.kind === 'addColumn' || intent.kind === 'alterColumn';
-				const needsDefinition = intent.kind === 'alterColumn' || intent.kind === 'indexes' || intent.kind === 'constraints';
+				const needsDefinition = intent.kind === 'alterColumn' || intent.kind === 'duplicateTable' || intent.kind === 'indexes' || intent.kind === 'constraints';
 				[catalog, definition] = await Promise.all([
 					needsCatalog ? fresh(schemaCatalog({ connection: editor.connection })) : null,
 					needsDefinition ? fresh(schemaDefinition({ connection: editor.connection, schema: table.schema, table: table.name })) : null
@@ -114,7 +114,6 @@
 			focusFirst();
 		})();
 	});
-	onDestroy(() => { editor.schemaEditing = false; });
 
 	function focusFirst() {
 		panel?.querySelector<HTMLElement>('[data-schema-fields] :is(input, textarea, button):not(:disabled)')?.focus();

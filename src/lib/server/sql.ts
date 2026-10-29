@@ -77,6 +77,7 @@ export class SqlSessions {
 		query.on('error', (error) => { output.error = this.redact(error); });
 		const notice = (message: { message?: string }) => {
 			if (output.notices.length < SQL_MAX_RESULTS) output.notices.push(this.redact(message.message ?? ''));
+			else output.truncated = true;
 		};
 		let done!: () => void;
 		const ended = () => done();
@@ -90,14 +91,15 @@ export class SqlSessions {
 				session.client.query(query);
 			});
 			if (session.closed) output.error = 'SQL connection lost; the outcome of unfinished work is unknown.';
-			const results = (query as unknown as { _results: pg.QueryResult | pg.QueryResult[] })._results;
-			output.results = [results].flat().filter((result) => result.command || result.fields.length)
-				.slice(0, SQL_MAX_RESULTS).map((result): SqlResult => ({
-					command: result.command, rowCount: result.rowCount,
-					fields: result.fields.map((field) => ({ name: field.name, typeOid: field.dataTypeID })),
-					rows: rows.get(result) ?? [],
-					truncated: result.fields.length > 0 && (rows.get(result)?.length ?? 0) < (result.rowCount ?? 0)
-				}));
+			const results = [(query as unknown as { _results: pg.QueryResult | pg.QueryResult[] })._results].flat()
+				.filter((result) => result.command || result.fields.length);
+			if (results.length > SQL_MAX_RESULTS) output.truncated = true;
+			output.results = results.slice(0, SQL_MAX_RESULTS).map((result): SqlResult => ({
+				command: result.command, rowCount: result.rowCount,
+				fields: result.fields.map((field) => ({ name: field.name, typeOid: field.dataTypeID })),
+				rows: rows.get(result) ?? [],
+				truncated: result.fields.length > 0 && (rows.get(result)?.length ?? 0) < (result.rowCount ?? 0)
+			}));
 			output.transaction = this.status(session);
 			output.durationMs = Math.round(performance.now() - started);
 			return output;

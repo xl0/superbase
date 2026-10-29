@@ -1,4 +1,4 @@
-import type { FilterOperator, RowFilter, Sort, Values } from './types.js';
+import { FILTER_OPERATORS, type FilterOperator, type RowFilter, type Sort, type Values } from './types.js';
 
 /** What the table editor shows. Schema and table live in the route; the rest in the URL hash. */
 export interface TableView {
@@ -23,7 +23,7 @@ export function viewHash(view: TableView): string {
 	return text ? `#${text}` : '';
 }
 
-/** Inverse of viewHash. Unknown operators pass through for the server to reject. */
+/** Inverse of viewHash. Filters with an unknown operator (a hand-edited or stale link) are dropped. */
 export function parseViewHash(hash: string): Omit<TableView, 'schema' | 'table'> {
 	const params = new URLSearchParams(hash.replace(/^#/, ''));
 	const filters: RowFilter[] = [];
@@ -32,7 +32,7 @@ export function parseViewHash(hash: string): Omit<TableView, 'schema' | 'table'>
 	for (const [key, value] of params) {
 		if (key.startsWith('f.')) {
 			const [operator, ...rest] = value.split('.');
-			filters.push({ column: key.slice(2), operator: operator as FilterOperator, value: rest.join('.') });
+			if (Object.hasOwn(FILTER_OPERATORS, operator)) filters.push({ column: key.slice(2), operator: operator as FilterOperator, value: rest.join('.') });
 		} else if (key === 'sort') {
 			const dot = value.lastIndexOf('.');
 			sort.push({ column: value.slice(0, dot), direction: value.slice(dot + 1) === 'desc' ? 'desc' : 'asc' });

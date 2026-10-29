@@ -1,6 +1,5 @@
 /** Pure DDL generation for the schema forms. Output is previewed, then run as one transaction. */
-import type { Table } from './types.js';
-import type { ReferentialAction, SchemaColumn, SchemaType } from './schema.js';
+import type { ReferentialAction, SchemaColumn, SchemaDefinition, SchemaType } from './schema.js';
 import type { PolicyCommand } from './database.js';
 
 export type ColumnDefault =
@@ -115,16 +114,16 @@ export function alterColumn(table: string, old: SchemaColumn & { primaryKey: boo
 }
 
 /** LIKE copies columns, defaults, constraints, indexes and comments. Serial columns keep sharing the source sequence. */
-export function duplicateTable(source: Table, name: string, includeRows: boolean): string {
-	const from = qualify(source.schema, source.name);
+export function duplicateTable(source: SchemaDefinition, name: string, includeRows: boolean): string {
+	const from = qualify(source.schema, source.table);
 	const to = qualify(source.schema, name);
 	const statements = [`create table ${to} (like ${from} including all);`];
 	if (includeRows) {
 		const columns = source.columns.filter((column) => !column.generated).map((column) => ident(column.name)).join(', ');
 		statements.push(`insert into ${to} (${columns}) overriding system value select ${columns} from ${from};`);
-		// New identity sequences must continue after the copied values.
+		// New identity sequences continue after the copied values; with none, they keep LIKE's start.
 		for (const column of source.columns.filter((column) => column.identity)) {
-			statements.push(`select setval(pg_get_serial_sequence(${literal(to)}, ${literal(column.name)}), coalesce(max(${ident(column.name)}), 0) + 1, false) from ${to};`);
+			statements.push(`select setval(pg_get_serial_sequence(${literal(to)}, ${literal(column.name)}), max(${ident(column.name)})) from ${to} having max(${ident(column.name)}) is not null;`);
 		}
 	}
 	return statements.join('\n');

@@ -59,8 +59,7 @@ const column = (name: string, type: string, rest: Partial<ddl.ColumnSpec> = {}):
 		await expect(executeDdl(pool, `alter table ${table} add column extra int; alter table ${table} add column extra int;`)).rejects.toThrow();
 		expect((await getSchemaDefinition(pool, { connection: 'test', schema, table: 'odd "table"' })).columns.some((column) => column.name === 'extra')).toBe(false);
 
-		const source = (await listTables(pool)).tables.find((table) => table.schema === schema && table.name === 'odd "table"')!;
-		await executeDdl(pool, ddl.duplicateTable(source, 'copy', true));
+		await executeDdl(pool, ddl.duplicateTable(await getSchemaDefinition(pool, { connection: 'test', schema, table: 'odd "table"' }), 'copy', true));
 		const copy = ddl.qualify(schema, 'copy');
 		await pool.query(`insert into ${copy} (title) values ('c')`);
 		expect((await pool.query(`select id::text, title from ${copy} order by id`)).rows.map((row) => row.id)).toEqual(['1', '2', '3']);

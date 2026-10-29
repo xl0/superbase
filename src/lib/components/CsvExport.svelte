@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { Download, X } from '@lucide/svelte';
 	import { editor } from '#lib/state/editor.svelte.js';
 	import type { CsvExportArgs } from '#lib/types.js';
@@ -55,7 +56,7 @@
 	aria-label="Export CSV" title="Download rows matching the filters as CSV" onclick={start}><Download /></Button>
 
 <iframe hidden name={`${id}-download`} title="CSV download" src="about:blank" sandbox="allow-same-origin allow-downloads" onload={loaded}></iframe>
-<form bind:this={form} hidden method="POST" action="/export" target={`${id}-download`}>
+<form bind:this={form} hidden method="POST" action={resolve('/export')} target={`${id}-download`}>
 	<input type="hidden" name="export" value={payload} />
 </form>
 

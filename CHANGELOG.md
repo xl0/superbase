@@ -21,6 +21,7 @@
 - Tabs can work on different databases at the same time: the server keeps a connection pool per database, and each request names the database its page shows. A server restart now asks to reload (which reconnects a saved connection) instead of reporting a change in another tab.
 - Saving a new connection connects to it right away.
 - Array cells copy as JSON, and pasting a JSON array into an array cell converts it (Postgres literals paste as before).
+- `json[]`/`jsonb[]` cells show and edit the Postgres literal: as JSON, a nested array could be a dimension or a document, and multi-dimensional values were saved back flattened.
 - Performance page laid out like Supabase's: time share bars, min time, role filter, a details panel per statement and CSV export.
 - CSV export is one toolbar button: choose columns, then download the rows matching the grid's filters in grid order. The table menu no longer exports.
 - Editing a constraint edits its full definition as PostgreSQL prints it, so clauses the form doesn't show (DEFERRABLE, NOT VALID, NULLS NOT DISTINCT, INCLUDE…) are kept; a new name alone renames it.
@@ -36,6 +37,11 @@
 - Resetting query statistics works when pg_stat_statements is installed in a schema outside the search path.
 - Enums count array columns (`mood[]`) among the columns using them.
 - Docker images install `pg` and its dependencies at the lockfile's versions.
+- Duplicating a table with its rows no longer restarts identity columns at 1 when the source is empty (or fails with a higher minimum); it also copies columns added since the table list was loaded.
+- "Set to Now" is no longer offered for date/time arrays.
+- Refreshing the table list, or changes made on Database pages, no longer send the table editor back to page 1 and blank the grid.
+- The SQL console says when results or messages beyond the first 50 were left out.
+- The column form: unticking Primary key restores the previous Allow NULL choice, and turning a column into an array drops an identity or preset default that no longer fits.
 - Connecting with a wrong password to a database the server already has open fails instead of reusing the open connection; new working credentials replace it.
 
 ## [0.2.0] - 2026-10-25

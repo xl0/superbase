@@ -56,6 +56,8 @@ export class EditorState {
 	/** Selections own their captured identities across pages. */
 	rowSelection = $state<Record<string, Record<string, RowIdentity>>>({});
 	#request = 0;
+	/** Metadata reloads count separately: a row read started meanwhile must not discard the new metadata. */
+	#metadata = 0;
 	#liveGeneration = 0;
 	/** A poll was asked for while one ran, which may have read before the change: poll again after it. */
 	#pollAgain = false;
@@ -107,16 +109,18 @@ export class EditorState {
 		await this.#reload();
 	}
 
-	async #reload() {
+	/** Reloads metadata, then the rows; the view (page, filters…) survives while its table exists. */
+	async #reload(retainRows = true) {
+		const reload = ++this.#metadata;
 		const request = ++this.#request;
 		this.loading = true;
-		this.rows = [];
+		if (!retainRows) this.rows = [];
 		this.error = null;
 		this.liveError = null;
 		this.externalChange = false;
 		try {
 			const result = await fresh(database({ connection: this.connection }));
-			if (request !== this.#request) return;
+			if (reload !== this.#metadata) return;
 			this.tables = result.tables;
 			this.version = result.version;
 			this.role = result.role;
@@ -124,7 +128,8 @@ export class EditorState {
 			this.roles = result.roles;
 			this.schemas = result.schemas;
 			this.ready = true;
-			if (this.table === EMPTY_TABLE) {
+			const replaced = this.table === EMPTY_TABLE;
+			if (replaced) {
 				// Keep an existing (possibly empty) schema; otherwise prefer public's tables.
 				const schema = this.schemas.includes(this.activeSchema) ? this.activeSchema
 					: (this.tables.find((table) => table.schema === 'public') ?? this.tables[0])?.schema ?? this.schemas[0] ?? '';
@@ -133,9 +138,10 @@ export class EditorState {
 				this.sort = [];
 				this.filters = [];
 				this.reference = null;
+				this.page = 0;
 			}
-			this.page = 0;
-			await this.fetch();
+			// A navigation started meanwhile reads its own rows.
+			if (request === this.#request) await this.fetch(retainRows && !replaced);
 		} catch (error) {
 			if (request === this.#request) this.error = message(error);
 		} finally {
@@ -158,10 +164,6 @@ export class EditorState {
 		try {
 			const result = await this.#readRows();
 			if (request !== this.#request) return;
-			if (!result.rows.length && this.page > 0) {
-				this.page = 0;
-				return this.fetch();
-			}
 			this.rows = result.rows;
 			this.rowsPage = this.page;
 			this.hasMore = result.hasMore;
@@ -229,12 +231,7 @@ export class EditorState {
 
 	async selectTable(schema: string, name: string, reference: Values | null = null) {
 		if (this.navigationBlocked || (!reference && !this.reference && schema === this.activeSchema && name === this.activeTableName)) return;
-		this.activeSchema = schema;
-		this.activeTableName = name;
-		this.page = 0;
-		this.sort = [];
-		this.filters = [];
-		this.reference = reference;
+		this.#assign({ schema, table: name, filters: [], sort: [], page: 0, reference });
 		this.savedAt = null;
 		await this.fetch();
 	}
@@ -268,7 +265,7 @@ export class EditorState {
 			this.error = message(error);
 			return;
 		} finally { this.busy = false; }
-		await this.#reload();
+		this.table.realtime = enable;
 	}
 
 	/** Selections are dropped: their rows were read as the previous role. */
@@ -314,7 +311,6 @@ export class EditorState {
 
 	async applySchema(change: SchemaChange) {
 		if (this.editing || this.inserting || this.busy || this.loading) throw new Error('Finish editing rows first');
-		this.#request++;
 		this.#liveGeneration++;
 		this.busy = true;
 		this.savedAt = null;
@@ -322,16 +318,16 @@ export class EditorState {
 			await changeSchema({ connection: this.connection, sql: change.sql });
 			this.savedAt = Date.now();
 			this.rowSelection = {};
-			this.cellSelected = false;
 			this.filters = [];
 			this.reference = null;
 			this.sort = [];
+			this.page = 0;
 			if (change.select) {
 				this.activeSchema = change.select.schema;
 				this.activeTableName = change.select.table;
 			}
 			// The DDL is committed; a failed refresh below is a read error, not a failed change.
-			await this.#reload();
+			await this.#reload(false);
 		} finally { this.busy = false; }
 	}
 

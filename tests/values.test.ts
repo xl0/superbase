@@ -37,8 +37,7 @@ describe('arrays as JSON', () => {
 		const cases: [Column['kind'], string, string][] = [
 			['text', '{"a\\"b","c\\\\d",NULL,"NULL","","x y",plain}', '["a\\"b","c\\\\d",null,"NULL","","x y","plain"]'],
 			['number', '{{1.10,9007199254740993},{NaN,-2e+5}}', '[[1.10,9007199254740993],["NaN",-2e+5]]'],
-			['boolean', '{t,f,NULL}', '[true,false,null]'],
-			['json', '{"{\\"a\\": 1.0}","[1, 2]",NULL}', '[{"a": 1.0},[1, 2],null]']
+			['boolean', '{t,f,NULL}', '[true,false,null]']
 		];
 		for (const [element, literal, json] of cases) {
 			expect(arrayJSON(literal, array(element))).toBe(json);

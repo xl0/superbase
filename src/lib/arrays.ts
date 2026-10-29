@@ -48,7 +48,6 @@ function itemJSON(item: Item, element: ColumnKind): string {
 	// Element text is used verbatim where it already is valid JSON, so numbers keep their spelling.
 	if (element === 'number' && JSON_NUMBER.test(item)) return item;
 	if (element === 'boolean') return item === 't' || item === 'true' ? 'true' : 'false';
-	if (element === 'json') return item;
 	return JSON.stringify(item);
 }
 
@@ -75,19 +74,19 @@ export function arrayLiteral(source: string, element: ColumnKind): string {
 	tree.iterate({ enter: (node) => { if (node.type.isError) invalid = true; } });
 	const top = tree.topNode.firstChild;
 	if (invalid || top?.name !== 'Array') throw new Error('Enter a JSON array, e.g. ["a", "b"] or [1, 2].');
-	// Nested arrays are dimensions, except in json/jsonb arrays where every element is a document.
-	const convert = (node: NonNullable<typeof top>, nested: boolean): string => {
+	// Nested arrays are dimensions.
+	const convert = (node: NonNullable<typeof top>): string => {
 		if (node.name === 'Null') return 'NULL';
-		if (node.name === 'Array' && !(nested && element === 'json')) {
+		if (node.name === 'Array') {
 			const items: string[] = [];
 			for (let child = node.firstChild; child; child = child.nextSibling) {
-				if (child.name !== '[' && child.name !== ']' && child.name !== ',') items.push(convert(child, true));
+				if (child.name !== '[' && child.name !== ']' && child.name !== ',') items.push(convert(child));
 			}
 			return `{${items.join(',')}}`;
 		}
 		const text = source.slice(node.from, node.to);
-		if (element !== 'json' && node.name === 'String') return quote(JSON.parse(text));
+		if (node.name === 'String') return quote(JSON.parse(text));
 		return node.name === 'Number' || node.name === 'True' || node.name === 'False' ? text : quote(text);
 	};
-	return convert(top, false);
+	return convert(top);
 }

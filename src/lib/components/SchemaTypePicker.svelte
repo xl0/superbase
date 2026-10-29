@@ -25,10 +25,10 @@
 	function choose(oid: string, array = type?.kind === 'array') {
 		const chosen = types.find((type) => type.oid === oid);
 		if (oid !== 'keep' && !chosen) return;
-		// A different base type invalidates its modifiers and type-specific defaults (identity, presets).
-		if (chosen?.oid !== base?.oid) {
-			value.typeModifiers = '';
-			if (value.default.kind === 'identity' || value.default.kind === 'expression') value.default = { kind: existing ? 'keep' : 'none' };
+		// A different base type invalidates its modifiers; it or an array invalidates type-specific defaults (identity, presets).
+		if (chosen?.oid !== base?.oid) value.typeModifiers = '';
+		if ((chosen?.oid !== base?.oid || array) && (value.default.kind === 'identity' || value.default.kind === 'expression')) {
+			value.default = { kind: existing ? 'keep' : 'none' };
 		}
 		value.typeOid = !chosen ? null : array && chosen.arrayOid ? chosen.arrayOid : chosen.oid;
 		query = '';

@@ -74,12 +74,13 @@
 	</div>
 	<div class="flex flex-wrap items-center gap-x-5 gap-y-3 @min-[540px]:col-span-2">
 		<div class="flex items-center gap-2">
-			<Checkbox id={`${id}-nullable`} bind:checked={value.nullable} disabled={disabled || value.primaryKey || value.default.kind === 'identity' || !!existing?.identity} />
+			<!-- A primary key is NOT NULL by itself; `nullable` keeps the choice for when the key is unticked. -->
+			<Checkbox id={`${id}-nullable`} checked={value.nullable && !value.primaryKey} onCheckedChange={(checked) => value.nullable = checked} disabled={disabled || value.primaryKey || value.default.kind === 'identity' || !!existing?.identity} />
 			<Label for={`${id}-nullable`} class="text-xs">Allow NULL</Label>
 		</div>
 		<div class="flex items-center gap-2">
 			<Checkbox id={`${id}-pk`} checked={value.primaryKey} disabled={disabled || !canSetPrimaryKey || !!existing?.primaryKey}
-				onCheckedChange={(checked) => { value.primaryKey = checked; if (checked) value.nullable = false; }} />
+				onCheckedChange={(checked) => value.primaryKey = checked} />
 			<Label for={`${id}-pk`} class="text-xs">Primary key</Label>
 		</div>
 	</div>

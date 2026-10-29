@@ -4,7 +4,7 @@ import type {
 	Column, ColumnKind, DeleteArgs, Row, RowIdentity, RowQuery, RowsArgs, RowsPage,
 	SaveArgs, Table, Values, ViewAs
 } from '../types.js';
-import { FILTER_OPERATORS, tableKey, writable } from '../types.js';
+import { FILTER_OPERATORS, writable } from '../types.js';
 import { ident, qualify, REALTIME_SCHEMA } from '../ddl.js';
 
 /** Per-query parser: every value stays PostgreSQL's exact text output (numeric, JSON, arrays…). */
@@ -128,7 +128,9 @@ export async function loadMetadata(
 			name: row.name,
 			type: row.exact_type,
 			kind: kindOf(row.type_name, row.type_kind, row.type_category),
-			element: row.element_name ? kindOf(row.element_name, row.element_kind!, row.element_category!) : undefined,
+			// json[]/jsonb[] keep the literal: a nested JSON array could be a dimension or a document.
+			element: row.element_name && row.element_name !== 'json' && row.element_name !== 'jsonb'
+				? kindOf(row.element_name, row.element_kind!, row.element_category!) : undefined,
 			nullable: !row.not_null,
 			primaryKey: row.is_primary_key,
 			generated: row.generated,
@@ -157,31 +159,6 @@ export async function loadMetadata(
 	}));
 }
 
-// Refresh explicitly on listTables, or at most every 30 seconds on reads.
-// Replacing the whole map also discards dropped tables instead of accumulating stale entries.
-const metadata = new WeakMap<pg.Pool, { expires: number; tables: Promise<Map<string, Table>> }>();
-
-export function invalidateMetadata(pool: pg.Pool): void {
-	metadata.delete(pool);
-}
-
-async function cachedTables(pool: pg.Pool, refresh = false): Promise<Map<string, Table>> {
-	let cached = metadata.get(pool);
-	if (refresh || !cached || cached.expires <= Date.now()) {
-		cached = {
-			expires: Date.now() + 30_000,
-			tables: loadMetadata(pool).then((tables) => new Map(tables.map((table) => [tableKey(table.schema, table.name), table])))
-		};
-		metadata.set(pool, cached);
-	}
-	try {
-		return await cached.tables;
-	} catch (error) {
-		if (metadata.get(pool) === cached) metadata.delete(pool);
-		throw error;
-	}
-}
-
 function primaryKey(table: Table): string[] {
 	return table.columns.filter((column) => column.primaryKey).map((column) => column.name);
 }
@@ -192,7 +169,7 @@ function primaryKey(table: Table): string[] {
  */
 export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; schemas: string[]; version: string; role: string; bypass: boolean; roles: string[] }> {
 	const [tables, info] = await Promise.all([
-		cachedTables(pool, true),
+		loadMetadata(pool),
 		pool.query<{ schemas: string[]; version: string; role: string; bypass: boolean; roles: string[] }>(`
 			select array(select nspname::text from pg_namespace where nspname !~ '^pg_' and nspname not in ('information_schema', '${REALTIME_SCHEMA}')
 			             and has_schema_privilege(oid, 'USAGE')) as schemas,
@@ -201,7 +178,7 @@ export async function listTables(pool: pg.Pool): Promise<{ tables: Table[]; sche
 			       array(select rolname::text from pg_roles where rolname !~ '^pg_' order by rolname) as roles`)
 	]);
 	const { schemas, ...rest } = info.rows[0];
-	return { tables: [...tables.values()], schemas: [...new Set([...schemas, ...[...tables.values()].map((table) => table.schema)])].sort(), ...rest };
+	return { tables, schemas: [...new Set([...schemas, ...tables.map((table) => table.schema)])].sort(), ...rest };
 }
 
 /** Act as `as.role` for the rest of the transaction, with its session settings (RLS testing). */
@@ -240,8 +217,9 @@ export function rowSelection(table: Table, args: RowQuery) {
 }
 
 export async function listRows(pool: pg.Pool, args: RowsArgs): Promise<RowsPage> {
-	const table = (await cachedTables(pool)).get(tableKey(args.schema, args.table));
-	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh metadata`);
+	// Metadata is read with every page (one table's: cheap), so reads always match the current columns.
+	const [table] = await loadMetadata(pool, args);
+	if (!table) throw new Error(`Table ${args.schema}.${args.table} not found; refresh the table list`);
 	const pkColumns = primaryKey(table);
 	const { where, order, values } = rowSelection(table, args);
 	const selected = table.columns.map((column) => `t.${ident(column.name)}`);
@@ -321,7 +299,7 @@ async function mutate<T>(
 		await client.query('commit');
 		return result;
 	} catch (error) {
-		await client.query('rollback');
+		await client.query('rollback').catch(() => {}); // Report the write's error, not a failed rollback's.
 		throw error;
 	} finally {
 		client.release();

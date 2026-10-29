@@ -53,7 +53,8 @@
 			{#if description}<Dialog.Description class="text-xs">{description}</Dialog.Description>{/if}
 		</Dialog.Header>
 		<form id={`${id}-form`} class="min-h-0 space-y-4 overflow-y-auto p-1" onsubmit={(event) => { event.preventDefault(); void apply(); }}>
-			{@render children?.()}
+			<!-- Fields can't change the statement while it runs. -->
+			<fieldset disabled={applying} class="contents">{@render children?.()}</fieldset>
 			{#if sql}<pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{preview ?? sql}</pre>{/if}
 			{#if error}<p role="alert" class="text-xs break-words text-destructive">{error}</p>{/if}
 		</form>

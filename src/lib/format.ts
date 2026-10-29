@@ -1,7 +1,8 @@
 import type { CellValue, Column } from './types.js';
 import { arrayJSON } from './arrays.js';
 
-export const isTemporal = (column: Column) => /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type);
+/** Date/time columns, which accept 'now'; not their arrays (`timestamp with time zone[]`). */
+export const isTemporal = (column: Column) => column.kind !== 'array' && /^(date|timestamp|time)(?:\(|\s|$)/.test(column.type);
 /** Fixed choices for boolean ('t'/'f' as PostgreSQL prints them) and enum columns. */
 export const valueOptions = (column: Column) => column.kind === 'boolean' ? ['t', 'f'] : column.enumValues ?? [];
 export const optionLabel = (column: Column, option: string) =>

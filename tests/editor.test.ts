@@ -12,11 +12,15 @@ async function fixture() {
 	let save: (() => Promise<void>) | undefined;
 	let ddl: ((args: any) => Promise<void>) | undefined;
 	let read: ((args: any) => Promise<{ rows: Row[]; hasMore: boolean }>) | undefined;
+	let metadata: (() => Promise<Table[]>) | undefined;
 	const column = (name: string, primaryKey = false) => ({ name, primaryKey, type: 'text', kind: 'text' as const, nullable: !primaryKey, generated: false, identity: null, defaultValue: null });
 	const tables: Table[] = ['a', 'b'].map((name) => ({ schema: 'public', name, kind: 'table' as const, rls: false, realtime: false, rowCount: 200, columns: [column('id', true), column('value'), column('__proto__'), column('constructor')] }));
 	const row = (id: string, value = 'original'): Row => ({ key: id, values: { id, value }, identity: { pk: { id }, version: '1', relation: '123' } });
 	const api = {
-		database: () => ({ refresh: async () => {}, current: { tables, schemas: ['public'], version: '18' } }),
+		database: () => {
+			const resource = { current: null as any, refresh: async () => { resource.current = { tables: await (metadata?.() ?? tables), schemas: ['public'], version: '18' }; } };
+			return resource;
+		},
 		tableRows: (args: any) => {
 			const resource = { current: null as any, refresh: async () => { resource.current = await (read?.(args) ?? Promise.resolve({ rows: [row(args.page ? '2' : '1')], hasMore: true })); } };
 			return resource;
@@ -39,7 +43,7 @@ async function fixture() {
 	delete (globalThis as any)[key];
 	const editor = new EditorState();
 	await editor.initialize('connection-1');
-	return { editor, calls, tables, row, deferSave: (fn: () => Promise<void>) => save = fn, deferRead: (fn: typeof read) => read = fn, deferSchema: (fn: typeof ddl) => ddl = fn };
+	return { editor, calls, tables, row, deferSave: (fn: () => Promise<void>) => save = fn, deferRead: (fn: typeof read) => read = fn, deferSchema: (fn: typeof ddl) => ddl = fn, deferMetadata: (fn: typeof metadata) => metadata = fn };
 }
 
 function deferred<T = void>() {
@@ -271,4 +275,19 @@ test('a poll asked for while one runs reads again after it (realtime notificatio
 	await polling;
 	assert.equal(reads, 2);
 	assert.equal(s.rows[0].key, 'changed');
+});
+
+test('metadata reloads keep the view, and apply even when a navigation starts meanwhile', async () => {
+	const { editor: s, tables, deferMetadata } = await fixture();
+	await s.setPage(1);
+	await s.reload();
+	assert.equal(s.page, 1);
+	const pending = deferred<Table[]>();
+	deferMetadata(() => pending.promise);
+	const reloading = s.reload();
+	await s.selectTable('public', 'b');
+	pending.resolve(tables.map((table) => ({ ...table, realtime: table.name === 'b' })));
+	await reloading;
+	assert.equal(s.activeTableName, 'b');
+	assert.equal(s.table.realtime, true);
 });

@@ -25,9 +25,8 @@
 	onMount(load);
 
 	function close() {
-		onclose();
-		// The RLS flag drives the Role menu; reload the metadata once the panel no longer blocks navigation.
-		if (changed) queueMicrotask(() => void editor.reload());
+		onclose(); // Clears schemaEditing first, so the reload below isn't blocked.
+		if (changed) void editor.reload(); // The RLS flag drives the Role menu.
 	}
 </script>
 

@@ -116,7 +116,7 @@
 
 <svelte:window onbeforeunload={(event) => { if (!leaving && unsavedWork()) event.preventDefault(); }} onpagehide={(event) => {
 	// Release the SQL session on close/reload; server idle expiry covers crashes.
-	if (!event.persisted && sql.session && import.meta.env.MODE !== 'demo') navigator.sendBeacon('/sql/close', JSON.stringify({ connection: sql.connection, session: sql.session }));
+	if (!event.persisted && sql.session && import.meta.env.MODE !== 'demo') navigator.sendBeacon(resolve('/sql/close'), JSON.stringify({ connection: sql.connection, session: sql.session }));
 }} />
 
 <div class="flex h-dvh flex-col">
@@ -239,6 +239,6 @@
 		{/if}
 	</div>
 </div>
-{#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} table={schemaEdit.table} returnFocus={schemaEdit.anchor} onclose={() => schemaEdit = null} />{/if}
+{#if schemaEdit}<SchemaEditor mode={schemaEdit.mode} table={schemaEdit.table} returnFocus={schemaEdit.anchor} onclose={() => { schemaEdit = null; editor.schemaEditing = false; }} />{/if}
 {#if sidePanel?.kind === 'access'}<TableAccessPanel table={sidePanel.table} onclose={() => { sidePanel = null; editor.schemaEditing = false; }} />
 {:else if sidePanel?.kind === 'definition'}<TableDefinitionPanel table={sidePanel.table} onclose={() => sidePanel = null} />{/if}

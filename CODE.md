@@ -46,7 +46,8 @@ theirs). One-off URLs are never stored, so they cannot reconnect after a server 
 
 `/db/[db]/tables/[[schema]]/[[table]]`, `/db/[db]/sql`, `/db/[db]/database/[[section]]`; the
 table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
-`#f.status=eq.pending&sort=placed_at.desc`), so filter values never reach the server.
+`#f.status=eq.pending&sort=placed_at.desc`), so they stay out of page requests (row reads still
+send them, as remote query arguments). Filters with an unknown operator are dropped when parsed.
 - `[db]` is `connectionId` (FNV-1a) of the password-free target. `db/[db]/+layout.svelte` opens
   the app with the open database whose id matches (passing its key down), otherwise connects the
   saved profile with that id (one attempt), otherwise shows the connection manager; locked mode
@@ -65,8 +66,9 @@ table view (filters, sort, page, FK reference) is in the hash (`view.ts`, e.g.
 ## Rows (`queries/db.ts`)
 
 - `CellValue` is PostgreSQL text or NULL: per-query identity type parsers, never JS coercion.
-- `loadMetadata` reads tables/columns/PK/FK/enum info; cached per pool for 30 s, refreshed by
-  `listTables` and invalidated after DDL. Column `kind` is only a rendering hint.
+- `loadMetadata` reads tables/columns/PK/FK/enum info, never cached on the server: every grid page
+  and write reads that one table's, so they match the current columns even after DDL in the SQL
+  console. Column `kind` is only a rendering hint.
 - `rowSelection` builds the shared WHERE (exact FK filter, structured filters, picker search)
   and deterministic ORDER BY (`reference` = exact FK-navigation match, `filters` = user conditions)
   (user sorts NULLS LAST, then PK, tableoid, ctid). Grid pages use
@@ -106,8 +108,10 @@ arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 its `pg_get_constraintdef` text, so clauses the add form lacks survive: a changed definition is drop
 + add, a new name alone a rename. `tableDefinition` (⋮ → Definition, a read-only side panel that blocks nothing) rebuilds
 a table's or view's DDL from `pg_get_*def` and the catalogs in a read-only transaction with
-`search_path = pg_catalog`, so every user object comes out qualified; a test round-trips it. Duplicate uses `LIKE … INCLUDING ALL`, copies non-generated columns with
-`overriding system value`, and advances identity sequences.
+`search_path = pg_catalog`, so every user object comes out qualified; a test round-trips it. Duplicate reads the
+table's definition fresh, uses `LIKE … INCLUDING ALL`, copies non-generated columns with
+`overriding system value`, and moves identity sequences past the copied values (only when rows
+were copied, so an empty copy keeps the original start).
 
 ## SQL console (`server/sql.ts`)
 
@@ -145,7 +149,9 @@ grantor's grant, so the grid marks privileges also granted by roles other than t
 policy can name and whether `current_user` bypasses RLS come from `editor` (`listTables`). `TableAccess`
 renders one table (RLS switches, policies, a role × SELECT/INSERT/UPDATE/DELETE grid) for both
 `DatabasePolicies` and the table editor's `TableAccessPanel` (`SchemaEditMode` `access`).
-`ddl.createPolicy` omits USING for insert and WITH CHECK for select/delete; editing a policy is drop
+`ddl.createPolicy` omits USING for insert and WITH CHECK for select/delete. The form has no
+`public` checkbox: no roles means PUBLIC, because Postgres ignores named roles listed beside it
+(with only a warning). Editing a policy is drop
 + create in one transaction; `ddl.grantChanges` diffs the grid into grant/revoke, leaving other
 privileges alone. Roles (`listRoles`, server-wide): `ddl.createRole`/`alterRole` (alter names only changed
 attributes: PG16+ rejects naming BYPASSRLS/CREATEDB without holding them; membership as
@@ -159,7 +165,8 @@ append values, rename the type last; Postgres cannot remove values). Config writ
 `alter database|role … set|reset`: `search_path` values as SQL lists, others as quoted literals.
 
 Every change on these pages goes through `SqlDialog`: form fields as children, the SQL preview,
-Apply runs it via `changeSchema` (`executeDdl`, one transaction), closes, then `onapplied` reloads.
+Apply runs it via `changeSchema` (`executeDdl`, one transaction; fields are disabled meanwhile),
+closes, then `onapplied` reloads. A failed rollback never replaces the statement's own error.
 An empty `sql` means nothing to apply. `SchemaFilter` is the shared schema picker + search box.
 
 ## CSV export
@@ -177,16 +184,20 @@ declares a read-only cursor with the grid's `rowSelection` and the chosen column
   out-of-order reads; a live generation discards polls begun before a mutation. A failed read
   after an acknowledged write is reported as a read error, never retried as a write.
   `navigationBlocked` (busy/editing/inserting/schemaEditing) gates navigation and reloads.
+  Metadata reloads (Refresh, Database-page changes) count separately, so a navigation started
+  meanwhile doesn't discard them, and keep the view (page, filters, rows on screen) while the
+  table exists; schema changes reset it. ⚡ only flips the table's flag after its DDL.
 - `utils.fresh()` refreshes a remote query: queries are cached per argument and polling reuses
   identical arguments.
 - `DataGrid` is a custom CSS-grid spreadsheet (fixed 35 px rows, no virtualization) with
   positional focus/range; edits capture the row, never an index. `CellEditor` holds one
   text/NULL/DEFAULT buffer in a popover or `ResizableSheet`; only Apply saves.
 - `arrays.ts`: array cells are displayed and edited as JSON (like Supabase) while values stay
-  literals. Element text that is valid JSON (numbers, json elements) is used verbatim, so nothing
+  literals. Element text that is valid JSON (numbers) is used verbatim, so nothing
   is decoded; JSON goes back to a literal via the Lezer JSON tree on apply (`InsertRow` holds
   JSON until Save). `Column.element` is set only for comma-delimited element types; bounds
-  (`[0:1]={…}`) and box[] keep the literal editor. Grid copy writes JSON; paste converts a JSON
+  (`[0:1]={…}`), box[] and json[]/jsonb[] keep the literal editor (a nested JSON array there could be a
+  dimension or a document). Grid copy writes JSON; paste converts a JSON
   array and passes literals through. CSV export stays literal.
 - `sql-highlight.ts` renders read-only SQL (Activity hover, Performance) with the editor's parser;
   `.sql-code` in `app.css` holds the colors.

@@ -118,3 +118,62 @@ create table public.json_arrays (
 insert into public.json_arrays values
   (1, array['{"a": 1}', '[1, 2]', null]::jsonb[]),
   (2, array[['{"a": 1}', '2'], ['3', '4']]::jsonb[]);
+
+-- Edge cases: awkward names, partitions, inheritance, constraints and types the UI must handle.
+create schema edge;
+create table edge."a/b" (id int primary key, note text);
+create table edge."100%" (id int primary key, note text);
+create table edge."#hash?q" (id int primary key, note text);
+create table edge."Mixed Case café" (id int primary key, note text);
+insert into edge."a/b" values (1, 'slash');
+insert into edge."100%" values (1, 'percent');
+insert into edge."#hash?q" values (1, 'hash and question mark');
+insert into edge."Mixed Case café" values (1, 'unicode');
+
+-- Partitioned table, referenced by a foreign key (Postgres adds per-partition copies of it).
+create table edge.measurements (
+  id int primary key,
+  value numeric(10, 2) check (value >= 0)
+) partition by range (id);
+create table edge.measurements_low partition of edge.measurements for values from (0) to (100);
+create table edge.measurements_high partition of edge.measurements for values from (100) to (1000);
+create table edge.readings (id int primary key, measurement_id int references edge.measurements);
+insert into edge.measurements select g, g * 1.5 from generate_series(1, 150) g;
+insert into edge.readings select g, g from generate_series(1, 150) g;
+
+-- Inheritance: the child inherits the CHECK and shows up in the parent's rows.
+create table edge.vehicles (id int primary key, wheels int check (wheels > 0));
+create table edge.cars (doors int) inherits (edge.vehicles);
+alter table edge.cars add primary key (id);
+insert into edge.vehicles values (1, 2);
+insert into edge.cars values (2, 4, 5);
+
+-- Exclusion constraint (gist on a range; no extension needed).
+create table edge.bookings (
+  id int primary key,
+  during tstzrange not null,
+  exclude using gist (during with &&)
+);
+insert into edge.bookings values (1, '[2026-01-01 10:00, 2026-01-01 11:00)'), (2, '[2026-01-01 11:00, 2026-01-01 12:00)');
+
+-- Enum used only through a domain; json keeps its exact text, jsonb normalizes; bpchar and array conversions.
+create type edge.mood as enum ('happy', 'sad', 'it''s complicated');
+create domain edge.mood_domain as edge.mood;
+create table edge.values (
+  id int primary key,
+  mood edge.mood_domain,
+  doc json,
+  docb jsonb,
+  code bpchar,
+  single int[],
+  many int[]
+);
+insert into edge.values values
+  (1, 'happy', '{"b": 1,   "a": [1, 2.50]}', '{"b": 1,   "a": [1, 2.50]}', 'ab', '{1}', '{1,2}'),
+  (2, 'it''s complicated', '"text"', 'null', null, null, '{}');
+
+-- RLS disabled while still forced (the flags are independent).
+create table edge.rls_forced (id int primary key);
+alter table edge.rls_forced enable row level security;
+alter table edge.rls_forced force row level security;
+alter table edge.rls_forced disable row level security;

@@ -15,6 +15,8 @@
 - Database → Triggers: list triggers with their and their function's definitions, and drop them.
 - Table definition (⋮ → Definition): a table's or view's DDL rebuilt from the catalogs, ready to copy.
 - Database → Activity: client sessions with state, running time, waits and blocking sessions; cancel a query or terminate a session.
+- Database → Configuration shows and edits role-in-database settings (`alter role … in database … set`), which win over database and role defaults.
+- Pasting one value into a selected range fills the range.
 
 ### Changed
 
@@ -25,6 +27,10 @@
 - Performance page laid out like Supabase's: time share bars, min time, role filter, a details panel per statement and CSV export.
 - CSV export is one toolbar button: choose columns, then download the rows matching the grid's filters in grid order. The table menu no longer exports.
 - Editing a constraint edits its full definition as PostgreSQL prints it, so clauses the form doesn't show (DEFERRABLE, NOT VALID, NULLS NOT DISTINCT, INCLUDE…) are kept; a new name alone renames it.
+- Connection URLs are used as typed: every option reaches the driver, and `sslmode` has its libpq meaning, also in `DATABASE_URL` (no `sslmode` means `prefer`, as in psql). The SSL select and a new channel-binding checkbox just edit the URL. Saved connections from earlier versions keep their URL but lose their separate SSL choice: pick it again.
+- The SQL console has no statement or idle-in-transaction timeouts of its own (use Cancel); an idle session still closes after 15 minutes.
+- Column type changes are marked destructive. Toggling Array converts values (`x` ↔ `{x}`, refusing arrays that don't hold exactly one element) and drops a default that can't be converted.
+- Live updates keep applying while a cell is selected, and changes held during an edit apply as soon as it ends.
 
 ### Fixed
 
@@ -43,6 +49,15 @@
 - The SQL console says when results or messages beyond the first 50 were left out.
 - The column form: unticking Primary key restores the previous Allow NULL choice, and turning a column into an array drops an identity or preset default that no longer fits.
 - Connecting with a wrong password to a database the server already has open fails instead of reusing the open connection; new working credentials replace it.
+- Tables and schemas whose names contain `/`, `#`, `?` or `%` open correctly from links.
+- LIKE/ILIKE filters work on non-text columns; `json` columns compare as text.
+- Revoking a role membership that another role granted works on PostgreSQL 16+.
+- Constraints: exclusion constraints can be edited and dropped; inherited constraints and a foreign key's copies for partitions are no longer listed, and table definitions with such a key run again.
+- Duplicate copies only an inheritance parent's own rows; enum usage counts include domains and count partitions once.
+- `json` cells keep their text as written when edited; pasting text that starts with a quote no longer fails; names over 63 bytes are refused instead of silently truncated.
+- SQL console: DDL refreshes the table list and autocomplete, cancelled statements leave no empty result, and the "earlier commits" warning appears only when it applies.
+- Links with sorts or filters on unknown columns open with those dropped; Enter no longer adds line breaks in number or date cells; the active cell stays put after a save; keyboard focus is no longer lost after navigation, removing a filter or sorting.
+- Smaller form and dialog fixes: RLS badge, policy edit and drop dialogs, varchar length and the Array checkbox while keeping a type, dialog spacing, stale dialog errors.
 
 ## [0.2.0] - 2026-10-25
 

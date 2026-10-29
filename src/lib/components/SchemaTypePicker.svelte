@@ -20,7 +20,9 @@
 	/** The kept type of an existing column, when it is one of the approved types: its Array box still converts it. */
 	const kept = $derived(value.typeOid === null && existing ? types.find((type) => type.oid === existing.typeOid) : undefined);
 	const arrayBase = $derived(elementType(type ?? kept, types));
-	const modifiable = $derived(base?.schema === 'pg_catalog' && MODIFIABLE_TYPES.includes(base.name));
+	const modifiable = $derived(arrayBase?.schema === 'pg_catalog' && MODIFIABLE_TYPES.includes(arrayBase.name));
+	/** The existing column's own modifiers, e.g. "10" of character varying(10). */
+	const own = $derived(existing?.type.match(/\((.*?)\)/)?.[1] ?? '');
 	const options = $derived(types
 		.filter((type) => type.kind !== 'array' && `${type.label} ${type.name} ${type.schema}`.toLowerCase().includes(query.trim().toLowerCase()))
 		.map((type) => ({ type, group: type.schema !== 'pg_catalog' ? GROUPS[2] : COMMON.includes(type.name) ? GROUPS[0] : GROUPS[1] })));
@@ -41,11 +43,16 @@
 	/** Toggling Array keeps the base type and its modifiers (varchar(10) ↔ varchar(10)[]); back to the column's own type is "keep". */
 	function toggleArray(array: boolean) {
 		if (!arrayBase) return;
-		const own = existing?.type.match(/\((.*?)\)/)?.[1] ?? '';
 		const modifiers = value.typeOid === null ? own : value.typeModifiers;
 		choose(arrayBase.oid, array);
+		setModifiers(modifiers);
+	}
+
+	/** Editing a kept type's modifiers makes it explicit; the column's own type and modifiers are "keep" again. */
+	function setModifiers(modifiers: string) {
+		if (value.typeOid === null && kept) value.typeOid = kept.oid;
 		value.typeModifiers = modifiers;
-		if (existing && value.typeOid === existing.typeOid && modifiers === own) choose('keep');
+		if (existing && value.typeOid === existing.typeOid && modifiers.trim() === own) choose('keep');
 	}
 </script>
 
@@ -91,8 +98,9 @@
 				<Label for={`${id}-array`} class="text-xs">Array</Label>
 			</div>
 			{#if modifiable}
-				<Input bind:value={value.typeModifiers} aria-label="Type modifiers" {disabled} spellcheck={false} class="h-8 w-40 font-mono text-xs"
-					placeholder={base?.name === 'numeric' ? 'precision, scale' : base?.name.startsWith('time') ? 'precision' : 'length'} />
+				<Input value={value.typeOid === null ? own : value.typeModifiers} oninput={(event) => setModifiers(event.currentTarget.value)}
+					aria-label="Type modifiers" {disabled} spellcheck={false} class="h-8 w-40 font-mono text-xs"
+					placeholder={arrayBase?.name === 'numeric' ? 'precision, scale' : arrayBase?.name.startsWith('time') ? 'precision' : 'length'} />
 			{/if}
 		</div>
 	{/if}

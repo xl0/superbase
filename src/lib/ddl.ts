@@ -101,12 +101,14 @@ export function addColumn(table: string, column: ColumnSpec, types: SchemaType[]
 export function alterColumn(table: string, old: SchemaColumn & { primaryKey: boolean }, next: ColumnSpec, types: SchemaType[]): string {
 	const alter = `alter table ${table} alter column ${ident(old.name)}`;
 	const statements: string[] = [];
-	if (next.default.kind !== 'keep' && old.defaultValue !== null && !old.identity) statements.push(`${alter} drop default;`);
+	const toArray = next.typeOid !== null && types.find((item) => item.oid === next.typeOid)?.kind === 'array';
+	const fromArray = old.type.endsWith('[]');
+	// A kept default can't follow a value ↔ array change (Postgres can't cast it), so it goes too, visibly in the preview.
+	const arrayChange = next.typeOid !== null && toArray !== fromArray;
+	if ((next.default.kind !== 'keep' || arrayChange) && old.defaultValue !== null && !old.identity) statements.push(`${alter} drop default;`);
 	if (next.typeOid !== null) {
 		const type = typeSql(next.typeOid, next.typeModifiers, types);
 		const column = ident(old.name);
-		const toArray = types.find((item) => item.oid === next.typeOid)?.kind === 'array';
-		const fromArray = old.type.endsWith('[]');
 		if (fromArray && !toArray) {
 			// Only NULL or one-element arrays become a single value; anything else stops the change.
 			statements.push(`do $superbase$ begin

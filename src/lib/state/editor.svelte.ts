@@ -41,7 +41,6 @@ export class EditorState {
 	editing = $state(false);
 	inserting = $state(false);
 	schemaEditing = $state(false);
-	cellSelected = $state(false);
 	live = $state(true);
 	polling = $state(false);
 	/** The realtime event stream is connected (EditorApp); realtime tables then skip the timed poll. */
@@ -221,7 +220,7 @@ export class EditorState {
 				this.externalChange = false;
 				return;
 			}
-			if (this.inserting || this.selectedCount || this.editing || this.cellSelected) {
+			if (this.inserting || this.selectedCount || this.editing) {
 				this.externalChange = true;
 				return;
 			}

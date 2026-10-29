@@ -138,7 +138,6 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(s.polling, false);
 	assert.equal(s.externalChange, false);
 	assert.equal(s.liveError, null);
-	assert.equal(s.cellSelected, false);
 	await s.selectTable('public', 'b', { id: 'exact' });
 	await s.setFilters([{ column: 'value', operator: 'ilike', value: '%query%' }]);
 	await s.setSort([{ column: 'value', direction: 'asc' }, { column: 'id', direction: 'desc' }]);
@@ -171,7 +170,7 @@ test('live polls refresh current query, preserve unchanged arrays and update idl
 	assert.equal(calls.length, 3);
 });
 
-for (const protection of ['insert form', 'row selection', 'editor', 'cell selection']) {
+for (const protection of ['insert form', 'row selection', 'editor']) {
 	test(`live updates preserve ${protection}, including work begun in flight`, async () => {
 		const { editor: s, deferRead, row } = await fixture();
 		s.setLive(true);
@@ -181,11 +180,10 @@ for (const protection of ['insert form', 'row selection', 'editor', 'cell select
 		const polling = s.poll();
 		if (protection === 'insert form') s.startInsert();
 		else if (protection === 'row selection') s.toggleRowSelection(s.rows[0]);
-		else if (protection === 'editor') s.editing = true;
-		else s.cellSelected = true;
+		else s.editing = true;
 		const local = () => JSON.stringify({
 			selection: s.rowSelection, inserting: s.inserting,
-			editing: s.editing, cellSelected: s.cellSelected, page: s.page, rowsPage: s.rowsPage
+			editing: s.editing, page: s.page, rowsPage: s.rowsPage
 		});
 		const before = local();
 		slow.resolve({ rows: [row('external')], hasMore: false });
@@ -198,7 +196,7 @@ for (const protection of ['insert form', 'row selection', 'editor', 'cell select
 		await s.poll();
 		assert.equal(s.rows, original);
 		assert.equal(local(), before);
-		Object.assign(s, { rowSelection: {}, editing: false, inserting: false, cellSelected: false });
+		Object.assign(s, { rowSelection: {}, editing: false, inserting: false });
 		await s.poll();
 		assert.equal(s.rows[0].key, 'external');
 		assert.equal(s.externalChange, false);

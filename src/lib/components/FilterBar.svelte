@@ -48,6 +48,14 @@
 		operatorOpen = false;
 	}
 
+	/** Controls are disabled while rows load, which drops focus to the page: bring it back to the bar. */
+	async function refocus(loading: Promise<void>) {
+		cancel();
+		await loading;
+		await tick();
+		if (document.activeElement === document.body) bar?.focus();
+	}
+
 	function cancel() { draft = null; editingIndex = null; operatorOpen = false; }
 
 	function apply() {
@@ -134,7 +142,7 @@
 	{/if}
 {/snippet}
 
-<div bind:this={bar} role="group" aria-label="Row filters" tabindex="-1" class="flex min-h-8 min-w-0 flex-1 basis-64 flex-wrap items-center gap-2 outline-none">
+<div bind:this={bar} role="group" aria-label="Row filters" tabindex="-1" class="flex min-h-8 min-w-0 flex-1 basis-64 flex-wrap items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
 	<Search class="size-4 shrink-0 text-muted-foreground" />
 	{#each editor.filters as filter, i}
 		{#if i > 0}<span class="text-[10px] text-muted-foreground">AND</span>{/if}
@@ -148,7 +156,7 @@
 					{#if FILTER_OPERATORS[filter.operator].needsValue}<span class="max-w-48 truncate font-mono" title={filter.value}>{filter.value === '' ? '""' : filter.value}</span>{/if}
 				</button>
 				<Button variant="ghost" size="icon-xs" class="mr-1 shrink-0" disabled={blocked} aria-label={`Remove filter ${i + 1}: ${filter.column}`}
-					onclick={() => { cancel(); void editor.setFilters(editor.filters.filter((_, index) => index !== i)); }}><X /></Button>
+					onclick={() => void refocus(editor.setFilters(editor.filters.filter((_, index) => index !== i)))}><X /></Button>
 			</div>
 		{/if}
 	{/each}
@@ -183,6 +191,6 @@
 		</Combobox.Root>
 	{/if}
 	{#if editor.hasFilters}
-		<Button variant="ghost" size="xs" class="ml-auto" disabled={blocked} onclick={() => { cancel(); void editor.clearFilters(); }}>Remove filters</Button>
+		<Button variant="ghost" size="xs" class="ml-auto" disabled={blocked} onclick={() => void refocus(editor.clearFilters())}>Remove filters</Button>
 	{/if}
 </div>

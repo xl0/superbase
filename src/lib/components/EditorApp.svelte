@@ -93,6 +93,11 @@
 		return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
 	});
 
+	// Changes held back while editing, inserting or selecting rows apply as soon as that work ends.
+	$effect(() => {
+		if (editor.externalChange && !editor.editing && !editor.inserting && !editor.selectedCount) untrack(() => void editor.poll(liveActive));
+	});
+
 	// Realtime: one event stream per database while any table has the trigger (not in the static demo).
 	// Bursts coalesce in editor.poll: one read at a time, plus one more if changes arrived meanwhile.
 	const anyRealtime = $derived(import.meta.env.MODE !== 'demo' && editor.tables.some((table) => table.realtime));
@@ -120,7 +125,8 @@
 	if (!event.persisted && sql.session && import.meta.env.MODE !== 'demo') navigator.sendBeacon(resolve('/sql/close'), JSON.stringify({ connection: sql.connection, session: sql.session }));
 }} />
 
-<div class="flex h-dvh flex-col">
+<!-- In-app links keep focus where it was (on the link) instead of SvelteKit's reset to <body>. -->
+<div class="flex h-dvh flex-col" data-sveltekit-reset="false">
 	<header class="flex h-12 shrink-0 items-center gap-2 border-b bg-card pr-3">
 		<div class="grid w-12 shrink-0 place-items-center" title="superbase"><Database class="size-5 text-muted-foreground" /><span class="sr-only">superbase</span></div>
 		<div class="min-w-0">

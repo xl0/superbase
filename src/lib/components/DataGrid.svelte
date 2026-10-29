@@ -139,10 +139,17 @@
 		if (!text) return;
 		event.preventDefault();
 		try {
-			const pasted = fromTSV(text);
+			let pasted = fromTSV(text);
+			let origin = focus;
+			// One value into a selected range fills the range, like a spreadsheet; a block pastes from the focused cell.
+			const box = bounds();
+			if (box && pasted.length === 1 && pasted[0].length === 1 && (box.r1 !== box.r2 || box.c1 !== box.c2)) {
+				pasted = Array.from({ length: box.r2 - box.r1 + 1 }, () => Array(box.c2 - box.c1 + 1).fill(pasted[0][0]));
+				origin = { r: box.r1, c: box.c1 };
+			}
 			const changes: { row: Row; values: Record<string, CellValue | undefined> }[] = [];
 			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {
-				const row = rows[focus.r + r], column = table.columns[focus.c + c], value = pasted[r][c];
+				const row = rows[origin.r + r], column = table.columns[origin.c + c], value = pasted[r][c];
 				if (!row || !column) throw new Error('Clipboard data extends beyond the loaded grid');
 				(changes[r] ??= { row, values: {} }).values[column.name] = column.kind === 'array' && typeof value === 'string' ? arrayPasteValue(value, column) : value;
 			}
@@ -165,13 +172,17 @@
 	}
 
 	$effect(() => {
-		// New page/order/version: discard positional selection, never apply it to replacement rows.
-		rows.map((row) => [row.key, row.identity?.version]);
+		// Another table, page, query or role: discard the positional selection, never apply it to unrelated rows.
+		JSON.stringify([editor.tableKey, editor.rowsPage, editor.sort, editor.filters, editor.reference, editor.viewAs]);
 		untrack(() => { focus = anchor = head = null; editing = null; });
 	});
+	$effect(() => {
+		// Same query, changed rows (a save, a live update): keep the position while the page still reaches it.
+		const count = rows.length;
+		untrack(() => { if ([focus, anchor, head].some((cell) => cell && cell.r >= count)) deselect(); });
+	});
 	$effect(() => { editor.editing = editing !== null; });
-	$effect(() => { editor.cellSelected = focus !== null; });
-	onDestroy(() => { resizeCleanup?.(); editor.editing = false; editor.cellSelected = false; });
+	onDestroy(() => { resizeCleanup?.(); editor.editing = false; });
 </script>
 
 <svelte:window onpointerdowncapture={(event) => {

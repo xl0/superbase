@@ -8,6 +8,7 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 
 	let open = $state(false);
+	let trigger = $state<HTMLButtonElement | null>(null);
 	let draft = $state<Sort[]>([]);
 	let picked = $state('');
 	let tableKey = untrack(() => editor.tableKey);
@@ -41,17 +42,20 @@
 		[draft[index], draft[target]] = [draft[target], draft[index]];
 	}
 
-	function apply() {
+	async function apply() {
 		if (blocked || !changed) return;
 		open = false;
-		void editor.setSort(draft);
+		await editor.setSort(draft);
+		// The trigger is disabled while rows load, which drops focus to the page.
+		await tick();
+		if (document.activeElement === document.body) trigger?.focus();
 	}
 </script>
 
 <Popover.Root {open} onOpenChange={changeOpen}>
 	<Popover.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant={editor.sort.length ? 'secondary' : 'outline'} size="sm" class="text-xs" disabled={blocked}
+			<Button {...props} bind:ref={trigger} variant={editor.sort.length ? 'secondary' : 'outline'} size="sm" class="text-xs" disabled={blocked}
 				aria-label={editor.sort.length ? `Sorted by ${editor.sort.length} ${editor.sort.length === 1 ? 'rule' : 'rules'}` : 'Sort'}>
 				<ListOrdered />{editor.sort.length ? `Sort (${editor.sort.length})` : 'Sort'}
 			</Button>

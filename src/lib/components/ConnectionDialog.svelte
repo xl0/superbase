@@ -79,6 +79,7 @@
 	function save() {
 		if (demo) { demoBlocked = true; return; }
 		error = '';
+		const open = !!editing && editing === current; // Before saving: a changed URL clears the profile's target.
 		try {
 			checkUrl(url);
 			if (!name.trim()) throw new Error('Name the connection.');
@@ -88,8 +89,9 @@
 			const others = loadProfiles().filter((item) => item.id !== profile.id);
 			storeProfiles([...others, profile].sort((a, b) => a.name.localeCompare(b.name)));
 			profiles = loadProfiles();
-			// A new connection is opened right away; a failure stays in the dialog, the profile stays saved.
-			if (editing) dialogOpen = false;
+			// A new connection, or a new URL for the open one, connects right away; a failure stays in the dialog,
+			// the profile stays saved. Other edits only update the list.
+			if (editing && (!open || editing.url === profile.url)) dialogOpen = false;
 			else void change(profile);
 		} catch (cause) { error = message(cause); }
 	}

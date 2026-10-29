@@ -44,6 +44,7 @@ Profiles (`connection-profiles.ts`) are a plain localStorage list. A successful 
 target the server resolved the profile's URL to (`target`, pg defaults for user/port/database
 applied): it gives the profile's URL id and marks the active one. A successful connect fully loads the new database's route (other tabs keep
 theirs). One-off URLs are never stored, so they cannot reconnect after a server restart.
+Saving a new URL for the open profile reconnects. In-app links keep focus (`data-sveltekit-reset="false"`).
 
 ## Routes and history
 
@@ -110,7 +111,7 @@ Schema and table names are URL-encoded path segments (`links.ts`): names may hol
 clauses, literal escaping). Forms build a `SchemaChange { sql, select?, destructive? }`, show it
 as a preview, and `executeDdl` runs it in one transaction (`lock_timeout` 3 s). PostgreSQL is
 the validator. Type changes are destructive; toggling Array converts `x` ↔ `{x}` (array → value
-first checks every array has one element). Names over 63 bytes are refused (Postgres would truncate
+first checks every array has one element) and drops a kept default, which can't be cast. Names over 63 bytes are refused (Postgres would truncate
 them). `queries/schema.ts` also lists approved column types (builtins, enums, domains,
 arrays) and reads one table's columns/PK/indexes/constraints via `pg_get_*def`.
 `SchemaEditor.svelte` is the sheet shell plus simple inline forms; `SchemaIndexes` and
@@ -201,10 +202,14 @@ declares a read-only cursor with the grid's `rowSelection` and the chosen column
   Metadata reloads (Refresh, Database-page changes) count separately, so a navigation started
   meanwhile doesn't discard them, and keep the view (page, filters, rows on screen) while the
   table exists; schema changes reset it. ⚡ only flips the table's flag after its DDL.
+  Polls hold changed rows (`externalChange`) only while a cell is being edited, a row inserted or
+  rows selected; `EditorApp` polls again as soon as that ends.
 - `utils.fresh()` refreshes a remote query: queries are cached per argument and polling reuses
   identical arguments.
 - `DataGrid` is a custom CSS-grid spreadsheet (fixed 35 px rows, no virtualization) with
-  positional focus/range; edits capture the row, never an index. `CellEditor` holds one
+  positional focus/range; edits capture the row, never an index. The position survives row
+  changes within one query (saves, live updates) and is dropped for another table, page, query or
+  role. One pasted value fills a selected range. `CellEditor` holds one
   text/NULL/DEFAULT buffer in a popover or `ResizableSheet`; only Apply saves.
 - `arrays.ts`: array cells are displayed and edited as JSON (like Supabase) while values stay
   literals. Element text that is valid JSON (numbers) is used verbatim, so nothing

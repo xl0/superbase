@@ -1,6 +1,6 @@
 {
 	"name": "@xl0/superbase",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "A local Postgres table and SQL editor inspired by Supabase Studio.",
 	"license": "MIT",
 	"repository": {

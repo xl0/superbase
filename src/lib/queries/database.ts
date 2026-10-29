@@ -46,7 +46,12 @@ export async function listRoles(pool: pg.Pool): Promise<Role[]> {
 		select r.rolname as name, r.rolcanlogin as login, r.rolsuper as superuser, r.rolbypassrls as bypass,
 		       r.rolcreatedb as createdb, r.rolname = current_user as current,
 		       array(select distinct b.rolname::text from pg_auth_members m join pg_roles b on b.oid = m.roleid
-		             where m.member = r.oid order by 1) as "memberOf"
+		             where m.member = r.oid order by 1) as "memberOf",
+		       case when current_setting('server_version_num')::int >= 160000 then
+		         (select json_object_agg(parent, grantors) from (
+		            select b.rolname as parent, json_agg(pg_get_userbyid(m.grantor) order by pg_get_userbyid(m.grantor)) as grantors
+		            from pg_auth_members m join pg_roles b on b.oid = m.roleid where m.member = r.oid group by b.rolname) g)
+		       end as grantors
 		from pg_roles r where r.rolname !~ '^pg_' order by r.rolname`)).rows;
 }
 
@@ -156,7 +161,9 @@ export async function listSettings(pool: pg.Pool): Promise<{ database: string; r
 		       (select value from defaults d join pg_database db on db.oid = d.setdatabase
 		        where db.datname = current_database() and d.setrole = 0 and lower(d.name) = lower(p.name)) as "databaseDefault",
 		       (select value from defaults d join pg_roles r on r.oid = d.setrole
-		        where r.rolname = current_user and d.setdatabase = 0 and lower(d.name) = lower(p.name)) as "roleDefault"
+		        where r.rolname = current_user and d.setdatabase = 0 and lower(d.name) = lower(p.name)) as "roleDefault",
+		       (select value from defaults d join pg_roles r on r.oid = d.setrole join pg_database db on db.oid = d.setdatabase
+		        where r.rolname = current_user and db.datname = current_database() and lower(d.name) = lower(p.name)) as "roleInDatabase"
 		from pg_settings p where p.name = any($1) order by array_position($1, p.name)`, [CONFIG_SETTINGS])
 	]);
 	return { ...names.rows[0], settings: settings.rows };

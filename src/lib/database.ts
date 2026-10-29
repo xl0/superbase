@@ -41,6 +41,11 @@ export interface Role {
 	bypass: boolean;
 	createdb: boolean;
 	memberOf: string[];
+	/**
+	 * PG16+: who granted each membership in `memberOf`. A plain revoke only removes the asking role's own
+	 * grant (others merely warn), so revokes name every grantor. Null before PG16 (one grant per membership).
+	 */
+	grantors?: Record<string, string[]> | null;
 	/** The connection's own role. */
 	current: boolean;
 }
@@ -142,4 +147,6 @@ export interface DatabaseSetting {
 	current: string;
 	databaseDefault: string | null;
 	roleDefault: string | null;
+	/** `alter role … in database … set`: wins over both defaults above. */
+	roleInDatabase: string | null;
 }

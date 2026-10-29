@@ -1,6 +1,6 @@
 /** Pure DDL generation for the schema forms. Output is previewed, then run as one transaction. */
 import type { ReferentialAction, SchemaColumn, SchemaDefinition, SchemaType } from './schema.js';
-import type { PolicyCommand } from './database.js';
+import type { PolicyCommand, Role } from './database.js';
 
 export type ColumnDefault =
 	| { kind: 'keep' | 'none' | 'identity' }
@@ -217,13 +217,17 @@ export function createRole(spec: RoleSpec): string {
 }
 
 /** Changed attributes (or a new password), membership as grant/revoke, and a rename last so earlier statements use the old name. */
-export function alterRole(old: Omit<RoleSpec, 'password'>, spec: RoleSpec): string {
+export function alterRole(old: Omit<RoleSpec, 'password'> & Pick<Role, 'grantors'>, spec: RoleSpec): string {
 	const role = ident(old.name);
 	const statements: string[] = [];
 	const options = roleOptions(spec, old);
 	if (options) statements.push(`alter role ${role} with ${options};`);
 	for (const parent of spec.memberOf.filter((name) => !old.memberOf.includes(name))) statements.push(`grant ${ident(parent)} to ${role};`);
-	for (const parent of old.memberOf.filter((name) => !spec.memberOf.includes(name))) statements.push(`revoke ${ident(parent)} from ${role};`);
+	for (const parent of old.memberOf.filter((name) => !spec.memberOf.includes(name))) {
+		const grantors = old.grantors?.[parent] ?? [];
+		if (!grantors.length) statements.push(`revoke ${ident(parent)} from ${role};`);
+		for (const grantor of grantors) statements.push(`revoke ${ident(parent)} from ${role} granted by ${ident(grantor)};`);
+	}
 	if (spec.name !== old.name) statements.push(`alter role ${role} rename to ${ident(spec.name)};`);
 	return statements.join('\n');
 }

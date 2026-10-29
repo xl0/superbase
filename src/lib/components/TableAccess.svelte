@@ -42,8 +42,10 @@
 
 	function open(policy: Policy | null) {
 		form = { original: policy, spec: policy
-			? { name: policy.name, command: policy.command, permissive: policy.permissive, roles: [...policy.roles], using: policy.using ?? '', check: policy.check ?? '' }
-			: { name: '', command: 'all', permissive: true, roles: ['public'], using: '', check: '' } };
+			? { name: policy.name, command: policy.command, permissive: policy.permissive,
+				// PUBLIC is "no roles": Postgres ignores named roles listed beside it (with only a warning).
+				roles: policy.roles.filter((role) => role !== 'public'), using: policy.using ?? '', check: policy.check ?? '' }
+			: { name: '', command: 'all', permissive: true, roles: [], using: '', check: '' } };
 	}
 
 	function confirm(title: string, description: string, sql: string, destructive = false) {
@@ -186,7 +188,7 @@
 		<fieldset class="space-y-2">
 			<legend class="text-xs font-medium">Roles</legend>
 			<div class="flex flex-wrap gap-x-4 gap-y-2">
-				{#each ['public', ...editor.roles] as name, i}
+				{#each editor.roles as name, i}
 					<div class="flex items-center gap-2">
 						<Checkbox id={`${id}-role-${i}`} checked={form.spec.roles.includes(name)}
 							onCheckedChange={(checked) => { if (form) form.spec.roles = checked ? [...form.spec.roles, name] : form.spec.roles.filter((entry) => entry !== name); }} />

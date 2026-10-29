@@ -109,3 +109,12 @@ begin
 end $$;
 create trigger posts_audit after insert or update or delete on public.posts
   for each row execute function public.log_post_change();
+
+-- Arrays of JSON documents: shown and edited as Postgres literals (1-D and 2-D).
+create table public.json_arrays (
+  id int primary key,
+  docs jsonb[]
+);
+insert into public.json_arrays values
+  (1, array['{"a": 1}', '[1, 2]', null]::jsonb[]),
+  (2, array[['{"a": 1}', '2'], ['3', '4']]::jsonb[]);

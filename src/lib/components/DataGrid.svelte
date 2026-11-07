@@ -140,12 +140,12 @@
 		event.preventDefault();
 		try {
 			let pasted = fromTSV(text);
-			let origin = focus;
-			// One value into a selected range fills the range, like a spreadsheet; a block pastes from the focused cell.
+			// Like a spreadsheet: a paste starts at the selected range's top-left corner (else the focused cell),
+			// and one value into a range fills the range.
 			const box = bounds();
+			const origin = box ? { r: box.r1, c: box.c1 } : focus;
 			if (box && pasted.length === 1 && pasted[0].length === 1 && (box.r1 !== box.r2 || box.c1 !== box.c2)) {
 				pasted = Array.from({ length: box.r2 - box.r1 + 1 }, () => Array(box.c2 - box.c1 + 1).fill(pasted[0][0]));
-				origin = { r: box.r1, c: box.c1 };
 			}
 			const changes: { row: Row; values: Record<string, CellValue | undefined> }[] = [];
 			for (let r = 0; r < pasted.length; r++) for (let c = 0; c < pasted[r].length; c++) {

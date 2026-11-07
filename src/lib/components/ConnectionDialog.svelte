@@ -153,7 +153,7 @@
 		<form id={`${id}-form`} class="min-h-0 space-y-4 overflow-y-auto" onsubmit={(event) => { event.preventDefault(); save(); }}>
 			<div class="space-y-2">
 				<Label for={`${id}-name`} class="text-xs">Name</Label>
-				<Input id={`${id}-name`} bind:value={name} maxlength={100} disabled={pending} placeholder="Local development" />
+				<Input id={`${id}-name`} bind:value={name} maxlength={100} disabled={pending} placeholder="Local development" autocomplete="off" />
 			</div>
 			<div class="space-y-2">
 				<Label for={`${id}-url`} class="text-xs">Postgres URL</Label>

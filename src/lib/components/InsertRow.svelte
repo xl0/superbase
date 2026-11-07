@@ -128,7 +128,7 @@
 							<Textarea id={`${id}-field-${i}`} value={value ?? ''} {placeholder} disabled={editor.busy}
 								oninput={(event) => change(column.name, event.currentTarget.value)} spellcheck={false} class="min-h-28 font-mono text-xs" />
 						{:else}
-							<Input id={`${id}-field-${i}`} value={value ?? ''} {placeholder} disabled={editor.busy}
+							<Input id={`${id}-field-${i}`} value={value ?? ''} {placeholder} disabled={editor.busy} autocomplete="off"
 								oninput={(event) => change(column.name, event.currentTarget.value)} spellcheck={false} class="font-mono text-xs" />
 						{/if}
 						{#if !readOnly}

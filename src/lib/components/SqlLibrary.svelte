@@ -44,7 +44,7 @@
 {#snippet row(snippet: SqlSnippet)}
 	<li class={['group flex items-center rounded-md hover:bg-muted', sql.snippet === snippet.id && 'bg-muted']}>
 		{#if renaming?.id === snippet.id}
-			<Input data-snippet-rename bind:value={renaming.name} aria-label="Snippet name" class="h-7 text-xs"
+			<Input data-snippet-rename bind:value={renaming.name} aria-label="Snippet name" autocomplete="off" class="h-7 text-xs"
 				onkeydown={(event) => { if (event.key === 'Enter') finishRename(); else if (event.key === 'Escape') { event.stopPropagation(); renaming = null; } }}
 				onblur={finishRename} />
 		{:else}
@@ -78,7 +78,7 @@
 	<Button variant="outline" size="sm" class="w-full justify-start text-xs" onclick={() => open('', null)}><FilePlus />New query</Button>
 	<div class="relative">
 		<Search class="pointer-events-none absolute top-2 left-2.5 size-3.5 text-muted-foreground" />
-		<Input bind:value={query} aria-label="Search snippets" placeholder="Search snippets" spellcheck={false} class="h-8 pl-8 text-xs" />
+		<Input bind:value={query} aria-label="Search snippets" placeholder="Search snippets" spellcheck={false} autocomplete="off" class="h-8 pl-8 text-xs" />
 	</div>
 </div>
 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-2">

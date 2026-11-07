@@ -100,7 +100,8 @@ Schema and table names are URL-encoded path segments (`links.ts`): names may hol
   realtime tables with ⚡. Database → Triggers hides `superbase_realtime`.
 - "View as role" (`TableTarget.as`, `editor.viewAs`): row reads, writes and CSV export run in a
   transaction after `actAs` (`set local role` + `set_config(…, true)`); metadata and locks stay with
-  the connection role. `RoleMenu` shows on RLS tables (`Table.rls`) or while a role is active.
+  the connection role. `RoleMenu` shows on RLS tables (`Table.rls`) or while a role is active. The
+  role sticks across tables and resets when the database changes.
 - Views and materialized views (`Table.kind`) are listed and read-only. Plain views have no
   system columns: rows are read without xmin/tableoid/ctid, keyed by position, and ordered only
   by user sorts (no tiebreaker, so ORDER BY may be omitted).

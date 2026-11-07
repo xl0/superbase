@@ -77,6 +77,8 @@ export class EditorState {
 
 	/** `view` comes from the URL; an unknown table falls back to the schema's first one (none in an empty schema). */
 	async initialize(connection: string, view?: TableView) {
+		// A role chosen for one database may not exist in another.
+		if (connection !== this.connection) this.viewAs = null;
 		this.connection = connection;
 		if (view) this.#assign(view);
 		await this.reload();
@@ -230,7 +232,8 @@ export class EditorState {
 			this.externalChange = false;
 			this.error = null; // Fresh rows supersede an earlier read or action error.
 		} catch (error) {
-			if (current()) this.liveError = message(error);
+			// The read error already on screen (e.g. the viewed-as role lacks a grant) isn't news.
+			if (current() && message(error) !== this.error) this.liveError = message(error);
 		} finally {
 			this.polling = false;
 			if (this.#pollAgain) {
